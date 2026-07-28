@@ -1,11 +1,45 @@
 import { defineStore } from 'pinia'
-import type { Resume, ResumeContent, ResumeVersion } from '@/types/resume'
+import type { CurrentStatus, JobSearchIdentity, Resume, ResumeContent, ResumeVersion } from '@/types/resume'
 
 const resumeStoreStorageKey = 'agent-seek-employment:resume-store'
 
+const currentStatusOptionsByIdentity: Record<JobSearchIdentity, CurrentStatus[]> = {
+  experienced: ['employed', 'unemployed'],
+  campus: ['fresh_graduate', 'studying', 'interning'],
+  internship: ['studying', 'interning', 'fresh_graduate'],
+}
+
+function normalizeJobSearchIdentity(value: ResumeContent['jobSearchIdentity']): JobSearchIdentity {
+  if (value === 'campus' || value === 'internship' || value === 'experienced') return value
+
+  return 'experienced'
+}
+
+function normalizeCurrentStatus(identity: JobSearchIdentity, value: ResumeContent['currentStatus']): CurrentStatus {
+  const availableStatuses = currentStatusOptionsByIdentity[identity]
+
+  if (value && availableStatuses.includes(value)) return value
+
+  return availableStatuses[0]
+}
+
 function cloneResumeContent(content: ResumeContent): ResumeContent {
+  const address = content.address as string[] | string | undefined
+  const jobSearchIdentity = normalizeJobSearchIdentity(content.jobSearchIdentity)
+
   return {
     ...content,
+    address: Array.isArray(address) ? address : address ? [address] : [],
+    jobSearchIdentity,
+    currentStatus: normalizeCurrentStatus(jobSearchIdentity, content.currentStatus),
+    workExperiences: (content.workExperiences ?? []).map((experience) => ({
+      ...experience,
+      id: experience.id || crypto.randomUUID(),
+      period: {
+        start: experience.period?.start ?? '',
+        end: experience.period?.end ?? '',
+      },
+    })),
     projects: content.projects.map((project) => ({
       ...project,
       id: project.id || crypto.randomUUID(),
@@ -33,6 +67,10 @@ type CreateResumePayload = {
 type SaveNewVersionPayload = CreateResumePayload & {
   resumeId: string
   changeNote?: string
+}
+
+type UpdateVersionPayload = SaveNewVersionPayload & {
+  versionId: string
 }
 
 function normalizeVersions(versions: ResumeVersion[], resumes: Resume[]) {
@@ -202,6 +240,26 @@ export const useResumeStore = defineStore('resume', {
       this.persistToStorage()
 
       return versionInfo
+    },
+
+    updateVersion(payload: UpdateVersionPayload) {
+      const resume = this.resumes.find((item) => item.id === payload.resumeId)
+      const version = this.versions.find((item) => item.id === payload.versionId && item.resumeId === payload.resumeId)
+      if (!resume || !version) return null
+
+      resume.title = payload.title
+      resume.targetDirection = payload.targetDirection
+      resume.updatedAt = new Date().toISOString()
+
+      version.targetDirection = payload.targetDirection
+      version.content = cloneResumeContent(payload.content)
+      version.changeNote = payload.changeNote ?? version.changeNote
+
+      this.currentResumeId = resume.id
+      this.currentVersionId = version.id
+      this.persistToStorage()
+
+      return version
     },
 
     deleteResume(resumeId: string) {

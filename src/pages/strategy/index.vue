@@ -1,6 +1,6 @@
 <template>
   <section class="mx-auto max-w-6xl">
-    <UCard>
+    <UCard class="app-panel">
       <template #header>
         <p class="text-lg font-semibold text-highlighted">求职策略</p>
       </template>

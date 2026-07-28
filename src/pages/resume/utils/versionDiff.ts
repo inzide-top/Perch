@@ -2,7 +2,16 @@ import type { ResumeContent, ResumeDraft } from '@/types/resume'
 import { diffWordsWithSpace } from 'diff'
 
 type Project = ResumeContent['projects'][number]
-type ComparableResumeField = 'comment' | 'skills' | 'targetDirection'
+type ComparableResumeField =
+  | 'comment'
+  | 'skills'
+  | 'targetDirection'
+  | 'educationLevel'
+  | 'school'
+  | 'major'
+  | 'graduationYear'
+  | 'currentStatus'
+  | 'jobSearchIdentity'
 type ComparableProjectField = keyof Project
 
 export type TextDiffSegment = {
@@ -23,6 +32,38 @@ const resumeFieldLabels: Record<ComparableResumeField, string> = {
   comment: '自我评价',
   skills: '专业技能',
   targetDirection: '目标岗位',
+  educationLevel: '学历',
+  school: '毕业学校',
+  major: '专业',
+  graduationYear: '毕业时间',
+  currentStatus: '当前状态',
+  jobSearchIdentity: '求职身份',
+}
+
+const educationLevelLabels: Record<string, string> = {
+  college_or_below: '专科及以下',
+  bachelor: '本科',
+  master: '硕士',
+  doctor_or_above: '博士及以上',
+}
+const currentStatusLabels: Record<string, string> = {
+  employed: '在职',
+  unemployed: '离职',
+  fresh_graduate: '应届',
+  studying: '在读',
+  interning: '实习中',
+}
+const jobSearchIdentityLabels: Record<string, string> = {
+  campus: '校招',
+  experienced: '社招',
+  internship: '实习',
+}
+const languageLevelLabels: Record<string, string> = {
+  basic: '基础了解',
+  reading_writing: '读写良好',
+  daily_communication: '日常交流',
+  working_professional: '工作沟通',
+  fluent: '流利 / 无障碍沟通',
 }
 
 const projectFieldLabels: Record<ComparableProjectField, string> = {
@@ -35,7 +76,17 @@ const projectFieldLabels: Record<ComparableProjectField, string> = {
   outcomes: '项目成果',
 }
 
-const comparableResumeFields: ComparableResumeField[] = ['comment', 'skills', 'targetDirection']
+const comparableResumeFields: ComparableResumeField[] = [
+  'comment',
+  'skills',
+  'targetDirection',
+  'educationLevel',
+  'school',
+  'major',
+  'graduationYear',
+  'currentStatus',
+  'jobSearchIdentity',
+]
 const comparableProjectFields: ComparableProjectField[] = [
   'name',
   'role',
@@ -62,6 +113,39 @@ function normalizeValue(value: unknown) {
 
 function isSameValue(before: unknown, after: unknown) {
   return normalizeValue(before) === normalizeValue(after)
+}
+
+function normalizeStructuredValue(value: unknown) {
+  return JSON.stringify(value ?? [])
+}
+
+function formatPortfolioLinks(value: ResumeDraft['portfolioLinks']) {
+  return (value ?? []).map((link) => `${link.label || '作品链接'}：${link.url}`).join('\n')
+}
+
+function formatLanguages(value: ResumeDraft['languages']) {
+  return (value ?? [])
+    .map((language) => `${language.language}：${languageLevelLabels[language.level] ?? language.level}`)
+    .join('\n')
+}
+
+function formatWorkExperiences(value: ResumeDraft['workExperiences']) {
+  return (value ?? [])
+    .map((experience) => {
+      const meta = [experience.industry, experience.department].filter(Boolean).join(' / ')
+      const period = `${experience.period.start || '未填开始'} 至 ${experience.period.end || '未填结束'}`
+
+      return `${experience.companyName}：${experience.jobTitle}｜${period}${meta ? `｜${meta}` : ''}`
+    })
+    .join('\n')
+}
+
+function formatResumeFieldValue(field: ComparableResumeField, value: unknown) {
+  if (field === 'educationLevel') return educationLevelLabels[String(value ?? '')] ?? ''
+  if (field === 'currentStatus') return currentStatusLabels[String(value ?? '')] ?? ''
+  if (field === 'jobSearchIdentity') return jobSearchIdentityLabels[String(value ?? '')] ?? ''
+
+  return String(value ?? '')
 }
 
 function getProjectIdentity(project: Project) {
@@ -153,9 +237,48 @@ export function getVersionDiff(before: ResumeDraft, after: ResumeDraft) {
     diff.push({
       field,
       label: resumeFieldLabels[field],
-      before: before[field] ?? '',
-      after: after[field] ?? '',
-      textSegments: getTextSegments(before[field], after[field]),
+      before: formatResumeFieldValue(field, before[field]),
+      after: formatResumeFieldValue(field, after[field]),
+      textSegments: getTextSegments(
+        formatResumeFieldValue(field, before[field]),
+        formatResumeFieldValue(field, after[field]),
+      ),
+    })
+  }
+
+  if (normalizeStructuredValue(before.portfolioLinks) !== normalizeStructuredValue(after.portfolioLinks)) {
+    diff.push({
+      field: 'portfolioLinks',
+      label: '作品链接',
+      before: formatPortfolioLinks(before.portfolioLinks),
+      after: formatPortfolioLinks(after.portfolioLinks),
+      textSegments: getTextSegments(
+        formatPortfolioLinks(before.portfolioLinks),
+        formatPortfolioLinks(after.portfolioLinks),
+      ),
+    })
+  }
+
+  if (normalizeStructuredValue(before.languages) !== normalizeStructuredValue(after.languages)) {
+    diff.push({
+      field: 'languages',
+      label: '语言能力',
+      before: formatLanguages(before.languages),
+      after: formatLanguages(after.languages),
+      textSegments: getTextSegments(formatLanguages(before.languages), formatLanguages(after.languages)),
+    })
+  }
+
+  if (normalizeStructuredValue(before.workExperiences) !== normalizeStructuredValue(after.workExperiences)) {
+    diff.push({
+      field: 'workExperiences',
+      label: '过往工作经历',
+      before: formatWorkExperiences(before.workExperiences),
+      after: formatWorkExperiences(after.workExperiences),
+      textSegments: getTextSegments(
+        formatWorkExperiences(before.workExperiences),
+        formatWorkExperiences(after.workExperiences),
+      ),
     })
   }
 

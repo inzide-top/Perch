@@ -15,12 +15,14 @@ function formatDiffValue(value: unknown) {
 
 <template>
   <div class="space-y-3">
-    <article v-for="item in items" :key="item.field" class="rounded-md border border-default bg-elevated/40 p-4">
+    <article v-for="item in items" :key="item.field" class="app-card p-4">
       <div class="mb-3 flex flex-wrap items-center gap-2">
         <p class="text-sm font-medium text-highlighted">{{ item.label }}</p>
       </div>
 
-      <div class="version-diff-text rounded-md border border-default bg-default px-3 py-2 text-sm leading-6">
+      <div
+        class="version-diff-text rounded-xl border border-default bg-[var(--app-surface)] px-3 py-2 text-sm leading-6"
+      >
         <template v-if="item.textSegments?.length">
           <span
             v-for="(segment, index) in item.textSegments"
