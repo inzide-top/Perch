@@ -2,16 +2,24 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave } from 'vue-router'
-import type { ResumeContent, ResumeDraft, ResumeVersion } from '@/types/resume'
+import type {
+  CurrentStatus,
+  EducationLevel,
+  JobSearchIdentity,
+  LanguageAbilityLevel,
+  ResumeContent,
+  ResumeDraft,
+  ResumeVersion,
+} from '@/types/resume'
 import { useResumeStore } from '@/stores'
-import ResumeEdit from './components/Edit.vue'
+import ResumeEdit from './components/Edit/index.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
 import { mockResumeDraft } from './mocks/resumeDraft'
 import { getVersionDiff } from './utils/versionDiff'
 
 type EditorMode = 'create' | 'edit'
 
-const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft'
+const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
 let toastTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const resumeStore = useResumeStore()
@@ -78,10 +86,61 @@ const latestVersionDiffTitle = computed(() => {
 })
 const selectedVersionTargetDirection = computed(() => getVersionTargetDirection(currentVersion.value))
 
+const educationLevelLabels: Record<EducationLevel, string> = {
+  college_or_below: '专科及以下',
+  bachelor: '本科',
+  master: '硕士',
+  doctor_or_above: '博士及以上',
+}
+const currentStatusLabels: Record<CurrentStatus, string> = {
+  employed: '在职',
+  unemployed: '离职',
+  fresh_graduate: '应届',
+  studying: '在读',
+  interning: '实习中',
+}
+const jobSearchIdentityLabels: Record<JobSearchIdentity, string> = {
+  campus: '校招',
+  experienced: '社招',
+  internship: '实习',
+}
+const languageLevelLabels: Record<LanguageAbilityLevel, string> = {
+  basic: '基础了解',
+  reading_writing: '读写良好',
+  daily_communication: '日常交流',
+  working_professional: '工作沟通',
+  fluent: '流利 / 无障碍沟通',
+}
+
 function cloneProjects(sourceProjects: ResumeContent['projects']) {
   return sourceProjects.map((project) => ({
     ...project,
     id: project.id || crypto.randomUUID(),
+  }))
+}
+
+function clonePortfolioLinks(sourceLinks: ResumeContent['portfolioLinks']) {
+  return (sourceLinks ?? []).map((link) => ({
+    ...link,
+    id: link.id || crypto.randomUUID(),
+  }))
+}
+
+function cloneLanguages(sourceLanguages: ResumeContent['languages']) {
+  return (sourceLanguages ?? []).map((language) => ({
+    ...language,
+    id: language.id || crypto.randomUUID(),
+  }))
+}
+
+function cloneWorkExperiences(sourceExperiences: ResumeContent['workExperiences']) {
+  return (sourceExperiences ?? []).map((experience) => ({
+    ...experience,
+    id: experience.id || crypto.randomUUID(),
+    period: {
+      start: experience.period?.start ?? '',
+      end: experience.period?.end ?? '',
+    },
   }))
 }
 
@@ -90,11 +149,31 @@ function buildResumeDraft(title: string, targetDirection: string, content: Resum
     title,
     targetDirection,
     name: content.name,
-    address: content.address ?? '',
+    address: normalizeCityList(content.address),
+    educationLevel: content.educationLevel ?? 'bachelor',
+    school: content.school ?? '',
+    major: content.major ?? '',
+    graduationYear: content.graduationYear ?? '',
+    currentStatus: content.currentStatus ?? 'employed',
+    jobSearchIdentity: content.jobSearchIdentity ?? 'experienced',
+    portfolioLinks: clonePortfolioLinks(content.portfolioLinks),
+    languages: cloneLanguages(content.languages),
+    workExperiences: cloneWorkExperiences(content.workExperiences),
     comment: content.comment ?? '',
     skills: content.skills,
     projects: cloneProjects(content.projects),
   }
+}
+
+function normalizeCityList(cities: ResumeContent['address'] | string | undefined) {
+  if (Array.isArray(cities)) return cities
+  if (typeof cities === 'string' && cities.trim()) return [cities.trim()]
+  return []
+}
+
+function formatCityList(cities: ResumeContent['address'] | string | undefined) {
+  if (Array.isArray(cities)) return cities.length ? cities.join('、') : ''
+  return cities ?? ''
 }
 
 function getVersionTargetDirection(version: ResumeVersion | null) {
@@ -175,6 +254,24 @@ function handleEditorCancel() {
 
 function handleEditorSave(draft: ResumeDraft) {
   if (editorMode.value === 'edit' && editingResumeId.value) {
+    const hasEffectiveTextChange = editorInitialDraft.value
+      ? getVersionDiff(editorInitialDraft.value, draft).length > 0
+      : true
+
+    if (!hasEffectiveTextChange && currentVersion.value) {
+      resumeStore.updateVersion({
+        resumeId: editingResumeId.value,
+        versionId: currentVersion.value.id,
+        title: draft.title,
+        targetDirection: draft.targetDirection,
+        content: draft,
+        changeNote: '格式修正',
+      })
+      showToast('格式调整已保存，未生成新版本')
+      closeEditor()
+      return
+    }
+
     resumeStore.saveNewVersion({
       resumeId: editingResumeId.value,
       title: draft.title,
@@ -204,7 +301,7 @@ function saveCurrentResumeAsMockDraft() {
       currentVersion.value.content,
     ),
   )
-  showToast('当前简历已设为 mock 数据')
+  showToast('当前简历已设为本地 mock 数据')
 }
 
 function openDeleteResumeConfirm(resumeId: string) {
@@ -330,10 +427,12 @@ onBeforeUnmount(() => {
 
     <UCard
       v-if="resumes.length === 0 && editorMode === null"
-      class="flex min-h-[calc(100vh-8rem)] items-center justify-center"
+      class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-md px-6 py-14 text-center">
-        <div class="mx-auto flex size-12 items-center justify-center rounded-full bg-elevated">
+        <div
+          class="mx-auto flex size-12 items-center justify-center rounded-2xl bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] text-[var(--app-accent-strong)]"
+        >
           <UIcon name="i-lucide-file-text" class="size-6 text-muted" />
         </div>
         <p class="mt-4 text-sm font-medium text-highlighted">还没有创建简历</p>
@@ -369,7 +468,7 @@ onBeforeUnmount(() => {
       <div class="grid items-start gap-6 xl:grid-cols-[minmax(18rem,0.85fr)_minmax(0,1.15fr)]">
         <section>
           <div class="mb-3 flex items-center justify-between gap-3">
-            <h2 class="text-base font-semibold text-highlighted">简历主线</h2>
+            <h2 class="app-section-title">简历主线</h2>
             <UBadge color="neutral" variant="subtle" :label="`${resumes.length} 份`" />
           </div>
 
@@ -378,8 +477,12 @@ onBeforeUnmount(() => {
               v-for="resume in resumes"
               :key="resume.id"
               type="button"
-              class="w-full rounded-lg border border-default p-4 text-left transition-colors hover:border-accented hover:bg-elevated"
-              :class="currentResume?.id === resume.id ? 'border-primary bg-elevated' : ''"
+              class="app-card app-card-interactive w-full p-4 text-left"
+              :class="
+                currentResume?.id === resume.id
+                  ? 'border-primary bg-[color-mix(in_srgb,var(--app-accent)_10%,var(--app-surface))]'
+                  : ''
+              "
               @click="resumeStore.selectResume(resume.id)"
             >
               <div class="flex items-start justify-between gap-3">
@@ -398,7 +501,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="currentResume && currentVersion" class="rounded-lg border border-default p-5">
+        <section v-if="currentResume && currentVersion" class="app-panel p-5">
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
               <div class="flex items-center gap-2">
@@ -434,7 +537,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-5 rounded-lg border border-default bg-elevated/30 p-4">
+          <div class="app-panel-muted mt-5 p-4">
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
                 <h3 class="text-sm font-semibold text-highlighted">版本记录</h3>
@@ -492,14 +595,14 @@ onBeforeUnmount(() => {
 
                   <div
                     v-if="!versionDiffTitle"
-                    class="rounded-md border border-dashed border-default px-4 py-6 text-center text-sm text-muted"
+                    class="rounded-xl border border-dashed border-default px-4 py-6 text-center text-sm text-muted"
                   >
                     初始版本，没有上一个版本可对比。
                   </div>
 
                   <div
                     v-else-if="versionDiffItems.length === 0"
-                    class="rounded-md border border-default bg-default px-4 py-6 text-center text-sm text-muted"
+                    class="rounded-xl border border-default bg-[var(--app-surface)] px-4 py-6 text-center text-sm text-muted"
                   >
                     两个版本之间没有有效文本变化。
                   </div>
@@ -511,17 +614,123 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="mt-6 grid gap-4 md:grid-cols-2">
-            <div class="rounded-md border border-default px-4 py-3">
+            <div class="app-card px-4 py-3">
               <p class="text-xs text-muted">姓名</p>
               <p class="mt-1 text-sm font-medium text-highlighted">{{ currentVersion.content.name }}</p>
             </div>
-            <div class="rounded-md border border-default px-4 py-3">
-              <p class="text-xs text-muted">城市</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">{{ currentVersion.content.address || '未填写' }}</p>
+            <div class="app-card px-4 py-3">
+              <p class="text-xs text-muted">意向城市</p>
+              <p class="mt-1 text-sm font-medium text-highlighted">
+                {{ formatCityList(currentVersion.content.address) || '未填写' }}
+              </p>
+            </div>
+            <div class="app-card px-4 py-3">
+              <p class="text-xs text-muted">学历</p>
+              <p class="mt-1 text-sm font-medium text-highlighted">
+                {{ educationLevelLabels[currentVersion.content.educationLevel ?? 'bachelor'] }}
+              </p>
+            </div>
+            <div class="app-card px-4 py-3">
+              <p class="text-xs text-muted">毕业/在读学校 / 专业</p>
+              <p class="mt-1 text-sm font-medium text-highlighted">
+                {{ currentVersion.content.school || '未填写' }}
+                <span v-if="currentVersion.content.major"> · {{ currentVersion.content.major }}</span>
+              </p>
+            </div>
+            <div class="app-card px-4 py-3">
+              <p class="text-xs text-muted">毕业时间</p>
+              <p class="mt-1 text-sm font-medium text-highlighted">
+                {{ currentVersion.content.graduationYear || '未填写' }}
+              </p>
+            </div>
+            <div class="app-card px-4 py-3">
+              <p class="text-xs text-muted">求职身份 / 当前状态</p>
+              <p class="mt-1 text-sm font-medium text-highlighted">
+                {{ jobSearchIdentityLabels[currentVersion.content.jobSearchIdentity ?? 'experienced'] }}
+                · {{ currentStatusLabels[currentVersion.content.currentStatus ?? 'employed'] }}
+              </p>
             </div>
           </div>
 
           <div class="mt-5 space-y-5">
+            <div
+              v-if="currentVersion.content.portfolioLinks?.length || currentVersion.content.languages?.length"
+              class="grid gap-4 md:grid-cols-2"
+            >
+              <div v-if="currentVersion.content.portfolioLinks?.length" class="app-panel-muted p-4">
+                <h3 class="text-sm font-semibold text-highlighted">作品链接</h3>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <a
+                    v-for="link in currentVersion.content.portfolioLinks"
+                    :key="link.id"
+                    :href="link.url"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="rounded-md border border-default px-2 py-1 text-xs text-primary transition-colors hover:bg-elevated"
+                  >
+                    {{ link.label || '作品链接' }}
+                  </a>
+                </div>
+              </div>
+
+              <div v-if="currentVersion.content.languages?.length" class="app-panel-muted p-4">
+                <h3 class="text-sm font-semibold text-highlighted">语言能力</h3>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <UBadge
+                    v-for="language in currentVersion.content.languages"
+                    :key="language.id"
+                    color="neutral"
+                    variant="subtle"
+                    :label="`${language.language} · ${languageLevelLabels[language.level]}`"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div v-if="currentVersion.content.workExperiences?.length">
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <h3 class="text-sm font-semibold text-highlighted">过往工作经历</h3>
+                <UBadge
+                  color="neutral"
+                  variant="subtle"
+                  :label="`${currentVersion.content.workExperiences.length} 段`"
+                />
+              </div>
+
+              <div class="space-y-3">
+                <article
+                  v-for="experience in currentVersion.content.workExperiences"
+                  :key="experience.id"
+                  class="app-card p-4"
+                >
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium text-highlighted">
+                        {{ experience.companyName }} · {{ experience.jobTitle }}
+                      </p>
+                      <p class="mt-1 text-xs text-muted">
+                        {{ experience.period.start }} 至 {{ experience.period.end }}
+                      </p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                      <UBadge
+                        v-if="experience.industry"
+                        color="neutral"
+                        variant="subtle"
+                        :label="experience.industry"
+                      />
+                      <UBadge
+                        v-if="experience.department"
+                        color="neutral"
+                        variant="outline"
+                        :label="experience.department"
+                      />
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
             <div>
               <h3 class="text-sm font-semibold text-highlighted">专业技能</h3>
               <p class="mt-2 whitespace-pre-line text-sm leading-6 text-muted">{{ currentVersion.content.skills }}</p>
@@ -540,7 +749,7 @@ onBeforeUnmount(() => {
 
               <div
                 v-if="currentVersion.content.projects.length === 0"
-                class="rounded-md border border-dashed border-default px-4 py-8 text-center text-sm text-muted"
+                class="rounded-xl border border-dashed border-default px-4 py-8 text-center text-sm text-muted"
               >
                 暂未添加项目经历
               </div>
@@ -549,7 +758,7 @@ onBeforeUnmount(() => {
                 <article
                   v-for="(project, index) in currentVersion.content.projects"
                   :key="`${project.name}-${index}`"
-                  class="rounded-md border border-default p-4"
+                  class="app-card p-4"
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
@@ -601,7 +810,7 @@ onBeforeUnmount(() => {
           />
 
           <section
-            class="relative flex h-full w-full max-w-2xl flex-col border-l border-default bg-default shadow-2xl"
+            class="app-drawer relative flex h-full w-full max-w-2xl flex-col border-l border-default shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="latest-version-diff-title"
@@ -642,7 +851,7 @@ onBeforeUnmount(() => {
       </Transition>
 
       <div v-if="deleteResumeId" class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
-        <div class="w-full max-w-sm rounded-lg border border-default bg-default p-5 shadow-xl">
+        <div class="app-panel w-full max-w-sm p-5 shadow-xl">
           <div class="flex items-start gap-3">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-error/10 text-error">
               <UIcon name="i-lucide-trash-2" class="size-4" />
@@ -666,7 +875,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="isUnsavedConfirmOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
-        <div class="w-full max-w-sm rounded-lg border border-default bg-default p-5 shadow-xl">
+        <div class="app-panel w-full max-w-sm p-5 shadow-xl">
           <div class="flex items-start gap-3">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
               <UIcon name="i-lucide-circle-alert" class="size-4" />

@@ -8,7 +8,7 @@ const stats = [
 
 <template>
   <section class="mx-auto max-w-6xl space-y-6">
-    <div class="rounded-xl border border-default bg-elevated p-6 sm:p-8">
+    <div class="app-empty-state p-6 sm:p-8">
       <UBadge color="primary" variant="subtle" label="MVP · 本地 Mock" />
       <h1 class="mt-4 text-2xl font-semibold text-highlighted sm:text-3xl">从一条清晰的简历版本链开始</h1>
       <p class="mt-3 max-w-2xl text-sm leading-6 text-muted">
@@ -20,7 +20,7 @@ const stats = [
     </div>
 
     <div class="grid gap-4 md:grid-cols-3">
-      <UCard v-for="stat in stats" :key="stat.label">
+      <UCard v-for="stat in stats" :key="stat.label" class="app-card">
         <p class="text-sm text-muted">{{ stat.label }}</p>
         <p class="mt-3 text-3xl font-semibold text-highlighted">{{ stat.value }}</p>
         <p class="mt-2 text-xs text-muted">{{ stat.hint }}</p>
