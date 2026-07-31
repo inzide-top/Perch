@@ -56,6 +56,7 @@ const props = defineProps<{
   mode: EditorMode
   initialDraft: ResumeDraft | null
   mockDraft: ResumeDraft
+  isSaving: boolean
 }>()
 
 const emit = defineEmits<{
@@ -668,11 +669,18 @@ onBeforeUnmount(() => {
           color="neutral"
           variant="ghost"
           class="whitespace-nowrap"
+          :disabled="isSaving"
           @click="requestProjectDraftConfirm('cancel')"
         >
           取消
         </UButton>
-        <UButton icon="i-lucide-save" class="whitespace-nowrap" @click="requestProjectDraftConfirm('save')">
+        <UButton
+          icon="i-lucide-save"
+          class="whitespace-nowrap"
+          :loading="isSaving"
+          :disabled="isSaving"
+          @click="requestProjectDraftConfirm('save')"
+        >
           {{ mode === 'edit' ? '保存修改' : '保存简历' }}
         </UButton>
       </div>

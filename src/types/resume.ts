@@ -1,10 +1,23 @@
 export type Resume = {
   id: string
   title: string
-  targetDirection: string
   currentVersionId: string
   createdAt: string
   updatedAt: string
+}
+
+export type TextDiffSegment = {
+  value: string
+  added?: boolean
+  removed?: boolean
+}
+
+export type VersionDiffItem = {
+  field: string
+  label: string
+  before: unknown
+  after: unknown
+  textSegments?: TextDiffSegment[]
 }
 
 export type ResumeVersion = {
@@ -12,13 +25,15 @@ export type ResumeVersion = {
   resumeId: string
   versionNumber: number
   parentVersionId: string | null
-  targetDirection: string
   content: ResumeContent
+  diffSummary: VersionDiffItem[]
   changeNote: string
   createdAt: string
+  updatedAt: string
 }
 
 export type ResumeContent = {
+  targetDirection: string
   name: string
   address?: string[]
   educationLevel?: EducationLevel
@@ -45,7 +60,6 @@ export type ResumeContent = {
 
 export type ResumeDraft = ResumeContent & {
   title: string
-  targetDirection: string
 }
 
 export type EducationLevel = 'college_or_below' | 'bachelor' | 'master' | 'doctor_or_above'

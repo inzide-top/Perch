@@ -1,0 +1,125 @@
+import type { FastifyPluginAsync } from 'fastify'
+import { interviewRoundParamsSchema, opportunityIdParamsSchema } from '../schemas/opportunity.schema'
+import {
+  addInterviewRound,
+  createJobOpportunity,
+  deleteInterviewRound,
+  getJobOpportunities,
+  getJobOpportunityById,
+  terminateJobOpportunity,
+  updateInterviewRound,
+  updateJobOpportunity,
+  updateJobOpportunityStatus,
+  updateWrittenTestReview,
+} from '../services/opportunity.service'
+import { getJobAnalysis, startJobAnalysis } from '../services/job-analysis.service'
+
+function parseOpportunityId(params: unknown) {
+  return opportunityIdParamsSchema.parse(params).opportunityId
+}
+
+function parseInterviewRoundParams(params: unknown) {
+  return interviewRoundParamsSchema.parse(params)
+}
+
+export const opportunityRoute: FastifyPluginAsync = async (app) => {
+  app.post('/opportunities', async (request, reply) => {
+    const result = await createJobOpportunity(request.body)
+
+    return reply.status(201).send(result)
+  })
+
+  app.get<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/analysis',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await getJobAnalysis(opportunityId)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/analysis',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await startJobAnalysis(opportunityId, request.body)
+
+      return reply.status(202).send(result)
+    },
+  )
+
+  app.get('/opportunities', async (_, reply) => {
+    const result = await getJobOpportunities()
+
+    return reply.status(200).send(result)
+  })
+
+  app.get<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await getJobOpportunityById(opportunityId)
+
+    return reply.status(200).send(result)
+  })
+
+  app.patch<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await updateJobOpportunity(opportunityId, request.body)
+
+    return reply.status(200).send(result)
+  })
+
+  app.patch<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId/status', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await updateJobOpportunityStatus(opportunityId, request.body)
+
+    return reply.status(200).send(result)
+  })
+
+  app.patch<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/written-test-review',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await updateWrittenTestReview(opportunityId, request.body)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/interview-rounds',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await addInterviewRound(opportunityId, request.body)
+
+      return reply.status(201).send(result)
+    },
+  )
+
+  app.patch<{ Params: { opportunityId: string; roundId: string } }>(
+    '/opportunities/:opportunityId/interview-rounds/:roundId',
+    async (request, reply) => {
+      const { opportunityId, roundId } = parseInterviewRoundParams(request.params)
+      const result = await updateInterviewRound(opportunityId, roundId, request.body)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.delete<{ Params: { opportunityId: string; roundId: string } }>(
+    '/opportunities/:opportunityId/interview-rounds/:roundId',
+    async (request, reply) => {
+      const { opportunityId, roundId } = parseInterviewRoundParams(request.params)
+      const result = await deleteInterviewRound(opportunityId, roundId)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId/termination', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await terminateJobOpportunity(opportunityId, request.body)
+
+    return reply.status(200).send(result)
+  })
+}

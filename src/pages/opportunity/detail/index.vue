@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
+import { useToast } from '@nuxt/ui/composables'
 import type {
-  AssessmentRoundType,
+  InterviewRoundType,
   InterviewRound,
   JobOpportunityStatus,
   OpportunityIntentionLevel,
   OpportunityTerminationReasonCode,
 } from '@/types/opportunity'
 import { useOpportunityStore } from '@/stores'
+import { ApiRequestError } from '@/services/http'
 import ChatSection from './components/ChatSection.vue'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
 import MockInterviewSection from './components/MockInterviewSection.vue'
 import type {
-  AssessmentRoundForm,
+  InterviewRoundForm,
   ChatItem,
   DetailNavItem,
   DetailNavKey,
@@ -28,7 +30,8 @@ import type {
 const route = useRoute()
 const router = useRouter()
 const opportunityStore = useOpportunityStore()
-const { opportunities, analyses } = storeToRefs(opportunityStore)
+const toast = useToast()
+const { opportunities, analyses, loadError } = storeToRefs(opportunityStore)
 
 const baseStatusFlow: { label: string; value: JobOpportunityStatus }[] = [
   { label: '待投递', value: 'pending_apply' },
@@ -38,7 +41,6 @@ const baseStatusFlow: { label: string; value: JobOpportunityStatus }[] = [
   { label: '已 Offer', value: 'offered' },
 ]
 const statusLabelMap: Record<JobOpportunityStatus, string> = {
-  analyzing: '分析中',
   pending_apply: '待投递',
   applied: '已投递',
   written_test: '笔试中',
@@ -53,7 +55,7 @@ const intentionOptions: { label: string; value: OpportunityIntentionLevel; descr
   { label: 'B', value: 'B', description: '正常跟进' },
   { label: 'C', value: 'C', description: '低优先级' },
 ]
-const assessmentRoundTypeOptions: { label: string; value: AssessmentRoundType }[] = [
+const interviewRoundTypeOptions: { label: string; value: InterviewRoundType }[] = [
   { label: '基础面', value: 'technical_basic' },
   { label: '项目面', value: 'project' },
   { label: '业务面', value: 'business' },
@@ -87,7 +89,6 @@ const chatItems = ref<ChatItem[]>([
   { id: 2, title: '简历优化讨论', preview: '把智能工牌项目改写得更贴合岗位' },
 ])
 const activeNavKey = ref<DetailNavKey>('dashboard')
-const infoSavedMessage = ref('')
 const isOpportunityInfoEditing = ref(false)
 const statusMotionKey = ref(0)
 const isTerminatePopoverOpen = ref(false)
@@ -95,19 +96,30 @@ const roundDatePopoverOpen = ref(false)
 const roundCalendarDate = ref<unknown>()
 const editingRoundId = ref<string | null>(null)
 const deletingRoundId = ref<string | null>(null)
-const isAssessmentDrawerOpen = ref(false)
+const isInterviewReviewDrawerOpen = ref(false)
 const isWrittenTestReviewDrawerOpen = ref(false)
 const isRoundEditDrawerOpen = ref(false)
 const editRoundDatePopoverOpen = ref(false)
 const editRoundCalendarDate = ref<unknown>()
+const editingRoundInitialValue = ref<InterviewRoundForm | null>(null)
 const writtenTestDatePopoverOpen = ref(false)
 const writtenTestCalendarDate = ref<unknown>()
 const roundDrawerBodyOverflow = ref('')
 const roundDrawerLockCount = ref(0)
 const terminationTarget = ref<'none' | 'new' | string>('none')
-const terminationNewRoundType = ref<AssessmentRoundType>('technical_basic')
+const terminationNewRoundType = ref<InterviewRoundType>('technical_basic')
 const terminationNewRoundTitle = ref('')
 const terminationReasonNote = ref('')
+const isDetailLoading = ref(false)
+const isSavingOpportunityInfo = ref(false)
+const isSavingOpportunityMeta = ref(false)
+const isStatusTransitioning = ref(false)
+const isTogglingWrittenTestFlow = ref(false)
+const isTerminatingOpportunity = ref(false)
+const isAddingInterviewRound = ref(false)
+const isSavingWrittenTestReview = ref(false)
+const isSavingRoundEdit = ref(false)
+const deletingRoundActionId = ref<string | null>(null)
 
 const opportunityId = computed(() => String(route.params.id ?? ''))
 const opportunity = computed(() => opportunities.value.find((item) => item.id === opportunityId.value) ?? null)
@@ -132,14 +144,14 @@ const infoForm = reactive<OpportunityInfoForm>({
   industry: '',
   note: '',
 })
-const roundForm = reactive<AssessmentRoundForm>({
-  type: 'technical_basic' as AssessmentRoundType,
+const roundForm = reactive<InterviewRoundForm>({
+  type: 'technical_basic' as InterviewRoundType,
   title: '',
   date: '',
   note: '',
 })
-const roundEditForm = reactive<AssessmentRoundForm>({
-  type: 'technical_basic' as AssessmentRoundType,
+const roundEditForm = reactive<InterviewRoundForm>({
+  type: 'technical_basic' as InterviewRoundType,
   title: '',
   date: '',
   note: '',
@@ -149,7 +161,7 @@ const writtenTestReviewForm = reactive<WrittenTestReviewForm>({
   reviewNote: '',
 })
 const statusFlow = computed(() => {
-  if (!infoForm.includeWrittenTest) return baseStatusFlow
+  if (!opportunity.value?.includeWrittenTest) return baseStatusFlow
 
   return [
     { label: '待投递', value: 'pending_apply' },
@@ -161,20 +173,20 @@ const statusFlow = computed(() => {
   ] satisfies { label: string; value: JobOpportunityStatus }[]
 })
 const currentStatusIndex = computed(() => {
-  const currentStatus = infoForm.status === 'analyzing' ? 'pending_apply' : infoForm.status
+  const currentStatus = opportunity.value?.status
   return statusFlow.value.findIndex((status) => status.value === currentStatus)
 })
 
 function getStatusFlowIndex(status: JobOpportunityStatus | null | undefined) {
   if (!status) return -1
 
-  const normalizedStatus = status === 'analyzing' ? 'pending_apply' : status
+  const normalizedStatus = status
 
   return statusFlow.value.findIndex((item) => item.value === normalizedStatus)
 }
 
-const assessmentAvailableStatusIndex = computed(() => {
-  if (infoForm.status !== 'closed') return currentStatusIndex.value
+const reviewAvailableStatusIndex = computed(() => {
+  if (opportunity.value?.status !== 'closed') return currentStatusIndex.value
 
   const histories = opportunity.value?.statusHistory ?? []
 
@@ -192,23 +204,23 @@ const assessmentAvailableStatusIndex = computed(() => {
 function hasCurrentStageReached(status: JobOpportunityStatus) {
   const statusIndex = statusFlow.value.findIndex((item) => item.value === status)
 
-  return statusIndex >= 0 && assessmentAvailableStatusIndex.value >= statusIndex
+  return statusIndex >= 0 && reviewAvailableStatusIndex.value >= statusIndex
 }
 
 const canOpenWrittenTestReview = computed(() => {
-  return infoForm.includeWrittenTest && hasCurrentStageReached('written_test')
+  return Boolean(opportunity.value?.includeWrittenTest) && hasCurrentStageReached('written_test')
 })
-const canOpenInterviewAssessment = computed(() => {
+const canOpenInterviewReview = computed(() => {
   return hasCurrentStageReached('interviewing')
 })
 const nextStatus = computed(() => {
-  if (infoForm.status === 'closed') return null
+  if (opportunity.value?.status === 'closed') return null
   if (currentStatusIndex.value < 0) return statusFlow.value[0]
 
   return statusFlow.value[currentStatusIndex.value + 1] ?? null
 })
 const previousStatus = computed(() => {
-  if (infoForm.status === 'closed' || currentStatusIndex.value <= 0) return null
+  if (opportunity.value?.status === 'closed' || currentStatusIndex.value <= 0) return null
 
   return statusFlow.value[currentStatusIndex.value - 1] ?? null
 })
@@ -216,11 +228,25 @@ const hasOpportunityMetaChanged = computed(() => {
   if (!opportunity.value) return false
 
   return (
-    infoForm.includeWrittenTest !== opportunity.value.includeWrittenTest ||
     infoForm.intentionLevel !== opportunity.value.intentionLevel ||
     infoForm.industry !== opportunity.value.industry ||
     infoForm.note.trim() !== opportunity.value.note
   )
+})
+const hasRoundEditChanged = computed(() => {
+  if (!editingRoundInitialValue.value) return false
+
+  return (
+    roundEditForm.type !== editingRoundInitialValue.value.type ||
+    roundEditForm.title !== editingRoundInitialValue.value.title ||
+    roundEditForm.date !== editingRoundInitialValue.value.date ||
+    roundEditForm.note !== editingRoundInitialValue.value.note
+  )
+})
+const canChangeWrittenTestFlow = computed(() => {
+  const status = opportunity.value?.status
+
+  return status !== 'interviewing' && status !== 'oc' && status !== 'offered' && status !== 'closed'
 })
 const interviewRoundDateLabel = computed(() => {
   return roundForm.date || '请输入日期'
@@ -228,14 +254,14 @@ const interviewRoundDateLabel = computed(() => {
 const writtenTestDateLabel = computed(() => {
   return writtenTestReviewForm.scheduledAt || '请输入笔试时间'
 })
-const assessmentRounds = computed(() => opportunity.value?.assessmentRounds ?? [])
-const availableAssessmentRoundTypeOptions = computed(() => {
-  return assessmentRoundTypeOptions
+const interviewRounds = computed(() => opportunity.value?.interviewRounds ?? [])
+const availableInterviewRoundTypeOptions = computed(() => {
+  return interviewRoundTypeOptions
 })
 const terminationRoundOptions = computed(() => {
   return [
-    ...assessmentRounds.value.map((round) => ({
-      label: `${round.title} · ${getAssessmentRoundTypeLabel(round.type)}`,
+    ...interviewRounds.value.map((round) => ({
+      label: `${round.title} · ${getInterviewRoundTypeLabel(round.type)}`,
       value: round.id,
     })),
     { label: '新增一轮并终止', value: 'new' },
@@ -281,7 +307,7 @@ function syncInfoForm() {
     address: normalizeCityList(opportunity.value.address),
     introduction: opportunity.value.introduction,
     description: opportunity.value.description,
-    status: opportunity.value.status === 'analyzing' ? 'pending_apply' : opportunity.value.status,
+    status: opportunity.value.status,
     includeWrittenTest: opportunity.value.includeWrittenTest ?? false,
     intentionLevel: opportunity.value.intentionLevel ?? 'B',
     industry: opportunity.value.industry ?? '',
@@ -311,115 +337,199 @@ function formatCityList(cities: string[] | string | undefined) {
   return normalizedCities.length ? normalizedCities.join('、') : ''
 }
 
-function saveInfo() {
-  if (!opportunity.value) return
+async function loadOpportunityDetail() {
+  if (!opportunityId.value) return
 
-  opportunityStore.updateOpportunity(opportunity.value.id, {
-    company: infoForm.company,
-    jobTitle: infoForm.jobTitle,
-    address: infoForm.address,
-    introduction: infoForm.introduction,
-    description: infoForm.description,
-    status: infoForm.status,
-    includeWrittenTest: infoForm.includeWrittenTest,
-    intentionLevel: infoForm.intentionLevel,
-    industry: infoForm.industry,
-    note: infoForm.note,
-  })
-  infoSavedMessage.value = '机会信息已保存'
-  isOpportunityInfoEditing.value = false
-
-  window.setTimeout(() => {
-    infoSavedMessage.value = ''
-  }, 2500)
+  isDetailLoading.value = true
+  await opportunityStore.loadOpportunityDetail(opportunityId.value)
+  isDetailLoading.value = false
 }
 
-function saveOpportunityMeta() {
+async function saveInfo() {
+  if (!opportunity.value) return
+
+  if (isSavingOpportunityInfo.value) return
+
+  isSavingOpportunityInfo.value = true
+  try {
+    await opportunityStore.updateOpportunity(opportunity.value.id, {
+      company: infoForm.company,
+      jobTitle: infoForm.jobTitle,
+      address: infoForm.address,
+      introduction: infoForm.introduction,
+      description: infoForm.description,
+    })
+    isOpportunityInfoEditing.value = false
+    toast.add({ title: 'JD 信息已保存', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('保存 JD 信息失败', error)
+  } finally {
+    isSavingOpportunityInfo.value = false
+  }
+}
+
+async function saveOpportunityMeta() {
   if (!opportunity.value || !hasOpportunityMetaChanged.value) return
 
-  opportunityStore.updateOpportunity(opportunity.value.id, {
-    includeWrittenTest: infoForm.includeWrittenTest,
-    intentionLevel: infoForm.intentionLevel,
-    industry: infoForm.industry,
-    note: infoForm.note,
-  })
-  infoSavedMessage.value = '偏好信息已保存'
+  if (isSavingOpportunityMeta.value) return
 
-  window.setTimeout(() => {
-    infoSavedMessage.value = ''
-  }, 2500)
+  isSavingOpportunityMeta.value = true
+  try {
+    await opportunityStore.updateOpportunity(opportunity.value.id, {
+      intentionLevel: infoForm.intentionLevel,
+      industry: infoForm.industry,
+      note: infoForm.note,
+    })
+    toast.add({ title: '求职偏好已保存', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('保存求职偏好失败', error)
+  } finally {
+    isSavingOpportunityMeta.value = false
+  }
 }
 
-function changeOpportunityStatus(status: JobOpportunityStatus) {
-  if (!opportunity.value || infoForm.status === status) return
+async function changeOpportunityStatus(status: JobOpportunityStatus) {
+  if (
+    !opportunity.value ||
+    opportunity.value.status === 'closed' ||
+    status === 'closed' ||
+    opportunity.value.status === status ||
+    isStatusTransitioning.value ||
+    isTogglingWrittenTestFlow.value ||
+    isTerminatingOpportunity.value
+  ) {
+    return
+  }
 
-  infoForm.status = status
-  statusMotionKey.value += 1
-  opportunityStore.updateOpportunity(opportunity.value.id, { status, includeWrittenTest: infoForm.includeWrittenTest })
-  isTerminatePopoverOpen.value = false
+  const expectedStatus = opportunity.value.status
+  isStatusTransitioning.value = true
+  try {
+    await opportunityStore.updateOpportunityStatus(opportunity.value.id, { status, expectedStatus })
+    statusMotionKey.value += 1
+    isTerminatePopoverOpen.value = false
+    toast.add({ title: `已更新为${statusLabelMap[status]}`, color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 409) {
+      await loadOpportunityDetail()
+      toast.add({ title: '状态已同步', description: '该机会刚刚被其他操作更新，请按最新状态继续。', color: 'warning' })
+    } else {
+      showRequestError('更新机会状态失败', error)
+    }
+  } finally {
+    isStatusTransitioning.value = false
+  }
 }
 
-function advanceOpportunityStatus() {
+async function advanceOpportunityStatus() {
   if (!opportunity.value || !nextStatus.value) return
 
-  changeOpportunityStatus(nextStatus.value.value)
+  await changeOpportunityStatus(nextStatus.value.value)
 }
 
-function closeOpportunity() {
-  if (!opportunity.value) return
+async function closeOpportunity() {
+  if (
+    !opportunity.value ||
+    isTerminatingOpportunity.value ||
+    isStatusTransitioning.value ||
+    isTogglingWrittenTestFlow.value
+  ) {
+    return
+  }
 
   const relatedRoundId =
     terminationTarget.value === 'none' || terminationTarget.value === 'new' ? undefined : terminationTarget.value
   let finalRelatedRoundId = relatedRoundId
 
-  if (terminationTarget.value === 'new') {
-    const round = opportunityStore.addAssessmentRound(opportunity.value.id, {
-      type: terminationNewRoundType.value,
-      title: terminationNewRoundTitle.value || getDefaultNewTerminationRoundTitle(),
-      status: 'completed',
-      result: 'failed',
-      note: terminationReasonNote.value,
-      reviewNote: terminationReasonNote.value,
+  isTerminatingOpportunity.value = true
+  try {
+    if (terminationTarget.value === 'new') {
+      const round = await opportunityStore.addInterviewRound(opportunity.value.id, {
+        type: terminationNewRoundType.value,
+        title: terminationNewRoundTitle.value || getDefaultNewTerminationRoundTitle(),
+        status: 'completed',
+        result: 'failed',
+        note: terminationReasonNote.value,
+        reviewNote: terminationReasonNote.value,
+      })
+      finalRelatedRoundId = round?.id
+    }
+
+    await opportunityStore.terminateOpportunity(opportunity.value.id, {
+      relatedInterviewRoundId: finalRelatedRoundId,
+      reasonCode: getDefaultTerminationReasonCode(),
+      reasonNote: terminationReasonNote.value,
     })
-    finalRelatedRoundId = round?.id
+    statusMotionKey.value += 1
+    isTerminatePopoverOpen.value = false
+    toast.add({ title: '机会流程已终止', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('终止流程失败', error)
+  } finally {
+    isTerminatingOpportunity.value = false
   }
-
-  opportunityStore.terminateOpportunity(opportunity.value.id, {
-    relatedAssessmentRoundId: finalRelatedRoundId,
-    reasonCode: getDefaultTerminationReasonCode(),
-    reasonNote: terminationReasonNote.value,
-  })
-
-  infoForm.status = 'closed'
-  statusMotionKey.value += 1
-  isTerminatePopoverOpen.value = false
 }
 
-function goToPreviousStatus() {
+async function goToPreviousStatus() {
   if (!previousStatus.value) return
 
-  changeOpportunityStatus(previousStatus.value.value)
+  await changeOpportunityStatus(previousStatus.value.value)
 }
 
-function toggleIncludeWrittenTest() {
-  infoForm.includeWrittenTest = !infoForm.includeWrittenTest
+async function toggleIncludeWrittenTest() {
+  if (
+    !opportunity.value ||
+    !canChangeWrittenTestFlow.value ||
+    isTogglingWrittenTestFlow.value ||
+    isStatusTransitioning.value ||
+    isTerminatingOpportunity.value
+  ) {
+    return
+  }
 
-  if (!infoForm.includeWrittenTest && infoForm.status === 'written_test') {
-    changeOpportunityStatus('applied')
+  const nextIncludeWrittenTest = !opportunity.value.includeWrittenTest
+  const previousStatus = opportunity.value.status
+  isTogglingWrittenTestFlow.value = true
+
+  try {
+    const updatedOpportunity = await opportunityStore.updateOpportunity(opportunity.value.id, {
+      includeWrittenTest: nextIncludeWrittenTest,
+    })
+    statusMotionKey.value += 1
+    toast.add({
+      title: nextIncludeWrittenTest ? '已开启笔试流程' : '已关闭笔试流程',
+      description:
+        !nextIncludeWrittenTest && updatedOpportunity.status === 'applied' && previousStatus === 'written_test'
+          ? '当前状态已同步回退到已投递，笔试复盘仍会保留。'
+          : undefined,
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+    })
+  } catch (error) {
+    showRequestError('更新笔试流程失败', error)
+  } finally {
+    isTogglingWrittenTestFlow.value = false
   }
 }
 
-function addInterviewRound() {
-  if (!opportunity.value || !roundForm.title.trim()) return
+async function addInterviewRound() {
+  if (!opportunity.value || !roundForm.title.trim() || isAddingInterviewRound.value) return
 
-  opportunityStore.addAssessmentRound(opportunity.value.id, {
-    type: roundForm.type,
-    title: roundForm.title,
-    scheduledAt: roundForm.date,
-    note: roundForm.note,
-  })
-  Object.assign(roundForm, { type: getDefaultRoundType(), title: '', date: '', note: '' })
-  roundCalendarDate.value = undefined
+  isAddingInterviewRound.value = true
+  try {
+    await opportunityStore.addInterviewRound(opportunity.value.id, {
+      type: roundForm.type,
+      title: roundForm.title,
+      scheduledAt: roundForm.date,
+      note: roundForm.note,
+    })
+    Object.assign(roundForm, { type: getDefaultRoundType(), title: '', date: '', note: '' })
+    roundCalendarDate.value = undefined
+    toast.add({ title: '测评记录已添加', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('添加测评记录失败', error)
+  } finally {
+    isAddingInterviewRound.value = false
+  }
 }
 
 function handleRoundDateSelect(value: unknown) {
@@ -464,15 +574,17 @@ function unlockRoundDrawerScroll() {
   }
 }
 
-function openAssessmentDrawer() {
-  if (!canOpenInterviewAssessment.value) return
+function openInterviewReviewDrawer() {
+  if (!canOpenInterviewReview.value) return
 
-  isAssessmentDrawerOpen.value = true
+  isInterviewReviewDrawerOpen.value = true
   lockRoundDrawerScroll()
 }
 
-function closeAssessmentDrawer() {
-  isAssessmentDrawerOpen.value = false
+function closeInterviewReviewDrawer() {
+  if (isAddingInterviewRound.value) return
+
+  isInterviewReviewDrawerOpen.value = false
   unlockRoundDrawerScroll()
 }
 
@@ -483,19 +595,29 @@ function openWrittenTestReviewDrawer() {
   lockRoundDrawerScroll()
 }
 
-function closeWrittenTestReviewDrawer() {
+function closeWrittenTestReviewDrawer(force = false) {
+  if (isSavingWrittenTestReview.value && !force) return
+
   isWrittenTestReviewDrawerOpen.value = false
   unlockRoundDrawerScroll()
 }
 
-function saveWrittenTestReview() {
-  if (!opportunity.value) return
+async function saveWrittenTestReview() {
+  if (!opportunity.value || isSavingWrittenTestReview.value) return
 
-  opportunityStore.updateWrittenTestReview(opportunity.value.id, {
-    scheduledAt: writtenTestReviewForm.scheduledAt,
-    reviewNote: writtenTestReviewForm.reviewNote,
-  })
-  closeWrittenTestReviewDrawer()
+  isSavingWrittenTestReview.value = true
+  try {
+    await opportunityStore.updateWrittenTestReview(opportunity.value.id, {
+      scheduledAt: writtenTestReviewForm.scheduledAt,
+      reviewNote: writtenTestReviewForm.reviewNote,
+    })
+    closeWrittenTestReviewDrawer(true)
+    toast.add({ title: '笔试复盘已保存', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('保存笔试复盘失败', error)
+  } finally {
+    isSavingWrittenTestReview.value = false
+  }
 }
 
 function openRoundEditDrawer(round: InterviewRound) {
@@ -506,46 +628,83 @@ function openRoundEditDrawer(round: InterviewRound) {
     date: round.scheduledAt,
     note: round.note,
   })
+  editingRoundInitialValue.value = { ...roundEditForm }
   editRoundCalendarDate.value = undefined
   isRoundEditDrawerOpen.value = true
   lockRoundDrawerScroll()
 }
 
-function closeRoundEditDrawer() {
+function closeRoundEditDrawer(force = false) {
+  if (isSavingRoundEdit.value && !force) return
+
   isRoundEditDrawerOpen.value = false
   editingRoundId.value = null
+  editingRoundInitialValue.value = null
   unlockRoundDrawerScroll()
 }
 
-function saveRoundEdit() {
-  if (!opportunity.value || !editingRoundId.value || !roundEditForm.title.trim()) return
+async function saveRoundEdit() {
+  if (
+    !opportunity.value ||
+    !editingRoundId.value ||
+    !roundEditForm.title.trim() ||
+    !hasRoundEditChanged.value ||
+    isSavingRoundEdit.value
+  ) {
+    return
+  }
 
-  opportunityStore.updateAssessmentRound(opportunity.value.id, editingRoundId.value, {
-    type: roundEditForm.type,
-    title: roundEditForm.title,
-    scheduledAt: roundEditForm.date,
-    note: roundEditForm.note,
+  isSavingRoundEdit.value = true
+  try {
+    await opportunityStore.updateInterviewRound(opportunity.value.id, editingRoundId.value, {
+      type: roundEditForm.type,
+      title: roundEditForm.title,
+      scheduledAt: roundEditForm.date,
+      note: roundEditForm.note,
+    })
+    closeRoundEditDrawer(true)
+    toast.add({ title: '测评记录已保存', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('保存测评记录失败', error)
+  } finally {
+    isSavingRoundEdit.value = false
+  }
+}
+
+async function confirmDeleteRound(roundId: string) {
+  if (!opportunity.value || deletingRoundActionId.value) return
+
+  deletingRoundActionId.value = roundId
+  try {
+    await opportunityStore.deleteInterviewRound(opportunity.value.id, roundId)
+    deletingRoundId.value = null
+    toast.add({ title: '测评记录已删除', color: 'success', icon: 'i-lucide-circle-check' })
+  } catch (error) {
+    showRequestError('删除测评记录失败', error)
+  } finally {
+    deletingRoundActionId.value = null
+  }
+}
+
+function showRequestError(fallbackTitle: string, error: unknown) {
+  toast.add({
+    title: fallbackTitle,
+    description: error instanceof Error ? error.message : '请稍后重试。',
+    color: 'error',
+    icon: 'i-lucide-circle-alert',
   })
-  closeRoundEditDrawer()
 }
 
-function confirmDeleteRound(roundId: string) {
-  if (!opportunity.value) return
-
-  opportunityStore.deleteInterviewRound(opportunity.value.id, roundId)
-  deletingRoundId.value = null
+function getInterviewRoundTypeLabel(type: InterviewRoundType) {
+  return interviewRoundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
 }
 
-function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
-  return assessmentRoundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
-}
-
-function getDefaultRoundType(): AssessmentRoundType {
+function getDefaultRoundType(): InterviewRoundType {
   return 'technical_basic'
 }
 
 function getDefaultNewTerminationRoundTitle() {
-  return `第 ${assessmentRounds.value.length + 1} 轮`
+  return `第 ${interviewRounds.value.length + 1} 轮`
 }
 
 function getDefaultTerminationReasonCode(): OpportunityTerminationReasonCode {
@@ -559,22 +718,22 @@ function getDefaultTerminationReasonCode(): OpportunityTerminationReasonCode {
   return 'other'
 }
 
-function canOpenAssessmentFromStatus(status: JobOpportunityStatus) {
+function canOpenReviewFromStatus(status: JobOpportunityStatus) {
   if (status === 'written_test') return canOpenWrittenTestReview.value
-  if (status === 'interviewing') return canOpenInterviewAssessment.value
+  if (status === 'interviewing') return canOpenInterviewReview.value
 
   return false
 }
 
-function openAssessmentPanelFromStatus(status: JobOpportunityStatus) {
-  if (!canOpenAssessmentFromStatus(status)) return
+function openReviewPanelFromStatus(status: JobOpportunityStatus) {
+  if (!canOpenReviewFromStatus(status)) return
 
   if (status === 'written_test') {
     openWrittenTestReviewDrawer()
     return
   }
 
-  openAssessmentDrawer()
+  openInterviewReviewDrawer()
 }
 
 function createChat() {
@@ -621,13 +780,16 @@ watch(
 watch(isTerminatePopoverOpen, (isOpen) => {
   if (!isOpen) return
 
-  terminationTarget.value = assessmentRounds.value[0]?.id ?? 'none'
+  terminationTarget.value = interviewRounds.value[0]?.id ?? 'none'
   terminationNewRoundType.value = getDefaultRoundType()
   terminationNewRoundTitle.value = ''
   terminationReasonNote.value = ''
 })
+onMounted(() => {
+  void loadOpportunityDetail()
+})
 onBeforeUnmount(() => {
-  if (isAssessmentDrawerOpen.value || isWrittenTestReviewDrawerOpen.value || isRoundEditDrawerOpen.value) {
+  if (isInterviewReviewDrawerOpen.value || isWrittenTestReviewDrawerOpen.value || isRoundEditDrawerOpen.value) {
     roundDrawerLockCount.value = 1
     unlockRoundDrawerScroll()
   }
@@ -635,7 +797,27 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-if="opportunity" class="min-h-[calc(100vh-4rem)] bg-[var(--app-bg)]">
+  <section v-if="isDetailLoading && !opportunity" class="app-panel-muted p-10 text-center">
+    <UIcon name="i-lucide-loader-circle" class="mx-auto size-5 animate-spin text-muted" />
+    <p class="mt-3 text-sm text-muted">正在加载机会详情...</p>
+  </section>
+
+  <section v-else-if="loadError && !opportunity" class="app-empty-state p-10 text-center">
+    <p class="text-sm text-error">{{ loadError }}</p>
+    <UButton
+      class="mt-4"
+      color="neutral"
+      variant="outline"
+      icon="i-lucide-rotate-cw"
+      :loading="isDetailLoading"
+      :disabled="isDetailLoading"
+      @click="loadOpportunityDetail"
+    >
+      重新加载
+    </UButton>
+  </section>
+
+  <section v-else-if="opportunity" class="min-h-[calc(100vh-4rem)] bg-[var(--app-bg)]">
     <div
       class="mx-4 mt-4 rounded-[22px] border border-[var(--app-border)] bg-[color-mix(in_srgb,var(--app-surface)_96%,transparent)] px-5 py-4 shadow-[var(--app-shadow-panel)] backdrop-blur-xl lg:mx-6 lg:px-6"
     >
@@ -742,7 +924,7 @@ onBeforeUnmount(() => {
           v-model:written-test-review-form="writtenTestReviewForm"
           v-model:written-test-date-popover-open="writtenTestDatePopoverOpen"
           v-model:written-test-calendar-date="writtenTestCalendarDate"
-          v-model:is-assessment-drawer-open="isAssessmentDrawerOpen"
+          v-model:is-interview-review-drawer-open="isInterviewReviewDrawerOpen"
           v-model:round-form="roundForm"
           v-model:round-date-popover-open="roundDatePopoverOpen"
           v-model:round-calendar-date="roundCalendarDate"
@@ -761,11 +943,21 @@ onBeforeUnmount(() => {
           :next-status="nextStatus"
           :intention-options="intentionOptions"
           :has-opportunity-meta-changed="hasOpportunityMetaChanged"
-          :info-saved-message="infoSavedMessage"
+          :has-round-edit-changed="hasRoundEditChanged"
+          :is-saving-opportunity-info="isSavingOpportunityInfo"
+          :is-saving-opportunity-meta="isSavingOpportunityMeta"
+          :is-status-transitioning="isStatusTransitioning"
+          :is-toggling-written-test-flow="isTogglingWrittenTestFlow"
+          :can-change-written-test-flow="canChangeWrittenTestFlow"
+          :is-terminating-opportunity="isTerminatingOpportunity"
+          :is-adding-interview-round="isAddingInterviewRound"
+          :is-saving-written-test-review="isSavingWrittenTestReview"
+          :is-saving-round-edit="isSavingRoundEdit"
+          :deleting-round-action-id="deletingRoundActionId"
           :can-open-written-test-review="canOpenWrittenTestReview"
-          :can-open-interview-assessment="canOpenInterviewAssessment"
+          :can-open-interview-review="canOpenInterviewReview"
           :termination-round-options="terminationRoundOptions"
-          :available-assessment-round-type-options="availableAssessmentRoundTypeOptions"
+          :available-interview-round-type-options="availableInterviewRoundTypeOptions"
           :interview-round-date-label="interviewRoundDateLabel"
           :written-test-date-label="writtenTestDateLabel"
           @go-to-previous-status="goToPreviousStatus"
@@ -774,12 +966,12 @@ onBeforeUnmount(() => {
           @toggle-include-written-test="toggleIncludeWrittenTest"
           @save-info="saveInfo"
           @save-opportunity-meta="saveOpportunityMeta"
-          @open-assessment-panel-from-status="openAssessmentPanelFromStatus"
+          @open-review-panel-from-status="openReviewPanelFromStatus"
           @open-written-test-review-drawer="openWrittenTestReviewDrawer"
           @close-written-test-review-drawer="closeWrittenTestReviewDrawer"
           @save-written-test-review="saveWrittenTestReview"
-          @open-assessment-drawer="openAssessmentDrawer"
-          @close-assessment-drawer="closeAssessmentDrawer"
+          @open-interview-review-drawer="openInterviewReviewDrawer"
+          @close-interview-review-drawer="closeInterviewReviewDrawer"
           @add-interview-round="addInterviewRound"
           @handle-round-date-select="handleRoundDateSelect"
           @open-round-edit-drawer="openRoundEditDrawer"

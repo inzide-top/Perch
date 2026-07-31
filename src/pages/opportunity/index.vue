@@ -2,20 +2,19 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
+import { useToast } from '@nuxt/ui/composables'
 import type { JobOpportunityStatus } from '@/types/opportunity'
-import { useOpportunityStore } from '@/stores'
+import { useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import CityPicker from '@/components/CityPicker.vue'
 import { defaultMockJobDraft } from './mocks/jobDraft'
-import { mockResumeIdentity } from './mocks/analysis'
 
 type JobFormField = 'company' | 'jobTitle' | 'description'
 
 const mockJobDraftStorageKey = 'agent-seek-employment:mock-job-draft:v2'
-let mockSavedTimer: ReturnType<typeof window.setTimeout> | null = null
+let mockSavedTimer: number | null = null
 
 const statusOptions: { label: string; value: JobOpportunityStatus | 'all' }[] = [
   { label: '全部', value: 'all' },
-  { label: '分析中', value: 'analyzing' },
   { label: '待投递', value: 'pending_apply' },
   { label: '已投递', value: 'applied' },
   { label: '笔试中', value: 'written_test' },
@@ -26,7 +25,6 @@ const statusOptions: { label: string; value: JobOpportunityStatus | 'all' }[] = 
 ]
 
 const statusLabelMap: Record<JobOpportunityStatus, string> = {
-  analyzing: '分析中',
   pending_apply: '待投递',
   applied: '已投递',
   written_test: '笔试中',
@@ -37,12 +35,17 @@ const statusLabelMap: Record<JobOpportunityStatus, string> = {
 }
 
 const opportunityStore = useOpportunityStore()
+const resumeStore = useResumeStore()
+const settingsStore = useSettingsStore()
 const router = useRouter()
-const { opportunities, analyses } = storeToRefs(opportunityStore)
+const toast = useToast()
+const { opportunities, analyses, analysisTasks, isLoading, loadError } = storeToRefs(opportunityStore)
 
 const selectedStatus = ref<JobOpportunityStatus | 'all'>('all')
 const isStatusFilterOpen = ref(false)
 const isCreateModalOpen = ref(false)
+const isCreatingOpportunity = ref(false)
+const openingOpportunityId = ref<string | null>(null)
 const originalBodyOverflow = ref('')
 const mockSavedMessage = ref('')
 const statusFilterRef = ref<HTMLElement | null>(null)
@@ -165,17 +168,49 @@ function validateForm() {
   return !Object.values(errors).some(Boolean)
 }
 
-function createOpportunity() {
-  if (!validateForm()) return
+async function createOpportunity() {
+  if (!validateForm() || isCreatingOpportunity.value) return
 
-  const opportunity = opportunityStore.createOpportunity(form)
-  opportunityStore.generateMockAnalysis(opportunity.id, mockResumeIdentity.resumeId, mockResumeIdentity.resumeVersionId)
-  resetForm()
-  closeCreateModal()
+  const currentResume = resumeStore.currentResume
+  const currentVersion = resumeStore.currentVersion
+  if (!currentResume || !currentVersion) {
+    toast.add({ title: '请先创建并保存一份简历', color: 'error', icon: 'i-lucide-circle-alert' })
+    return
+  }
+  if (!settingsStore.llm.apiKey.trim()) {
+    toast.add({ title: '请先在系统设置中填写 API Key', color: 'error', icon: 'i-lucide-circle-alert' })
+    return
+  }
+
+  isCreatingOpportunity.value = true
+  try {
+    const opportunity = await opportunityStore.createOpportunity(form)
+    await opportunityStore.startJobAnalysis(opportunity.id, {
+      resumeId: currentResume.id,
+      resumeVersionId: currentVersion.id,
+      modelConnection: settingsStore.llm,
+    })
+    resetForm()
+    closeCreateModal()
+    toast.add({ title: 'JD 已创建，正在生成分析', color: 'success', icon: 'i-lucide-wand-sparkles' })
+  } catch (error) {
+    toast.add({
+      title: '创建 JD 分析失败',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+      icon: 'i-lucide-circle-alert',
+    })
+  } finally {
+    isCreatingOpportunity.value = false
+  }
 }
 
 function getOpportunityAnalysis(opportunityId: string) {
   return analyses.value.find((analysis) => analysis.jobOpportunityId === opportunityId) ?? null
+}
+
+function getOpportunityAnalysisTask(opportunityId: string) {
+  return analysisTasks.value.find((task) => task.opportunityId === opportunityId) ?? null
 }
 
 function formatCityList(cities: string[] | string | undefined) {
@@ -183,17 +218,25 @@ function formatCityList(cities: string[] | string | undefined) {
   return cities ?? ''
 }
 
-function openOpportunityDetail(opportunityId: string) {
-  if (!getOpportunityAnalysis(opportunityId)) {
-    opportunityStore.generateMockAnalysis(
-      opportunityId,
-      mockResumeIdentity.resumeId,
-      mockResumeIdentity.resumeVersionId,
-    )
-  }
+async function openOpportunityDetail(opportunityId: string) {
+  if (openingOpportunityId.value) return
 
-  opportunityStore.selectOpportunity(opportunityId)
-  void router.push({ name: 'opportunity-detail', params: { id: opportunityId } })
+  if (!getOpportunityAnalysis(opportunityId)) return
+
+  openingOpportunityId.value = opportunityId
+  try {
+    opportunityStore.selectOpportunity(opportunityId)
+    await router.push({ name: 'opportunity-detail', params: { id: opportunityId } })
+  } catch (error) {
+    toast.add({
+      title: '打开机会详情失败',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+      icon: 'i-lucide-circle-alert',
+    })
+  } finally {
+    openingOpportunityId.value = null
+  }
 }
 
 function selectStatus(value: JobOpportunityStatus | 'all') {
@@ -209,6 +252,7 @@ function closeStatusFilterWhenClickOutside(event: MouseEvent) {
 
 onMounted(() => {
   document.addEventListener('mousedown', closeStatusFilterWhenClickOutside)
+  void opportunityStore.loadOpportunities()
 })
 
 onBeforeUnmount(() => {
@@ -221,8 +265,20 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="w-full">
+    <div v-if="isLoading && opportunities.length === 0" class="app-panel-muted p-10 text-center">
+      <UIcon name="i-lucide-loader-circle" class="mx-auto size-5 animate-spin text-muted" />
+      <p class="mt-3 text-sm text-muted">正在加载机会记录...</p>
+    </div>
+
+    <div v-else-if="loadError" class="app-panel-muted p-10 text-center">
+      <p class="text-sm text-error">{{ loadError }}</p>
+      <UButton class="mt-4" color="neutral" variant="outline" @click="opportunityStore.loadOpportunities">
+        重新加载
+      </UButton>
+    </div>
+
     <UCard
-      v-if="opportunities.length === 0"
+      v-else-if="opportunities.length === 0"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-lg px-6 py-14 text-center">
@@ -298,10 +354,20 @@ onBeforeUnmount(() => {
         <article
           v-for="opportunity in filteredOpportunities"
           :key="opportunity.id"
-          class="app-card app-card-interactive cursor-pointer p-4"
+          class="app-card p-4"
+          :class="{
+            'app-card-interactive cursor-pointer': Boolean(getOpportunityAnalysis(opportunity.id)),
+            'cursor-default': !getOpportunityAnalysis(opportunity.id),
+            'pointer-events-none opacity-70': Boolean(openingOpportunityId),
+          }"
           role="button"
           tabindex="0"
-          :aria-label="`进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`"
+          :aria-busy="openingOpportunityId === opportunity.id"
+          :aria-label="
+            getOpportunityAnalysis(opportunity.id)
+              ? `进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`
+              : `${opportunity.company} ${opportunity.jobTitle} 正在等待分析结果`
+          "
           @click="openOpportunityDetail(opportunity.id)"
           @keydown.enter.prevent="openOpportunityDetail(opportunity.id)"
         >
@@ -315,6 +381,7 @@ onBeforeUnmount(() => {
                   variant="subtle"
                   :label="formatCityList(opportunity.address)"
                 />
+                <UBadge v-if="opportunity.status === 'closed'" color="error" variant="subtle" label="流程终止" />
               </div>
               <p class="mt-1 truncate text-sm text-muted">{{ opportunity.jobTitle }}</p>
             </div>
@@ -331,13 +398,32 @@ onBeforeUnmount(() => {
                 </span>
               </div>
               <div
-                v-else
+                v-else-if="getOpportunityAnalysisTask(opportunity.id)?.status === 'pending' || getOpportunityAnalysisTask(opportunity.id)?.status === 'processing'"
+                class="rounded-xl border border-default bg-[color-mix(in_srgb,var(--app-surface-muted)_82%,transparent)] px-3 py-2 text-sm text-muted"
+              >
+                <span class="inline-flex items-center gap-1.5">
+                  <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+                  分析中
+                </span>
+              </div>
+              <div
+                v-else-if="getOpportunityAnalysisTask(opportunity.id)?.status === 'failed'"
+                class="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error"
+              >
+                分析失败
+              </div>
+              <div
+                v-else-if="opportunity.status !== 'closed'"
                 class="rounded-xl border border-default bg-[color-mix(in_srgb,var(--app-surface-muted)_82%,transparent)] px-3 py-2 text-sm text-muted"
               >
                 {{ statusLabelMap[opportunity.status] }}
               </div>
-              <span class="inline-flex size-8 items-center justify-center rounded-md text-muted">
-                <UIcon name="i-lucide-chevron-right" class="size-4" />
+              <span v-if="getOpportunityAnalysis(opportunity.id)" class="inline-flex size-8 items-center justify-center rounded-md text-muted">
+                <UIcon
+                  :name="openingOpportunityId === opportunity.id ? 'i-lucide-loader-circle' : 'i-lucide-chevron-right'"
+                  class="size-4"
+                  :class="{ 'animate-spin': openingOpportunityId === opportunity.id }"
+                />
               </span>
             </div>
           </div>
@@ -353,7 +439,14 @@ onBeforeUnmount(() => {
               <h2 class="text-lg font-semibold text-highlighted">创建 JD 分析</h2>
               <p class="mt-1 text-sm text-muted">先保存 JD 信息，后续会基于简历版本生成结构化分析。</p>
             </div>
-            <UButton type="button" color="neutral" variant="ghost" icon="i-lucide-x" @click="closeCreateModal" />
+            <UButton
+              type="button"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-x"
+              :disabled="isCreatingOpportunity"
+              @click="closeCreateModal"
+            />
           </header>
 
           <div class="max-h-[70vh] overflow-y-auto px-6 py-5">
@@ -450,8 +543,24 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="flex justify-end gap-2">
-              <UButton type="button" color="neutral" variant="ghost" @click="closeCreateModal">取消</UButton>
-              <UButton type="button" icon="i-lucide-check" @click="createOpportunity">确认创建</UButton>
+              <UButton
+                type="button"
+                color="neutral"
+                variant="ghost"
+                :disabled="isCreatingOpportunity"
+                @click="closeCreateModal"
+              >
+                取消
+              </UButton>
+              <UButton
+                type="button"
+                icon="i-lucide-check"
+                :loading="isCreatingOpportunity"
+                :disabled="isCreatingOpportunity"
+                @click="createOpportunity"
+              >
+                确认创建
+              </UButton>
             </div>
           </footer>
         </div>

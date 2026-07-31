@@ -1,5 +1,5 @@
-import type { ResumeContent, ResumeDraft } from '@/types/resume'
 import { diffWordsWithSpace } from 'diff'
+import type { ResumeContent, ResumeDraft, TextDiffSegment, VersionDiffItem } from '@/types/resume'
 
 type Project = ResumeContent['projects'][number]
 type ComparableResumeField =
@@ -13,20 +13,6 @@ type ComparableResumeField =
   | 'currentStatus'
   | 'jobSearchIdentity'
 type ComparableProjectField = keyof Project
-
-export type TextDiffSegment = {
-  value: string
-  added?: boolean
-  removed?: boolean
-}
-
-export type VersionDiffItem = {
-  field: string
-  label: string
-  before: unknown
-  after: unknown
-  textSegments?: TextDiffSegment[]
-}
 
 const resumeFieldLabels: Record<ComparableResumeField, string> = {
   comment: '自我评价',

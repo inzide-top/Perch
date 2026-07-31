@@ -13,8 +13,10 @@ app.use(pinia)
 app.use(router)
 app.use(ui)
 
-useResumeStore(pinia).hydrateFromStorage()
-useOpportunityStore(pinia).hydrateFromStorage()
+void useResumeStore(pinia).loadFromApi()
+const opportunityStore = useOpportunityStore(pinia)
+opportunityStore.hydrateFromStorage()
+void opportunityStore.loadOpportunities()
 useSettingsStore(pinia).hydrateFromStorage()
 
 app.mount('#app')

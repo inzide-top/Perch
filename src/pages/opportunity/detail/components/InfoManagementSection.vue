@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type {
-  AssessmentRoundType,
+  InterviewRoundType,
   InterviewRound,
   JobAnalysis,
   JobOpportunity,
@@ -9,7 +9,7 @@ import type {
 } from '@/types/opportunity'
 import CityPicker from '@/components/CityPicker.vue'
 import { industryOptions } from '@/data/industryOptions'
-import type { AssessmentRoundForm, OpportunityInfoForm, WrittenTestReviewForm } from '../types'
+import type { InterviewRoundForm, OpportunityInfoForm, WrittenTestReviewForm } from '../types'
 
 type StatusFlowItem = {
   label: string
@@ -33,11 +33,21 @@ const props = defineProps<{
   nextStatus: StatusFlowItem | null
   intentionOptions: IntentionOption[]
   hasOpportunityMetaChanged: boolean
-  infoSavedMessage: string
+  hasRoundEditChanged: boolean
+  isSavingOpportunityInfo: boolean
+  isSavingOpportunityMeta: boolean
+  isStatusTransitioning: boolean
+  isTogglingWrittenTestFlow: boolean
+  canChangeWrittenTestFlow: boolean
+  isTerminatingOpportunity: boolean
+  isAddingInterviewRound: boolean
+  isSavingWrittenTestReview: boolean
+  isSavingRoundEdit: boolean
+  deletingRoundActionId: string | null
   canOpenWrittenTestReview: boolean
-  canOpenInterviewAssessment: boolean
+  canOpenInterviewReview: boolean
   terminationRoundOptions: { label: string; value: string }[]
-  availableAssessmentRoundTypeOptions: { label: string; value: AssessmentRoundType }[]
+  availableInterviewRoundTypeOptions: { label: string; value: InterviewRoundType }[]
   interviewRoundDateLabel: string
   writtenTestDateLabel: string
 }>()
@@ -49,12 +59,12 @@ const emit = defineEmits<{
   toggleIncludeWrittenTest: []
   saveInfo: []
   saveOpportunityMeta: []
-  openAssessmentPanelFromStatus: [status: JobOpportunityStatus]
+  openReviewPanelFromStatus: [status: JobOpportunityStatus]
   openWrittenTestReviewDrawer: []
   closeWrittenTestReviewDrawer: []
   saveWrittenTestReview: []
-  openAssessmentDrawer: []
-  closeAssessmentDrawer: []
+  openInterviewReviewDrawer: []
+  closeInterviewReviewDrawer: []
   addInterviewRound: []
   handleRoundDateSelect: [value: unknown]
   openRoundEditDrawer: [round: InterviewRound]
@@ -69,51 +79,55 @@ const infoForm = defineModel<OpportunityInfoForm>('infoForm', { required: true }
 const isOpportunityInfoEditing = defineModel<boolean>('isOpportunityInfoEditing', { required: true })
 const isTerminatePopoverOpen = defineModel<boolean>('isTerminatePopoverOpen', { required: true })
 const terminationTarget = defineModel<'none' | 'new' | string>('terminationTarget', { required: true })
-const terminationNewRoundType = defineModel<AssessmentRoundType>('terminationNewRoundType', { required: true })
+const terminationNewRoundType = defineModel<InterviewRoundType>('terminationNewRoundType', { required: true })
 const terminationNewRoundTitle = defineModel<string>('terminationNewRoundTitle', { required: true })
 const terminationReasonNote = defineModel<string>('terminationReasonNote', { required: true })
 const isWrittenTestReviewDrawerOpen = defineModel<boolean>('isWrittenTestReviewDrawerOpen', { required: true })
 const writtenTestReviewForm = defineModel<WrittenTestReviewForm>('writtenTestReviewForm', { required: true })
 const writtenTestDatePopoverOpen = defineModel<boolean>('writtenTestDatePopoverOpen', { required: true })
 const writtenTestCalendarDate = defineModel<unknown>('writtenTestCalendarDate', { required: true })
-const isAssessmentDrawerOpen = defineModel<boolean>('isAssessmentDrawerOpen', { required: true })
-const roundForm = defineModel<AssessmentRoundForm>('roundForm', { required: true })
+const isInterviewReviewDrawerOpen = defineModel<boolean>('isInterviewReviewDrawerOpen', { required: true })
+const roundForm = defineModel<InterviewRoundForm>('roundForm', { required: true })
 const roundDatePopoverOpen = defineModel<boolean>('roundDatePopoverOpen', { required: true })
 const roundCalendarDate = defineModel<unknown>('roundCalendarDate', { required: true })
 const deletingRoundId = defineModel<string | null>('deletingRoundId', { required: true })
 const isRoundEditDrawerOpen = defineModel<boolean>('isRoundEditDrawerOpen', { required: true })
-const roundEditForm = defineModel<AssessmentRoundForm>('roundEditForm', { required: true })
+const roundEditForm = defineModel<InterviewRoundForm>('roundEditForm', { required: true })
 const editRoundDatePopoverOpen = defineModel<boolean>('editRoundDatePopoverOpen', { required: true })
 const editRoundCalendarDate = defineModel<unknown>('editRoundCalendarDate', { required: true })
 
 const industrySelectItems = industryOptions.map((industry) => ({ label: industry, value: industry }))
-const assessmentSelectContent = {
+const drawerSelectContent = {
   align: 'start' as const,
   sideOffset: 8,
   class: 'z-[80]',
 }
 
-function canOpenAssessmentFromStatus(status: JobOpportunityStatus) {
+function canOpenReviewFromStatus(status: JobOpportunityStatus) {
   if (status === 'written_test') return props.canOpenWrittenTestReview
-  if (status === 'interviewing') return props.canOpenInterviewAssessment
+  if (status === 'interviewing') return props.canOpenInterviewReview
 
   return false
 }
 
-function getAssessmentStatusCtaLabel(status: JobOpportunityStatus) {
+function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
   if (status === 'written_test') return '笔试复盘'
   if (status === 'interviewing') return '面试复盘'
 
   return '复盘'
 }
 
-function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
-  return props.availableAssessmentRoundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
+function getInterviewRoundTypeLabel(type: InterviewRoundType) {
+  return props.availableInterviewRoundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
 }
 </script>
 
 <template>
-  <section class="space-y-4">
+  <section
+    class="space-y-4"
+    :class="{ 'pointer-events-none': isTerminatingOpportunity }"
+    :aria-busy="isTerminatingOpportunity"
+  >
     <div class="app-panel p-4 lg:p-5">
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
@@ -122,7 +136,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
             <Transition name="opportunity-status-pop" mode="out-in">
               <UBadge
                 :key="`${infoForm.status}-${statusMotionKey}`"
-                color="primary"
+                :color="infoForm.status === 'closed' ? 'error' : 'primary'"
                 variant="subtle"
                 :label="statusLabelMap[infoForm.status]"
               />
@@ -137,7 +151,9 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
             color="neutral"
             variant="outline"
             icon="i-lucide-arrow-left"
-            :disabled="!previousStatus"
+            :disabled="
+              !previousStatus || isStatusTransitioning || isTogglingWrittenTestFlow || isTerminatingOpportunity
+            "
             class="app-interactive-button"
             aria-label="回到上一阶段"
             title="回到上一阶段"
@@ -146,7 +162,8 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
           <UButton
             type="button"
             icon="i-lucide-arrow-right"
-            :disabled="!nextStatus"
+            :loading="isStatusTransitioning"
+            :disabled="!nextStatus || isStatusTransitioning || isTogglingWrittenTestFlow || isTerminatingOpportunity"
             class="app-interactive-button app-primary-button"
             @click="emit('advanceOpportunityStatus')"
           >
@@ -158,7 +175,13 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               color="error"
               variant="subtle"
               icon="i-lucide-x"
-              :disabled="infoForm.status === 'closed'"
+              :loading="isTerminatingOpportunity"
+              :disabled="
+                infoForm.status === 'closed' ||
+                isStatusTransitioning ||
+                isTogglingWrittenTestFlow ||
+                isTerminatingOpportunity
+              "
               class="app-interactive-button rounded-full"
               aria-label="终止流程"
               title="终止流程"
@@ -177,7 +200,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                       :items="terminationRoundOptions"
                       value-key="value"
                       placeholder="选择轮次或不绑定"
-                      :content="assessmentSelectContent"
+                      :content="drawerSelectContent"
                     />
                   </UFormField>
 
@@ -186,9 +209,9 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                       <USelect
                         v-model="terminationNewRoundType"
                         class="w-full"
-                        :items="availableAssessmentRoundTypeOptions"
+                        :items="availableInterviewRoundTypeOptions"
                         value-key="value"
-                        :content="assessmentSelectContent"
+                        :content="drawerSelectContent"
                       />
                     </UFormField>
                     <UFormField label="轮次名称">
@@ -223,6 +246,8 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                     color="error"
                     size="sm"
                     icon="i-lucide-circle-x"
+                    :loading="isTerminatingOpportunity"
+                    :disabled="isTerminatingOpportunity"
                     @click="emit('closeOpportunity')"
                   >
                     确认终止
@@ -241,12 +266,12 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               type="button"
               class="group flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 transition-colors"
               :class="
-                canOpenAssessmentFromStatus(status.value)
+                canOpenReviewFromStatus(status.value)
                   ? 'cursor-pointer border-primary/30 bg-primary/10 hover:border-primary/50 hover:bg-primary/15'
                   : 'cursor-default border-transparent'
               "
-              :aria-label="canOpenAssessmentFromStatus(status.value) ? `打开${status.label}复盘` : status.label"
-              @click="emit('openAssessmentPanelFromStatus', status.value)"
+              :aria-label="canOpenReviewFromStatus(status.value) ? `打开${status.label}复盘` : status.label"
+              @click="emit('openReviewPanelFromStatus', status.value)"
             >
               <div
                 class="flex size-7 items-center justify-center rounded-full border text-xs font-semibold transition-all duration-200"
@@ -268,12 +293,12 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               >
                 {{ status.label }}
               </span>
-              <Transition name="assessment-status-cta">
+              <Transition name="interview-review-status-cta">
                 <span
-                  v-if="canOpenAssessmentFromStatus(status.value)"
+                  v-if="canOpenReviewFromStatus(status.value)"
                   class="inline-flex items-center gap-1 overflow-hidden whitespace-nowrap rounded-full bg-[var(--app-surface)] px-2 py-0.5 text-[10px] text-primary shadow-sm"
                 >
-                  {{ getAssessmentStatusCtaLabel(status.value) }}
+                  {{ getReviewStatusCtaLabel(status.value) }}
                   <UIcon name="i-lucide-chevron-right" class="size-3" />
                 </span>
               </Transition>
@@ -349,16 +374,75 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
           </div>
 
           <div class="flex justify-end">
-            <UButton type="button" icon="i-lucide-save" @click="emit('saveInfo')">保存 JD 信息</UButton>
+            <UButton
+              type="button"
+              icon="i-lucide-save"
+              :loading="isSavingOpportunityInfo"
+              :disabled="isSavingOpportunityInfo"
+              @click="emit('saveInfo')"
+            >
+              保存 JD 信息
+            </UButton>
           </div>
         </div>
       </div>
 
       <aside class="space-y-4 xl:sticky xl:top-20">
         <section class="app-panel p-5">
+          <div class="mb-4">
+            <button
+              type="button"
+              class="app-card flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left transition-colors"
+              :class="
+                canChangeWrittenTestFlow &&
+                !isTogglingWrittenTestFlow &&
+                !isStatusTransitioning &&
+                !isTerminatingOpportunity
+                  ? 'app-interactive-button hover:bg-elevated'
+                  : 'cursor-not-allowed opacity-55'
+              "
+              :disabled="
+                !canChangeWrittenTestFlow ||
+                isTogglingWrittenTestFlow ||
+                isStatusTransitioning ||
+                isTerminatingOpportunity
+              "
+              @click="emit('toggleIncludeWrittenTest')"
+            >
+              <span>
+                <span class="block text-sm font-medium text-highlighted">包含笔试流程</span>
+                <span class="mt-0.5 block text-xs text-muted">
+                  {{
+                    canChangeWrittenTestFlow
+                      ? '独立保存。关闭笔试时，笔试中会自动回退到已投递。'
+                      : '已进入面试或后续阶段，流程结构不再允许修改。'
+                  }}
+                </span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <UIcon
+                  v-if="isTogglingWrittenTestFlow || isStatusTransitioning || isTerminatingOpportunity"
+                  name="i-lucide-loader-circle"
+                  class="size-4 animate-spin text-muted"
+                />
+                <span v-if="isStatusTransitioning || isTerminatingOpportunity" class="text-[11px] text-muted">
+                  {{ isTerminatingOpportunity ? '终止处理中' : '状态流转中' }}
+                </span>
+                <span
+                  class="relative inline-flex h-5 w-9 rounded-full border transition-colors"
+                  :class="opportunity.includeWrittenTest ? 'border-primary bg-primary' : 'border-default bg-default'"
+                >
+                  <span
+                    class="absolute top-0.5 size-3.5 rounded-full bg-white transition-transform"
+                    :class="opportunity.includeWrittenTest ? 'translate-x-4' : 'translate-x-0.5'"
+                  />
+                </span>
+              </span>
+            </button>
+          </div>
+
           <div class="mb-4 flex items-center justify-between gap-3">
             <h2 class="text-base font-semibold text-highlighted">求职偏好</h2>
-            <span v-if="infoSavedMessage" class="text-xs text-primary">{{ infoSavedMessage }}</span>
           </div>
 
           <div class="space-y-4">
@@ -370,6 +454,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                     v-for="item in intentionOptions"
                     :key="item.value"
                     type="button"
+                    :disabled="infoForm.status === 'closed'"
                     class="app-interactive-button rounded-md border px-2 py-1.5 text-center"
                     :class="
                       infoForm.intentionLevel === item.value
@@ -392,30 +477,11 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                   :items="industrySelectItems"
                   value-key="value"
                   placeholder="选择公司行业"
+                  :disabled="infoForm.status === 'closed'"
                   :content="{ align: 'start', sideOffset: 8 }"
                 />
               </div>
             </div>
-
-            <button
-              type="button"
-              class="app-card flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left hover:bg-elevated"
-              @click="emit('toggleIncludeWrittenTest')"
-            >
-              <span>
-                <span class="block text-sm font-medium text-highlighted">包含笔试流程</span>
-                <span class="mt-0.5 block text-xs text-muted">社招默认关闭；如果这条机会有笔试，可以单独打开</span>
-              </span>
-              <span
-                class="relative inline-flex h-5 w-9 shrink-0 rounded-full border transition-colors"
-                :class="infoForm.includeWrittenTest ? 'border-primary bg-primary' : 'border-default bg-default'"
-              >
-                <span
-                  class="absolute top-0.5 size-3.5 rounded-full bg-white transition-transform"
-                  :class="infoForm.includeWrittenTest ? 'translate-x-4' : 'translate-x-0.5'"
-                />
-              </span>
-            </button>
 
             <div>
               <p class="preference-field-label">备注</p>
@@ -424,6 +490,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                 class="w-full"
                 :rows="3"
                 placeholder="例如：上海 base 可沟通，面试重点准备 RAG 和 AgentRun。"
+                :disabled="infoForm.status === 'closed'"
               />
             </div>
 
@@ -434,8 +501,13 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               <UButton
                 type="button"
                 icon="i-lucide-save"
-                :disabled="!hasOpportunityMetaChanged"
-                :class="!hasOpportunityMetaChanged ? 'cursor-not-allowed opacity-45 saturate-50' : ''"
+                :loading="isSavingOpportunityMeta"
+                :disabled="!hasOpportunityMetaChanged || infoForm.status === 'closed' || isSavingOpportunityMeta"
+                :class="
+                  !hasOpportunityMetaChanged || infoForm.status === 'closed'
+                    ? 'cursor-not-allowed opacity-45 saturate-50'
+                    : ''
+                "
                 @click="emit('saveOpportunityMeta')"
               >
                 保存
@@ -449,14 +521,14 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
             <h2 class="text-base font-semibold text-highlighted">跟进建议</h2>
             <div class="flex min-h-8 min-w-[11.5rem] items-center justify-end gap-2">
               <UButton
-                v-if="canOpenInterviewAssessment"
+                v-if="canOpenInterviewReview"
                 type="button"
                 color="neutral"
                 variant="outline"
                 size="sm"
                 icon="i-lucide-clipboard-pen"
-                class="assessment-action-appear app-interactive-button"
-                @click="emit('openAssessmentDrawer')"
+                class="interview-review-action-appear app-interactive-button"
+                @click="emit('openInterviewReviewDrawer')"
               >
                 面试复盘
               </UButton>
@@ -467,7 +539,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                 variant="outline"
                 size="sm"
                 icon="i-lucide-file-pen-line"
-                class="assessment-action-appear app-interactive-button"
+                class="interview-review-action-appear app-interactive-button"
                 @click="emit('openWrittenTestReviewDrawer')"
               >
                 笔试复盘
@@ -514,13 +586,14 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               variant="ghost"
               icon="i-lucide-x"
               aria-label="关闭笔试复盘抽屉"
+              :disabled="isSavingWrittenTestReview"
               @click="emit('closeWrittenTestReviewDrawer')"
             />
           </div>
 
           <div class="flex-1 space-y-4 overflow-y-auto px-5 py-5">
             <UFormField label="笔试时间">
-              <UPopover v-model:open="writtenTestDatePopoverOpen">
+              <UPopover v-model:open="writtenTestDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
                 <UButton
                   type="button"
                   color="neutral"
@@ -552,10 +625,24 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
           </div>
 
           <div class="flex justify-end gap-2 border-t border-default px-5 py-4">
-            <UButton type="button" color="neutral" variant="outline" @click="emit('closeWrittenTestReviewDrawer')">
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              :disabled="isSavingWrittenTestReview"
+              @click="emit('closeWrittenTestReviewDrawer')"
+            >
               取消
             </UButton>
-            <UButton type="button" icon="i-lucide-save" @click="emit('saveWrittenTestReview')">保存复盘</UButton>
+            <UButton
+              type="button"
+              icon="i-lucide-save"
+              :loading="isSavingWrittenTestReview"
+              :disabled="isSavingWrittenTestReview"
+              @click="emit('saveWrittenTestReview')"
+            >
+              保存复盘
+            </UButton>
           </div>
         </section>
       </div>
@@ -563,12 +650,12 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
 
     <Transition name="project-edit-drawer">
       <div
-        v-if="isAssessmentDrawerOpen"
+        v-if="isInterviewReviewDrawerOpen"
         class="fixed inset-0 z-40 flex justify-end bg-black/35 backdrop-blur-[2px]"
         role="dialog"
         aria-modal="true"
         aria-label="测评记录"
-        @click.self="emit('closeAssessmentDrawer')"
+        @click.self="emit('closeInterviewReviewDrawer')"
       >
         <section class="app-drawer flex h-full w-full max-w-3xl flex-col border-l border-default shadow-2xl">
           <div class="flex items-center justify-between border-b border-default px-5 py-4">
@@ -584,7 +671,8 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               variant="ghost"
               icon="i-lucide-x"
               aria-label="关闭测评记录抽屉"
-              @click="emit('closeAssessmentDrawer')"
+              :disabled="isAddingInterviewRound"
+              @click="emit('closeInterviewReviewDrawer')"
             />
           </div>
 
@@ -600,16 +688,16 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                   <USelect
                     v-model="roundForm.type"
                     class="w-full"
-                    :items="availableAssessmentRoundTypeOptions"
+                    :items="availableInterviewRoundTypeOptions"
                     value-key="value"
-                    :content="assessmentSelectContent"
+                    :content="drawerSelectContent"
                   />
                 </UFormField>
                 <UFormField label="轮次名称">
                   <UInput v-model="roundForm.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
                 </UFormField>
                 <UFormField label="日期">
-                  <UPopover v-model:open="roundDatePopoverOpen">
+                  <UPopover v-model:open="roundDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
                     <UButton
                       type="button"
                       color="neutral"
@@ -641,7 +729,8 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                   type="button"
                   icon="i-lucide-plus"
                   class="w-full justify-center"
-                  :disabled="!roundForm.title.trim()"
+                  :loading="isAddingInterviewRound"
+                  :disabled="!roundForm.title.trim() || isAddingInterviewRound"
                   @click="emit('addInterviewRound')"
                 >
                   添加测评记录
@@ -661,7 +750,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                     <div class="min-w-0">
                       <p class="truncate text-sm font-medium text-highlighted">{{ round.title }}</p>
                       <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                        <UBadge color="neutral" variant="subtle" :label="getAssessmentRoundTypeLabel(round.type)" />
+                        <UBadge color="neutral" variant="subtle" :label="getInterviewRoundTypeLabel(round.type)" />
                         <span v-if="round.scheduledAt">{{ round.scheduledAt }}</span>
                       </div>
                     </div>
@@ -669,6 +758,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                       <button
                         type="button"
                         class="project-card-edit"
+                        :disabled="deletingRoundActionId === round.id"
                         aria-label="编辑测评记录"
                         title="编辑测评记录"
                         @click="emit('openRoundEditDrawer', round)"
@@ -677,11 +767,14 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                       </button>
                       <UPopover
                         :open="deletingRoundId === round.id"
+                        :portal="true"
+                        :ui="{ content: 'z-[110]' }"
                         @update:open="deletingRoundId = $event ? round.id : null"
                       >
                         <button
                           type="button"
                           class="project-card-remove"
+                          :disabled="deletingRoundActionId === round.id"
                           aria-label="删除测评记录"
                           title="删除测评记录"
                         >
@@ -697,6 +790,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                                 color="neutral"
                                 variant="ghost"
                                 size="sm"
+                                :disabled="deletingRoundActionId === round.id"
                                 @click="deletingRoundId = null"
                               >
                                 取消
@@ -706,6 +800,8 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
                                 color="error"
                                 size="sm"
                                 icon="i-lucide-trash-2"
+                                :loading="deletingRoundActionId === round.id"
+                                :disabled="deletingRoundActionId === round.id"
                                 @click="emit('confirmDeleteRound', round.id)"
                               >
                                 删除
@@ -754,6 +850,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               variant="ghost"
               icon="i-lucide-x"
               aria-label="关闭编辑抽屉"
+              :disabled="isSavingRoundEdit"
               @click="emit('closeRoundEditDrawer')"
             />
           </div>
@@ -763,9 +860,9 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
               <USelect
                 v-model="roundEditForm.type"
                 class="w-full"
-                :items="availableAssessmentRoundTypeOptions"
+                :items="availableInterviewRoundTypeOptions"
                 value-key="value"
-                :content="assessmentSelectContent"
+                :content="drawerSelectContent"
               />
             </UFormField>
 
@@ -774,7 +871,7 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
             </UFormField>
 
             <UFormField label="日期">
-              <UPopover v-model:open="editRoundDatePopoverOpen">
+              <UPopover v-model:open="editRoundDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
                 <UButton
                   type="button"
                   color="neutral"
@@ -806,13 +903,19 @@ function getAssessmentRoundTypeLabel(type: AssessmentRoundType) {
           </div>
 
           <div class="flex justify-end gap-2 border-t border-default px-5 py-4">
-            <UButton type="button" color="neutral" variant="outline" @click="emit('closeRoundEditDrawer')"
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              :disabled="isSavingRoundEdit"
+              @click="emit('closeRoundEditDrawer')"
               >取消</UButton
             >
             <UButton
               type="button"
               icon="i-lucide-save"
-              :disabled="!roundEditForm.title.trim()"
+              :loading="isSavingRoundEdit"
+              :disabled="!roundEditForm.title.trim() || !hasRoundEditChanged || isSavingRoundEdit"
               @click="emit('saveRoundEdit')"
             >
               保存修改

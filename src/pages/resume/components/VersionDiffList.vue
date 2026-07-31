@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { VersionDiffItem } from '../utils/versionDiff'
+import type { VersionDiffItem } from '@/types/resume'
 
 defineProps<{
   items: VersionDiffItem[]
@@ -20,9 +20,7 @@ function formatDiffValue(value: unknown) {
         <p class="text-sm font-medium text-highlighted">{{ item.label }}</p>
       </div>
 
-      <div
-        class="version-diff-text rounded-xl border border-default bg-[var(--app-surface)] px-3 py-2 text-sm leading-6"
-      >
+      <div class="version-diff-text rounded-xl border border-default bg-(--app-surface) px-3 py-2 text-sm leading-6">
         <template v-if="item.textSegments?.length">
           <span
             v-for="(segment, index) in item.textSegments"

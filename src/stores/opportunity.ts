@@ -1,28 +1,35 @@
 import { defineStore } from 'pinia'
-import type {
-  AssessmentRound,
-  AssessmentRoundResult,
-  AssessmentRoundStatus,
-  AssessmentRoundType,
-  JobAnalysis,
-  JobOpportunity,
-  JobOpportunityStatus,
-  OpportunityStatusChange,
-  OpportunityStatusChangeTrigger,
-  OpportunityTerminationReasonCode,
-  OpportunityIntentionLevel,
-  WrittenTestReview,
-} from '@/types/opportunity'
+import type { JobAnalysis, JobAnalysisTask, JobOpportunity } from '@/types/opportunity'
 import { createMockJobAnalysis, mockJobAnalysis } from '@/pages/opportunity/mocks/analysis'
+import { jobAnalysisApi, type StartJobAnalysisPayload } from '@/services/job-analyses'
+import {
+  opportunityApi,
+  type AddInterviewRoundPayload,
+  type CreateOpportunityPayload,
+  type JobOpportunityListItem,
+  type TerminateOpportunityPayload,
+  type UpdateInterviewRoundPayload,
+  type UpdateOpportunityPayload,
+  type UpdateOpportunityStatusPayload,
+  type UpdateWrittenTestReviewPayload,
+} from '@/services/opportunities'
 
 const opportunityStoreStorageKey = 'agent-seek-employment:opportunity-store'
 
 type OpportunityState = {
   opportunities: JobOpportunity[]
   analyses: JobAnalysis[]
+  analysisTasks: JobAnalysisTask[]
   currentOpportunityId: string | null
   currentAnalysisId: string | null
+  isLoading: boolean
+  loadError: string | null
 }
+
+type OpportunitySelectionState = Pick<
+  OpportunityState,
+  'opportunities' | 'analyses' | 'currentOpportunityId' | 'currentAnalysisId'
+>
 
 const legacyAnalysisDimensionKeys = new Set([
   'hard_skills',
@@ -32,62 +39,6 @@ const legacyAnalysisDimensionKeys = new Set([
   'location',
   'resume_expression',
 ])
-
-type CreateOpportunityPayload = {
-  company: string
-  jobTitle: string
-  address?: string[] | string
-  introduction?: string
-  description: string
-}
-
-type UpdateOpportunityPayload = Partial<Omit<CreateOpportunityPayload, 'description'>> & {
-  description?: string
-  status?: JobOpportunityStatus
-  includeWrittenTest?: boolean
-  intentionLevel?: OpportunityIntentionLevel
-  industry?: string
-  note?: string
-}
-
-type UpdateWrittenTestReviewPayload = Partial<Pick<WrittenTestReview, 'scheduledAt' | 'reviewNote'>>
-
-type AddInterviewRoundPayload = {
-  title: string
-  scheduledAt: string
-  note: string
-}
-
-type UpdateInterviewRoundPayload = Partial<AddInterviewRoundPayload>
-
-type AddAssessmentRoundPayload = {
-  type: AssessmentRoundType
-  title?: string
-  scheduledAt?: string
-  status?: AssessmentRoundStatus
-  result?: AssessmentRoundResult
-  note?: string
-  reviewNote?: string
-  keyTakeaways?: string[]
-}
-
-type UpdateAssessmentRoundPayload = Partial<AddAssessmentRoundPayload>
-
-type TerminateOpportunityPayload = {
-  relatedAssessmentRoundId?: string
-  reasonCode?: OpportunityTerminationReasonCode
-  reasonNote?: string
-}
-
-type StoredJobOpportunity = Omit<JobOpportunity, 'assessmentRounds' | 'interviewRounds' | 'writtenTestReview'> & {
-  assessmentRounds?: StoredAssessmentRound[]
-  interviewRounds?: StoredAssessmentRound[]
-  writtenTestReview?: Partial<WrittenTestReview>
-}
-
-type StoredAssessmentRound = Partial<Omit<AssessmentRound, 'type'>> & {
-  type?: AssessmentRoundType | 'written_test'
-}
 
 function canUseLocalStorage() {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined'
@@ -100,7 +51,7 @@ function normalizeCityList(value: string[] | string | undefined) {
   return []
 }
 
-function resolveCurrentIds(state: OpportunityState) {
+function resolveCurrentIds(state: OpportunitySelectionState) {
   const currentOpportunity =
     state.opportunities.find((opportunity) => opportunity.id === state.currentOpportunityId) ??
     state.opportunities[0] ??
@@ -113,41 +64,6 @@ function resolveCurrentIds(state: OpportunityState) {
   return {
     currentOpportunityId: currentOpportunity?.id ?? null,
     currentAnalysisId: currentAnalysis?.id ?? null,
-  }
-}
-
-function createStatusHistoryItem(
-  toStatus: JobOpportunityStatus,
-  fromStatus: JobOpportunityStatus | null,
-  trigger: OpportunityStatusChangeTrigger = 'user',
-  note?: string,
-): OpportunityStatusChange {
-  return {
-    id: crypto.randomUUID(),
-    fromStatus,
-    toStatus,
-    trigger,
-    note,
-    createdAt: new Date().toISOString(),
-  }
-}
-
-function normalizeAssessmentRound(round: StoredAssessmentRound, index: number): AssessmentRound {
-  const now = new Date().toISOString()
-
-  return {
-    id: round.id ?? crypto.randomUUID(),
-    type: round.type === 'written_test' ? 'technical_basic' : (round.type ?? 'technical_basic'),
-    sequence: round.sequence ?? index + 1,
-    title: round.title?.trim() || `第 ${index + 1} 轮`,
-    scheduledAt: round.scheduledAt ?? '',
-    status: round.status ?? 'planned',
-    result: round.result ?? 'pending',
-    note: round.note ?? '',
-    reviewNote: round.reviewNote ?? '',
-    keyTakeaways: Array.isArray(round.keyTakeaways) ? round.keyTakeaways : [],
-    createdAt: round.createdAt ?? now,
-    updatedAt: round.updatedAt ?? round.createdAt ?? now,
   }
 }
 
@@ -170,46 +86,116 @@ function normalizeAnalysis(analysis: JobAnalysis) {
   }
 }
 
-function normalizeOpportunity(opportunity: StoredJobOpportunity): JobOpportunity {
-  const sourceRounds = Array.isArray(opportunity.assessmentRounds)
-    ? opportunity.assessmentRounds
-    : Array.isArray(opportunity.interviewRounds)
-      ? opportunity.interviewRounds
-      : []
-  const writtenTestRound = sourceRounds.find((round) => round.type === 'written_test')
-  const assessmentRounds = sourceRounds.filter((round) => round.type !== 'written_test').map(normalizeAssessmentRound)
+function normalizeOpportunitySummary(opportunity: JobOpportunityListItem): JobOpportunity {
   const now = new Date().toISOString()
-  const writtenTestReview: WrittenTestReview = {
-    scheduledAt: opportunity.writtenTestReview?.scheduledAt ?? writtenTestRound?.scheduledAt ?? '',
-    reviewNote:
-      opportunity.writtenTestReview?.reviewNote ?? writtenTestRound?.reviewNote ?? writtenTestRound?.note ?? '',
-    updatedAt:
-      opportunity.writtenTestReview?.updatedAt ?? writtenTestRound?.updatedAt ?? writtenTestRound?.createdAt ?? now,
-  }
 
   return {
-    ...opportunity,
-    status: opportunity.status ?? 'analyzing',
+    id: opportunity.id,
+    company: opportunity.company,
+    jobTitle: opportunity.jobTitle,
     address: normalizeCityList(opportunity.address),
-    includeWrittenTest: opportunity.includeWrittenTest ?? opportunity.status === 'written_test',
-    intentionLevel: opportunity.intentionLevel ?? 'B',
-    industry: opportunity.industry ?? '',
-    note: opportunity.note ?? '',
-    writtenTestReview,
-    assessmentRounds,
-    terminationEvents: Array.isArray(opportunity.terminationEvents) ? opportunity.terminationEvents : [],
-    statusHistory: Array.isArray(opportunity.statusHistory) ? opportunity.statusHistory : [],
-    // 兼容旧页面：当前 UI 仍使用 interviewRounds，后面会逐步迁移到 assessmentRounds。
-    interviewRounds: assessmentRounds,
+    introduction: '',
+    description: '',
+    status: opportunity.status,
+    includeWrittenTest: false,
+    intentionLevel: opportunity.intentionLevel,
+    industry: opportunity.industry,
+    note: '',
+    writtenTestReview: {
+      scheduledAt: '',
+      reviewNote: '',
+      updatedAt: opportunity.updatedAt,
+    },
+    termination: undefined,
+    statusHistory: [],
+    interviewRounds: [],
+    createdAt: opportunity.createdAt || now,
+    updatedAt: opportunity.updatedAt || now,
   }
+}
+
+function mergeOpportunitySummary(summary: JobOpportunityListItem, currentOpportunity?: JobOpportunity) {
+  if (!currentOpportunity) return normalizeOpportunitySummary(summary)
+
+  return {
+    ...currentOpportunity,
+    company: summary.company,
+    jobTitle: summary.jobTitle,
+    address: normalizeCityList(summary.address),
+    status: summary.status,
+    intentionLevel: summary.intentionLevel,
+    industry: summary.industry,
+    createdAt: summary.createdAt,
+    updatedAt: summary.updatedAt,
+  }
+}
+
+function upsertOpportunity(list: JobOpportunity[], opportunity: JobOpportunity) {
+  const index = list.findIndex((item) => item.id === opportunity.id)
+
+  if (index === -1) {
+    list.unshift(opportunity)
+    return
+  }
+
+  list.splice(index, 1, opportunity)
+}
+
+function upsertAnalysisTask(list: JobAnalysisTask[], task: JobAnalysisTask) {
+  const index = list.findIndex((item) => item.opportunityId === task.opportunityId)
+
+  if (index === -1) {
+    list.unshift(task)
+    return
+  }
+
+  list.splice(index, 1, task)
+}
+
+function upsertOpportunityAnalysis(list: JobAnalysis[], analysis: JobAnalysis) {
+  const index = list.findIndex((item) => item.jobOpportunityId === analysis.jobOpportunityId)
+
+  if (index === -1) {
+    list.unshift(analysis)
+    return
+  }
+
+  list.splice(index, 1, analysis)
+}
+
+function removeOpportunityAnalysis(list: JobAnalysis[], opportunityId: string) {
+  const index = list.findIndex((item) => item.jobOpportunityId === opportunityId)
+  if (index >= 0) list.splice(index, 1)
+}
+
+function toDisplayAnalysis(task: JobAnalysisTask): JobAnalysis | null {
+  if (task.status !== 'completed' || !task.result) return null
+
+  return {
+    id: task.id,
+    jobOpportunityId: task.opportunityId,
+    resumeId: task.resumeId,
+    resumeVersionId: task.resumeVersionId,
+    ...task.result,
+    createdAt: task.completedAt ?? task.createdAt,
+  }
+}
+
+const analysisPollingOpportunityIds = new Set<string>()
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
 export const useOpportunityStore = defineStore('opportunity', {
   state: (): OpportunityState => ({
     opportunities: [],
     analyses: [],
+    analysisTasks: [],
     currentOpportunityId: null,
     currentAnalysisId: null,
+    isLoading: false,
+    loadError: null,
   }),
 
   getters: {
@@ -230,24 +216,14 @@ export const useOpportunityStore = defineStore('opportunity', {
       if (!storedState) return
 
       try {
-        const parsedState = JSON.parse(storedState) as OpportunityState
-        const opportunities = Array.isArray(parsedState.opportunities)
-          ? parsedState.opportunities.map((opportunity) => normalizeOpportunity(opportunity))
-          : []
+        const parsedState = JSON.parse(storedState) as Partial<OpportunityState>
         const storedAnalyses = Array.isArray(parsedState.analyses) ? parsedState.analyses : []
         const analyses = storedAnalyses.map((analysis) => normalizeAnalysis(analysis))
         const hasMigratedAnalysis = analyses.some((analysis, index) => analysis !== storedAnalyses[index])
-        const currentIds = resolveCurrentIds({
-          opportunities,
-          analyses,
-          currentOpportunityId: parsedState.currentOpportunityId ?? null,
-          currentAnalysisId: parsedState.currentAnalysisId ?? null,
-        })
 
-        this.opportunities = opportunities
         this.analyses = analyses
-        this.currentOpportunityId = currentIds.currentOpportunityId
-        this.currentAnalysisId = currentIds.currentAnalysisId
+        this.currentOpportunityId = parsedState.currentOpportunityId ?? null
+        this.currentAnalysisId = parsedState.currentAnalysisId ?? null
 
         if (hasMigratedAnalysis) this.persistToStorage()
       } catch {
@@ -261,7 +237,6 @@ export const useOpportunityStore = defineStore('opportunity', {
       localStorage.setItem(
         opportunityStoreStorageKey,
         JSON.stringify({
-          opportunities: this.opportunities,
           analyses: this.analyses,
           currentOpportunityId: this.currentOpportunityId,
           currentAnalysisId: this.currentAnalysisId,
@@ -269,34 +244,60 @@ export const useOpportunityStore = defineStore('opportunity', {
       )
     },
 
-    createOpportunity(payload: CreateOpportunityPayload) {
-      const now = new Date().toISOString()
-      const opportunity: JobOpportunity = {
-        id: crypto.randomUUID(),
-        company: payload.company.trim(),
-        jobTitle: payload.jobTitle.trim(),
-        address: normalizeCityList(payload.address),
-        introduction: payload.introduction?.trim() ?? '',
-        description: payload.description.trim(),
-        status: 'analyzing',
-        includeWrittenTest: false,
-        intentionLevel: 'B',
-        industry: '',
-        note: '',
-        writtenTestReview: {
-          scheduledAt: '',
-          reviewNote: '',
-          updatedAt: now,
-        },
-        assessmentRounds: [],
-        terminationEvents: [],
-        statusHistory: [createStatusHistoryItem('analyzing', null, 'system', '创建机会后进入分析中')],
-        interviewRounds: [],
-        createdAt: now,
-        updatedAt: now,
-      }
+    async loadOpportunities() {
+      this.isLoading = true
+      this.loadError = null
 
-      this.opportunities.unshift(opportunity)
+      try {
+        const opportunities = await opportunityApi.getOpportunities()
+        const normalizedOpportunities = opportunities.map((opportunity) =>
+          mergeOpportunitySummary(
+            opportunity,
+            this.opportunities.find((item) => item.id === opportunity.id),
+          ),
+        )
+        const currentIds = resolveCurrentIds({
+          opportunities: normalizedOpportunities,
+          analyses: this.analyses,
+          currentOpportunityId: this.currentOpportunityId,
+          currentAnalysisId: this.currentAnalysisId,
+        })
+
+        this.opportunities = normalizedOpportunities
+        this.currentOpportunityId = currentIds.currentOpportunityId
+        this.currentAnalysisId = currentIds.currentAnalysisId
+        this.persistToStorage()
+      } catch (error) {
+        this.loadError = error instanceof Error ? error.message : 'load opportunities failed'
+      } finally {
+        this.isLoading = false
+      }
+    },
+
+    async loadOpportunityDetail(opportunityId: string) {
+      this.loadError = null
+
+      try {
+        const opportunity = await opportunityApi.getOpportunityById(opportunityId)
+
+        upsertOpportunity(this.opportunities, opportunity)
+        await this.loadJobAnalysis(opportunityId)
+        this.currentOpportunityId = opportunity.id
+        this.currentAnalysisId =
+          this.analyses.find((analysis) => analysis.jobOpportunityId === opportunity.id)?.id ?? this.currentAnalysisId
+        this.persistToStorage()
+
+        return opportunity
+      } catch (error) {
+        this.loadError = error instanceof Error ? error.message : 'load opportunity detail failed'
+        return null
+      }
+    },
+
+    async createOpportunity(payload: CreateOpportunityPayload) {
+      const opportunity = await opportunityApi.createOpportunity(payload)
+
+      upsertOpportunity(this.opportunities, opportunity)
       this.currentOpportunityId = opportunity.id
       this.currentAnalysisId = null
       this.persistToStorage()
@@ -304,166 +305,136 @@ export const useOpportunityStore = defineStore('opportunity', {
       return opportunity
     },
 
-    updateWrittenTestReview(opportunityId: string, payload: UpdateWrittenTestReviewPayload) {
+    async loadJobAnalysis(opportunityId: string) {
+      const task = await jobAnalysisApi.getJobAnalysis(opportunityId)
+      if (!task) return null
+
+      upsertAnalysisTask(this.analysisTasks, task)
+      const analysis = toDisplayAnalysis(task)
+      if (analysis) upsertOpportunityAnalysis(this.analyses, analysis)
+
+      this.currentAnalysisId = analysis?.id ?? this.currentAnalysisId
+      this.persistToStorage()
+
+      return task
+    },
+
+    async startJobAnalysis(opportunityId: string, payload: StartJobAnalysisPayload) {
+      const task = await jobAnalysisApi.startJobAnalysis(opportunityId, payload)
+
+      upsertAnalysisTask(this.analysisTasks, task)
+      removeOpportunityAnalysis(this.analyses, opportunityId)
+      this.currentAnalysisId = null
+      this.persistToStorage()
+
+      void this.pollJobAnalysis(opportunityId)
+
+      return task
+    },
+
+    async pollJobAnalysis(opportunityId: string) {
+      if (analysisPollingOpportunityIds.has(opportunityId)) return
+
+      analysisPollingOpportunityIds.add(opportunityId)
+      try {
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          await delay(1500)
+          const task = await this.loadJobAnalysis(opportunityId)
+          if (!task || task.status === 'completed' || task.status === 'failed') return
+        }
+      } catch (error) {
+        this.loadError = error instanceof Error ? error.message : 'load job analysis failed'
+      } finally {
+        analysisPollingOpportunityIds.delete(opportunityId)
+      }
+    },
+
+    async updateWrittenTestReview(opportunityId: string, payload: UpdateWrittenTestReviewPayload) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return null
 
-      const now = new Date().toISOString()
+      const writtenTestReview = await opportunityApi.updateWrittenTestReview(opportunityId, payload)
 
-      opportunity.writtenTestReview = {
-        scheduledAt: payload.scheduledAt ?? opportunity.writtenTestReview.scheduledAt,
-        reviewNote: payload.reviewNote?.trim() ?? opportunity.writtenTestReview.reviewNote,
-        updatedAt: now,
-      }
-      opportunity.updatedAt = now
+      opportunity.writtenTestReview = writtenTestReview
+      opportunity.updatedAt = writtenTestReview.updatedAt
       this.persistToStorage()
 
       return opportunity.writtenTestReview
     },
 
-    updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity) return null
+    async updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {
+      const opportunity = await opportunityApi.updateOpportunity(opportunityId, payload)
 
-      if (payload.company !== undefined) opportunity.company = payload.company.trim()
-      if (payload.jobTitle !== undefined) opportunity.jobTitle = payload.jobTitle.trim()
-      if (payload.address !== undefined) opportunity.address = normalizeCityList(payload.address)
-      if (payload.introduction !== undefined) opportunity.introduction = payload.introduction.trim()
-      if (payload.description !== undefined) opportunity.description = payload.description.trim()
-      if (payload.status !== undefined && payload.status !== opportunity.status) {
-        opportunity.statusHistory.unshift(createStatusHistoryItem(payload.status, opportunity.status))
-        opportunity.status = payload.status
-      }
-      if (payload.includeWrittenTest !== undefined) opportunity.includeWrittenTest = payload.includeWrittenTest
-      if (payload.intentionLevel !== undefined) opportunity.intentionLevel = payload.intentionLevel
-      if (payload.industry !== undefined) opportunity.industry = payload.industry.trim()
-      if (payload.note !== undefined) opportunity.note = payload.note.trim()
-
-      opportunity.updatedAt = new Date().toISOString()
+      upsertOpportunity(this.opportunities, opportunity)
+      this.currentOpportunityId = opportunity.id
       this.persistToStorage()
 
       return opportunity
     },
 
-    updateOpportunityStatus(opportunityId: string, status: JobOpportunityStatus) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity || opportunity.status === status) return
+    async updateOpportunityStatus(opportunityId: string, payload: UpdateOpportunityStatusPayload) {
+      const opportunity = await opportunityApi.updateOpportunityStatus(opportunityId, payload)
 
-      opportunity.statusHistory.unshift(createStatusHistoryItem(status, opportunity.status))
-      opportunity.status = status
-      opportunity.updatedAt = new Date().toISOString()
+      upsertOpportunity(this.opportunities, opportunity)
+      this.currentOpportunityId = opportunity.id
       this.persistToStorage()
+
+      return opportunity
     },
 
-    addAssessmentRound(opportunityId: string, payload: AddAssessmentRoundPayload) {
+    async addInterviewRound(opportunityId: string, payload: AddInterviewRoundPayload) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return null
 
-      const now = new Date().toISOString()
-      const nextSequence = opportunity.assessmentRounds.length + 1
-      const round: AssessmentRound = {
-        id: crypto.randomUUID(),
-        type: payload.type,
-        sequence: nextSequence,
-        title: payload.title?.trim() || `第 ${nextSequence} 轮`,
-        scheduledAt: payload.scheduledAt ?? '',
-        status: payload.status ?? 'planned',
-        result: payload.result ?? 'pending',
-        note: payload.note?.trim() ?? '',
-        reviewNote: payload.reviewNote?.trim() ?? '',
-        keyTakeaways: payload.keyTakeaways ?? [],
-        createdAt: now,
-        updatedAt: now,
-      }
+      const round = await opportunityApi.addInterviewRound(opportunityId, payload)
 
-      opportunity.assessmentRounds.unshift(round)
-      opportunity.interviewRounds = opportunity.assessmentRounds
-      opportunity.updatedAt = now
-      this.persistToStorage()
-
-      return round
-    },
-
-    updateAssessmentRound(opportunityId: string, roundId: string, payload: UpdateAssessmentRoundPayload) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity) return null
-
-      const round = opportunity.assessmentRounds.find((item) => item.id === roundId)
-      if (!round) return null
-
-      if (payload.type !== undefined) round.type = payload.type
-      if (payload.title !== undefined) round.title = payload.title.trim()
-      if (payload.scheduledAt !== undefined) round.scheduledAt = payload.scheduledAt
-      if (payload.status !== undefined) round.status = payload.status
-      if (payload.result !== undefined) round.result = payload.result
-      if (payload.note !== undefined) round.note = payload.note.trim()
-      if (payload.reviewNote !== undefined) round.reviewNote = payload.reviewNote.trim()
-      if (payload.keyTakeaways !== undefined) round.keyTakeaways = payload.keyTakeaways
-
-      round.updatedAt = new Date().toISOString()
-      opportunity.interviewRounds = opportunity.assessmentRounds
+      opportunity.interviewRounds.push(round)
       opportunity.updatedAt = round.updatedAt
       this.persistToStorage()
 
       return round
     },
 
-    deleteAssessmentRound(opportunityId: string, roundId: string) {
+    async updateInterviewRound(opportunityId: string, roundId: string, payload: UpdateInterviewRoundPayload) {
+      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+      if (!opportunity) return null
+
+      const round = await opportunityApi.updateInterviewRound(opportunityId, roundId, payload)
+      const roundIndex = opportunity.interviewRounds.findIndex((item) => item.id === round.id)
+
+      if (roundIndex === -1) {
+        opportunity.interviewRounds.push(round)
+      } else {
+        opportunity.interviewRounds.splice(roundIndex, 1, round)
+      }
+      opportunity.updatedAt = round.updatedAt
+      this.persistToStorage()
+
+      return round
+    },
+
+    async deleteInterviewRound(opportunityId: string, roundId: string) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return
 
-      opportunity.assessmentRounds = opportunity.assessmentRounds.filter((round) => round.id !== roundId)
-      opportunity.interviewRounds = opportunity.assessmentRounds
+      const result = await opportunityApi.deleteInterviewRound(opportunityId, roundId)
+
+      opportunity.interviewRounds = opportunity.interviewRounds.filter((round) => round.id !== result.id)
       opportunity.updatedAt = new Date().toISOString()
       this.persistToStorage()
     },
 
-    addInterviewRound(opportunityId: string, payload: AddInterviewRoundPayload) {
-      return this.addAssessmentRound(opportunityId, {
-        type: 'technical_basic',
-        title: payload.title,
-        scheduledAt: payload.scheduledAt,
-        note: payload.note,
-      })
-    },
+    async terminateOpportunity(opportunityId: string, payload: TerminateOpportunityPayload = {}) {
+      const opportunity = await opportunityApi.terminateOpportunity(opportunityId, payload)
 
-    updateInterviewRound(opportunityId: string, roundId: string, payload: UpdateInterviewRoundPayload) {
-      return this.updateAssessmentRound(opportunityId, roundId, payload)
-    },
-
-    deleteInterviewRound(opportunityId: string, roundId: string) {
-      this.deleteAssessmentRound(opportunityId, roundId)
-    },
-
-    terminateOpportunity(opportunityId: string, payload: TerminateOpportunityPayload = {}) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity || opportunity.status === 'closed') return null
-
-      const relatedRound = payload.relatedAssessmentRoundId
-        ? opportunity.assessmentRounds.find((round) => round.id === payload.relatedAssessmentRoundId)
-        : null
-      const now = new Date().toISOString()
-      const termination = {
-        id: crypto.randomUUID(),
-        opportunityId,
-        fromStatus: opportunity.status,
-        relatedAssessmentRoundId: relatedRound?.id,
-        relatedAssessmentRoundTitle: relatedRound?.title,
-        reasonCode: payload.reasonCode ?? 'other',
-        reasonNote: payload.reasonNote?.trim() ?? '',
-        createdAt: now,
-      }
-
-      opportunity.terminationEvents.unshift(termination)
-      opportunity.statusHistory.unshift(createStatusHistoryItem('closed', opportunity.status, 'user', '流程终止'))
-      opportunity.status = 'closed'
-      opportunity.updatedAt = now
+      upsertOpportunity(this.opportunities, opportunity)
+      this.currentOpportunityId = opportunity.id
       this.persistToStorage()
 
-      return termination
+      return opportunity.termination ?? null
     },
 
-    generateMockAnalysis(opportunityId: string, resumeId: string, resumeVersionId: string) {
+    async generateMockAnalysis(opportunityId: string, resumeId: string, resumeVersionId: string) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return null
 
@@ -475,11 +446,14 @@ export const useOpportunityStore = defineStore('opportunity', {
 
       this.analyses.unshift(analysis)
       this.currentAnalysisId = analysis.id
-      opportunity.statusHistory.unshift(
-        createStatusHistoryItem('pending_apply', opportunity.status, 'analysis', '生成 JD 匹配分析'),
-      )
-      opportunity.status = 'pending_apply'
-      opportunity.updatedAt = new Date().toISOString()
+      if (opportunity.status !== 'pending_apply' && opportunity.status !== 'closed') {
+        const updatedOpportunity = await opportunityApi.updateOpportunityStatus(opportunityId, {
+          status: 'pending_apply',
+          expectedStatus: opportunity.status,
+          note: '生成 JD 匹配分析',
+        })
+        upsertOpportunity(this.opportunities, updatedOpportunity)
+      }
       this.persistToStorage()
 
       return analysis
