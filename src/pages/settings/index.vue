@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { useSettingsStore } from '@/stores'
 import type { ThemeMode } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
+const toast = useToast()
 
 const themeOptions: { label: string; value: ThemeMode; icon: string; description: string }[] = [
   { label: '随系统', value: 'system', icon: 'i-lucide-monitor-cog', description: '跟随系统浅色或深色设置' },
@@ -17,8 +19,6 @@ const llmDraft = reactive({
   apiKey: settingsStore.llm.apiKey,
 })
 const apiKeyVisible = ref(false)
-const savedMessage = ref('')
-let savedMessageTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const isLlmDirty = computed(() => {
   return (
@@ -31,8 +31,16 @@ const isLlmDirty = computed(() => {
 const canSaveLlm = computed(
   () => isLlmDirty.value && llmDraft.baseUrl.trim() !== '' && llmDraft.modelName.trim() !== '',
 )
+const canSaveReusableLlm = computed(() => llmDraft.baseUrl.trim() !== '' && llmDraft.modelName.trim() !== '')
 const currentThemeLabel = computed(
   () => themeOptions.find((item) => item.value === settingsStore.themeMode)?.label ?? '随系统',
+)
+const activeSavedLlmConnectionId = computed(
+  () =>
+    settingsStore.savedLlmConnections.find(
+      (connection) =>
+        connection.modelName === settingsStore.llm.modelName && connection.baseUrl === settingsStore.llm.baseUrl,
+    )?.id ?? null,
 )
 
 function selectThemeMode(themeMode: ThemeMode) {
@@ -48,17 +56,6 @@ function clearApiKey() {
   llmDraft.apiKey = ''
 }
 
-function showSavedMessage() {
-  savedMessage.value = '设置已保存'
-
-  if (savedMessageTimer) window.clearTimeout(savedMessageTimer)
-
-  savedMessageTimer = window.setTimeout(() => {
-    savedMessage.value = ''
-    savedMessageTimer = null
-  }, 2500)
-}
-
 function saveLlmSettings() {
   if (!canSaveLlm.value) return
 
@@ -67,7 +64,44 @@ function saveLlmSettings() {
     modelName: llmDraft.modelName,
     apiKey: llmDraft.apiKey,
   })
-  showSavedMessage()
+  toast.add({ title: '模型配置已保存', color: 'success' })
+}
+
+function saveCurrentLlmAsReusable() {
+  if (!canSaveReusableLlm.value) return
+
+  const savedConnection = settingsStore.saveLlmAsReusable({
+    baseUrl: llmDraft.baseUrl,
+    modelName: llmDraft.modelName,
+    apiKey: llmDraft.apiKey,
+  })
+
+  toast.add({
+    title: `已保存 ${savedConnection.modelName} 配置`,
+    color: 'success',
+  })
+}
+
+function selectSavedLlmConnection(connectionId: string) {
+  if (connectionId === activeSavedLlmConnectionId.value) return
+
+  const connection = settingsStore.useSavedLlmConnection(connectionId)
+  if (!connection) return
+
+  toast.add({
+    title: `已切换至 ${connection.modelName}`,
+    color: 'success',
+  })
+}
+
+function deleteSavedLlmConnection(connectionId: string) {
+  const connection = settingsStore.savedLlmConnections.find((item) => item.id === connectionId)
+  if (!connection || !settingsStore.deleteSavedLlmConnection(connectionId)) return
+
+  toast.add({
+    title: `已删除 ${connection.modelName} 配置`,
+    color: 'success',
+  })
 }
 
 watch(
@@ -79,9 +113,6 @@ watch(
   },
 )
 
-onBeforeUnmount(() => {
-  if (savedMessageTimer) window.clearTimeout(savedMessageTimer)
-})
 </script>
 
 <template>
@@ -91,7 +122,15 @@ onBeforeUnmount(() => {
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">系统设置</h1>
         <p class="mt-1 text-sm text-muted">配置工作台外观和后续 AI 调用所需的模型连接。</p>
       </div>
-      <UBadge v-if="savedMessage" color="success" variant="subtle" :label="savedMessage" />
+      <UButton
+        to="/developer/agent-runs"
+        target="_blank"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-bug-play"
+      >
+        打开 Agent 调试台
+      </UButton>
     </div>
 
     <section class="app-panel p-5">
@@ -140,6 +179,37 @@ onBeforeUnmount(() => {
         </UButton>
       </div>
 
+      <div v-if="settingsStore.savedLlmConnections.length" class="mt-4 flex flex-wrap items-center gap-2">
+        <span class="text-xs font-medium text-muted">已保存配置</span>
+        <div
+          v-for="connection in settingsStore.savedLlmConnections"
+          :key="connection.id"
+          class="flex overflow-hidden rounded-full border border-default bg-elevated"
+          :title="connection.baseUrl"
+        >
+          <UButton
+            type="button"
+            size="xs"
+            :color="connection.id === activeSavedLlmConnectionId ? 'primary' : 'neutral'"
+            variant="subtle"
+            class="rounded-r-none"
+            @click="selectSavedLlmConnection(connection.id)"
+          >
+            {{ connection.modelName }}
+          </UButton>
+          <UButton
+            type="button"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            class="rounded-l-none border-l border-default"
+            icon="i-lucide-x"
+            :aria-label="`删除 ${connection.modelName} 配置`"
+            @click="deleteSavedLlmConnection(connection.id)"
+          />
+        </div>
+      </div>
+
       <div class="mt-5 grid gap-x-4 gap-y-3 md:grid-cols-2">
         <UFormField label="Base URL" required>
           <UInput v-model="llmDraft.baseUrl" class="w-full" placeholder="https://api.deepseek.com" />
@@ -170,7 +240,7 @@ onBeforeUnmount(() => {
             <UButton type="button" color="neutral" variant="outline" icon="i-lucide-eraser" @click="clearApiKey" />
           </div>
           <p class="mt-1 min-h-[14px] text-[11px] leading-[14px] text-muted">
-            当前仅保存到本地浏览器，后端接入后再做服务端加密与连通性检查
+            仅保存到当前浏览器；发起分析时临时传给后端，不写入分析记录或数据库
           </p>
         </UFormField>
       </div>
@@ -182,6 +252,16 @@ onBeforeUnmount(() => {
         <UButton type="button" icon="i-lucide-save" :disabled="!canSaveLlm" @click="saveLlmSettings"
           >保存模型配置</UButton
         >
+        <UButton
+          type="button"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-bookmark-plus"
+          :disabled="!canSaveReusableLlm"
+          @click="saveCurrentLlmAsReusable"
+        >
+          保存为可复用配置
+        </UButton>
       </div>
     </section>
   </section>

@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import type { ThemeMode } from '@/types/settings'
-
 defineProps<{
   title: string
-  isDark: boolean
-  themeMode: ThemeMode
+  modelLabel: string
+  isModelReady: boolean
 }>()
 
 defineEmits<{
-  toggleTheme: []
+  openSettings: []
 }>()
 </script>
 
@@ -22,12 +20,16 @@ defineEmits<{
     </div>
 
     <UButton
-      :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
       color="neutral"
-      variant="ghost"
-      :title="themeMode === 'system' ? '当前随系统，点击后固定切换主题' : '切换主题'"
-      :aria-label="isDark ? '切换到浅色模式' : '切换到深色模式'"
-      @click="$emit('toggleTheme')"
-    />
+      variant="outline"
+      size="sm"
+      icon="i-lucide-sparkles"
+      class="max-w-56"
+      :class="isModelReady ? '' : 'border-warning/35 text-warning'"
+      :title="isModelReady ? `当前工作台模型：${modelLabel}` : '当前未配置可用模型，点击前往设置'"
+      @click="$emit('openSettings')"
+    >
+      <span class="truncate">{{ isModelReady ? `当前模型 · ${modelLabel}` : '当前未配置模型' }}</span>
+    </UButton>
   </header>
 </template>

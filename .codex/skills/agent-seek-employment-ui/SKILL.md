@@ -22,11 +22,14 @@ description: Use when modifying Agent Seek Employment UI, forms, layout, visual 
 ## Interaction consistency
 
 - Popovers, drawers, and modals should avoid scroll bleed and should not obscure fixed action bars.
+- When a Popover, Select, Calendar, or confirmation layer is nested inside a drawer or modal, render it through a portal and assign an explicit z-index above its parent overlay. Verify the visible stacking order instead of assuming the default layer is sufficient.
 - Validation messages should appear near the relevant field, clear when the value is corrected, and avoid causing large layout jumps.
 - Destructive actions should use lightweight confirmation for local list items and stronger confirmation for high-impact deletes.
+- Every user-triggered asynchronous action must expose a pending/loading state, prevent duplicate submission while pending, and provide explicit success and failure feedback. Disabled controls must not retain hover, active, or press-scale behavior.
 
 ## Implementation discipline
 
 - Keep business data simple and stable; format for display at the edge of the UI.
 - Prefer small reusable helpers/components when the same UI behavior appears in resume and opportunity flows.
 - When a file grows too large, split by product section and preserve behavior first; do not mix large refactors with unrelated business changes.
+- After each code change, report the changed files, the user-visible behavior that changed, and the key control-flow or data-flow logic so the project owner can review and learn from the implementation.

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave } from 'vue-router'
+import { useToast } from '@nuxt/ui/composables'
 import type {
   CurrentStatus,
   EducationLevel,
@@ -13,28 +14,30 @@ import type {
 } from '@/types/resume'
 import { useResumeStore } from '@/stores'
 import ResumeEdit from './components/Edit/index.vue'
+import ResumeWorkspaceSkeleton from './components/ResumeWorkspaceSkeleton.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
 import { mockResumeDraft } from './mocks/resumeDraft'
-import { getVersionDiff } from './utils/versionDiff'
+import { getVersionDiff } from '@/shared/resume/versionDiff'
 
 type EditorMode = 'create' | 'edit'
 
 const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
-let toastTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const resumeStore = useResumeStore()
-const { resumes, versions, currentResume, currentVersion, currentResumeVersions } = storeToRefs(resumeStore)
+const toast = useToast()
+const { resumes, versions, currentResume, currentVersion, currentResumeVersions, isLoading, loadError } =
+  storeToRefs(resumeStore)
 
 const editorMode = ref<EditorMode | null>(null)
 const editingResumeId = ref<string | null>(null)
 const editorInitialDraft = ref<ResumeDraft | null>(null)
 const isEditorDirty = ref(false)
+const isSavingResume = ref(false)
 const deleteResumeId = ref<string | null>(null)
+const isDeletingResume = ref(false)
 const isUnsavedConfirmOpen = ref(false)
 const isLatestVersionDiffOpen = ref(false)
 const isVersionPanelExpanded = ref(true)
-const toastMessage = ref('')
-const toastType = ref<'success' | 'error' | 'warning'>('success')
 const pendingUnsavedConfirmAction = ref<(() => void) | null>(null)
 const pendingUnsavedCancelAction = ref<(() => void) | null>(null)
 const originalBodyOverflow = ref('')
@@ -177,11 +180,18 @@ function formatCityList(cities: ResumeContent['address'] | string | undefined) {
 }
 
 function getVersionTargetDirection(version: ResumeVersion | null) {
-  return version?.targetDirection ?? currentResume.value?.targetDirection ?? ''
+  return version?.content.targetDirection ?? ''
 }
 
 function buildDraftFromVersion(version: ResumeVersion): ResumeDraft {
   return buildResumeDraft(currentResume.value?.title ?? '', getVersionTargetDirection(version), version.content)
+}
+
+function getResumeCurrentTargetDirection(resumeId: string) {
+  const resume = resumes.value.find((item) => item.id === resumeId)
+  if (!resume) return ''
+
+  return versions.value.find((version) => version.id === resume.currentVersionId)?.content.targetDirection ?? ''
 }
 
 function readMockResumeDraft() {
@@ -201,15 +211,13 @@ function writeMockResumeDraft(draft: ResumeDraft) {
 }
 
 function showToast(title: string, color: 'success' | 'error' | 'warning' = 'success') {
-  toastMessage.value = title
-  toastType.value = color
+  const iconByColor = {
+    success: 'i-lucide-circle-check',
+    error: 'i-lucide-circle-x',
+    warning: 'i-lucide-circle-alert',
+  }
 
-  if (toastTimer) window.clearTimeout(toastTimer)
-
-  toastTimer = window.setTimeout(() => {
-    toastMessage.value = ''
-    toastTimer = null
-  }, 3500)
+  toast.add({ title, color, icon: iconByColor[color] })
 }
 
 function formatDate(value: string) {
@@ -252,43 +260,44 @@ function handleEditorCancel() {
   requestUnsavedConfirm(closeEditor)
 }
 
-function handleEditorSave(draft: ResumeDraft) {
-  if (editorMode.value === 'edit' && editingResumeId.value) {
-    const hasEffectiveTextChange = editorInitialDraft.value
-      ? getVersionDiff(editorInitialDraft.value, draft).length > 0
-      : true
+async function handleEditorSave(draft: ResumeDraft) {
+  if (isSavingResume.value) return
 
-    if (!hasEffectiveTextChange && currentVersion.value) {
-      resumeStore.updateVersion({
+  isSavingResume.value = true
+
+  try {
+    if (editorMode.value === 'edit' && editingResumeId.value) {
+      const result = await resumeStore.saveNewVersion({
         resumeId: editingResumeId.value,
-        versionId: currentVersion.value.id,
         title: draft.title,
-        targetDirection: draft.targetDirection,
         content: draft,
-        changeNote: '格式修正',
+        changeNote: '编辑简历',
       })
-      showToast('格式调整已保存，未生成新版本')
-      closeEditor()
-      return
+
+      if (!result) throw new Error('当前简历不存在')
+
+      const messageByResultType = {
+        created_new_version: '简历修改已保存，已生成新版本',
+        updated_current_version: '格式调整已保存，未生成新版本',
+        no_change: '当前简历未发生更改',
+      }
+
+      showToast(messageByResultType[result.type])
+    } else {
+      await resumeStore.createResume({
+        title: draft.title,
+        content: draft,
+      })
+      showToast('简历已保存')
     }
 
-    resumeStore.saveNewVersion({
-      resumeId: editingResumeId.value,
-      title: draft.title,
-      targetDirection: draft.targetDirection,
-      content: draft,
-      changeNote: '编辑简历',
-    })
-  } else {
-    resumeStore.createResume({
-      title: draft.title,
-      targetDirection: draft.targetDirection,
-      content: draft,
-    })
+    closeEditor()
+  } catch (error) {
+    console.error(error)
+    showToast('简历保存失败，请稍后重试', 'error')
+  } finally {
+    isSavingResume.value = false
   }
-
-  showToast(editorMode.value === 'edit' ? '简历修改已保存' : '简历已保存')
-  closeEditor()
 }
 
 function saveCurrentResumeAsMockDraft() {
@@ -312,12 +321,21 @@ function closeDeleteResumeConfirm() {
   deleteResumeId.value = null
 }
 
-function confirmDeleteResume() {
-  if (!deleteResumeId.value) return
+async function confirmDeleteResume() {
+  if (!deleteResumeId.value || isDeletingResume.value) return
 
-  resumeStore.deleteResume(deleteResumeId.value)
-  deleteResumeId.value = null
-  showToast('简历已删除')
+  isDeletingResume.value = true
+
+  try {
+    await resumeStore.deleteResume(deleteResumeId.value)
+    deleteResumeId.value = null
+    showToast('简历已删除')
+  } catch (error) {
+    console.error(error)
+    showToast('删除简历失败，请稍后重试', 'error')
+  } finally {
+    isDeletingResume.value = false
+  }
 }
 
 function requestUnsavedConfirm(confirmAction: () => void, cancelAction: () => void = () => {}) {
@@ -393,40 +411,31 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   unlockBodyScroll()
-
-  if (toastTimer) window.clearTimeout(toastTimer)
 })
 </script>
 
 <template>
   <section class="w-full">
-    <Transition name="resume-toast">
-      <div v-if="toastMessage" class="pointer-events-none fixed inset-x-0 top-5 z-50 flex justify-center px-4">
-        <div
-          class="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm shadow-lg backdrop-blur"
-          :class="{
-            'border-success/30 bg-success/15 text-success': toastType === 'success',
-            'border-error/30 bg-error/15 text-error': toastType === 'error',
-            'border-warning/30 bg-warning/15 text-warning': toastType === 'warning',
-          }"
-        >
-          <UIcon
-            :name="
-              toastType === 'success'
-                ? 'i-lucide-circle-check'
-                : toastType === 'error'
-                  ? 'i-lucide-circle-x'
-                  : 'i-lucide-circle-alert'
-            "
-            class="size-4"
-          />
-          <span>{{ toastMessage }}</span>
-        </div>
-      </div>
-    </Transition>
+    <ResumeWorkspaceSkeleton v-if="isLoading && editorMode === null" />
 
     <UCard
-      v-if="resumes.length === 0 && editorMode === null"
+      v-else-if="loadError && editorMode === null"
+      class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
+    >
+      <div class="w-full max-w-md px-6 py-14 text-center">
+        <div class="mx-auto flex size-12 items-center justify-center rounded-2xl bg-error/10 text-error">
+          <UIcon name="i-lucide-cloud-off" class="size-6" />
+        </div>
+        <p class="mt-4 text-sm font-medium text-highlighted">简历加载失败</p>
+        <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">请检查本地 API 是否运行，然后重试。</p>
+        <UButton class="mt-5 whitespace-nowrap" icon="i-lucide-refresh-cw" @click="resumeStore.loadFromApi">
+          重新加载
+        </UButton>
+      </div>
+    </UCard>
+
+    <UCard
+      v-else-if="resumes.length === 0 && editorMode === null"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-md px-6 py-14 text-center">
@@ -488,7 +497,7 @@ onBeforeUnmount(() => {
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <p class="truncate text-sm font-medium text-highlighted">{{ resume.title }}</p>
-                  <p class="mt-1 truncate text-xs text-muted">{{ resume.targetDirection }}</p>
+                  <p class="mt-1 truncate text-xs text-muted">{{ getResumeCurrentTargetDirection(resume.id) }}</p>
                 </div>
                 <UIcon
                   v-if="currentResume?.id === resume.id"
@@ -705,8 +714,14 @@ onBeforeUnmount(() => {
                 >
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="min-w-0">
-                      <p class="truncate text-sm font-medium text-highlighted">
-                        {{ experience.companyName }} · {{ experience.jobTitle }}
+                      <p class="truncate text-sm font-medium text-highlighted flex items-center gap-1">
+                        {{ experience.companyName }} · {{ experience.department }}
+                        <UBadge
+                          v-if="experience.industry"
+                          color="neutral"
+                          variant="subtle"
+                          :label="experience.industry"
+                        />
                       </p>
                       <p class="mt-1 text-xs text-muted">
                         {{ experience.period.start }} 至 {{ experience.period.end }}
@@ -714,16 +729,10 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="flex flex-wrap gap-2">
                       <UBadge
-                        v-if="experience.industry"
-                        color="neutral"
-                        variant="subtle"
-                        :label="experience.industry"
-                      />
-                      <UBadge
-                        v-if="experience.department"
+                        v-if="experience.jobTitle"
                         color="neutral"
                         variant="outline"
-                        :label="experience.department"
+                        :label="experience.jobTitle"
                       />
                     </div>
                   </div>
@@ -792,6 +801,7 @@ onBeforeUnmount(() => {
       :mode="editorMode"
       :initial-draft="editorInitialDraft"
       :mock-draft="activeMockDraft"
+      :is-saving="isSavingResume"
       @cancel="handleEditorCancel"
       @save="handleEditorSave"
       @dirty-change="isEditorDirty = $event"
@@ -859,7 +869,7 @@ onBeforeUnmount(() => {
             <div class="min-w-0">
               <h2 class="text-base font-semibold text-highlighted">确认删除简历</h2>
               <p class="mt-2 text-sm leading-6 text-muted">
-                删除后会同时移除这份简历下的所有版本记录。当前数据还没有接入后端，删除后无法恢复。
+                删除后会同时移除这份简历下的所有版本记录，此操作无法恢复。
               </p>
               <p v-if="deleteTargetResume" class="mt-3 truncate text-sm font-medium text-highlighted">
                 {{ deleteTargetResume.title }}
@@ -868,8 +878,25 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="mt-6 flex justify-end gap-2">
-            <UButton type="button" color="neutral" variant="ghost" @click="closeDeleteResumeConfirm">取消</UButton>
-            <UButton type="button" color="error" icon="i-lucide-trash-2" @click="confirmDeleteResume">确认删除</UButton>
+            <UButton
+              type="button"
+              color="neutral"
+              variant="ghost"
+              :disabled="isDeletingResume"
+              @click="closeDeleteResumeConfirm"
+            >
+              取消
+            </UButton>
+            <UButton
+              type="button"
+              color="error"
+              icon="i-lucide-trash-2"
+              :loading="isDeletingResume"
+              :disabled="isDeletingResume"
+              @click="confirmDeleteResume"
+            >
+              确认删除
+            </UButton>
           </div>
         </div>
       </div>

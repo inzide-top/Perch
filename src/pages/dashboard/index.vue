@@ -9,10 +9,10 @@ const stats = [
 <template>
   <section class="mx-auto max-w-6xl space-y-6">
     <div class="app-empty-state p-6 sm:p-8">
-      <UBadge color="primary" variant="subtle" label="MVP · 本地 Mock" />
-      <h1 class="mt-4 text-2xl font-semibold text-highlighted sm:text-3xl">从一条清晰的简历版本链开始</h1>
+      <UBadge color="primary" variant="subtle" label="PERCH · AI Career Workspace" />
+      <h1 class="mt-4 text-2xl font-semibold text-highlighted sm:text-3xl">从简历到机会，沉淀你的求职判断</h1>
       <p class="mt-3 max-w-2xl text-sm leading-6 text-muted">
-        当前阶段只搭建前端骨架。下一步由你实现 Resume 与 ResumeVersion 的领域模型和保存规则。
+        维护简历版本，分析岗位匹配，并围绕每条机会持续准备与复盘。
       </p>
       <div class="mt-5">
         <UButton to="/resumes" trailing-icon="i-lucide-arrow-right">进入简历管理</UButton>

@@ -1,5 +1,13 @@
 import { defineStore } from 'pinia'
-import type { CurrentStatus, JobSearchIdentity, Resume, ResumeContent, ResumeVersion } from '@/types/resume'
+import type {
+  CurrentStatus,
+  JobSearchIdentity,
+  Resume,
+  ResumeContent,
+  ResumeVersion,
+  VersionDiffItem,
+} from '@/types/resume'
+import { resumeApi, type CreateResumePayload, type SaveResumeVersionResponse } from '@/services/resumes'
 
 const resumeStoreStorageKey = 'agent-seek-employment:resume-store'
 
@@ -24,15 +32,17 @@ function normalizeCurrentStatus(identity: JobSearchIdentity, value: ResumeConten
 }
 
 function cloneResumeContent(content: ResumeContent): ResumeContent {
+  const { title: _title, ...contentWithoutTitle } = content as ResumeContent & { title?: string }
   const address = content.address as string[] | string | undefined
-  const jobSearchIdentity = normalizeJobSearchIdentity(content.jobSearchIdentity)
+  const jobSearchIdentity = normalizeJobSearchIdentity(contentWithoutTitle.jobSearchIdentity)
 
   return {
-    ...content,
+    ...contentWithoutTitle,
+    targetDirection: contentWithoutTitle.targetDirection ?? '',
     address: Array.isArray(address) ? address : address ? [address] : [],
     jobSearchIdentity,
-    currentStatus: normalizeCurrentStatus(jobSearchIdentity, content.currentStatus),
-    workExperiences: (content.workExperiences ?? []).map((experience) => ({
+    currentStatus: normalizeCurrentStatus(jobSearchIdentity, contentWithoutTitle.currentStatus),
+    workExperiences: (contentWithoutTitle.workExperiences ?? []).map((experience) => ({
       ...experience,
       id: experience.id || crypto.randomUUID(),
       period: {
@@ -40,7 +50,7 @@ function cloneResumeContent(content: ResumeContent): ResumeContent {
         end: experience.period?.end ?? '',
       },
     })),
-    projects: content.projects.map((project) => ({
+    projects: contentWithoutTitle.projects.map((project) => ({
       ...project,
       id: project.id || crypto.randomUUID(),
     })),
@@ -56,36 +66,66 @@ type ResumeState = {
   versions: ResumeVersion[]
   currentResumeId: string | null
   currentVersionId: string | null
+  isLoading: boolean
+  loadError: string | null
 }
 
-type CreateResumePayload = {
-  title: string
-  targetDirection: string
-  content: ResumeContent
-}
+type ResumeSelectionState = Pick<ResumeState, 'resumes' | 'versions' | 'currentResumeId' | 'currentVersionId'>
 
-type SaveNewVersionPayload = CreateResumePayload & {
+type SaveNewVersionPayload = {
   resumeId: string
+  title: string
+  content: ResumeContent
   changeNote?: string
 }
 
-type UpdateVersionPayload = SaveNewVersionPayload & {
-  versionId: string
+type LegacyResume = Resume & {
+  targetDirection?: string
 }
 
-function normalizeVersions(versions: ResumeVersion[], resumes: Resume[]) {
+type LegacyResumeVersion = Omit<ResumeVersion, 'content' | 'updatedAt' | 'diffSummary'> & {
+  targetDirection?: string
+  updatedAt?: string
+  diffSummary?: VersionDiffItem[]
+  content: ResumeContent & {
+    title?: string
+    targetDirection?: string
+  }
+}
+
+function normalizeResumes(resumes: LegacyResume[]): Resume[] {
+  return resumes.map((resume) => ({
+    id: resume.id,
+    title: resume.title,
+    currentVersionId: resume.currentVersionId,
+    createdAt: resume.createdAt,
+    updatedAt: resume.updatedAt,
+  }))
+}
+
+function normalizeVersions(versions: LegacyResumeVersion[], resumes: LegacyResume[]) {
   return versions.map((version) => {
     const resume = resumes.find((item) => item.id === version.resumeId)
+    const targetDirection = version.content.targetDirection ?? version.targetDirection ?? resume?.targetDirection ?? ''
 
     return {
-      ...version,
-      targetDirection: version.targetDirection ?? resume?.targetDirection ?? '',
-      content: cloneResumeContent(version.content),
+      id: version.id,
+      resumeId: version.resumeId,
+      versionNumber: version.versionNumber,
+      parentVersionId: version.parentVersionId,
+      content: cloneResumeContent({
+        ...version.content,
+        targetDirection,
+      }),
+      diffSummary: version.diffSummary ?? [],
+      changeNote: version.changeNote,
+      createdAt: version.createdAt,
+      updatedAt: version.updatedAt ?? version.createdAt,
     }
   })
 }
 
-function resolveCurrentIds(state: ResumeState) {
+function resolveCurrentIds(state: ResumeSelectionState) {
   const currentResume = state.resumes.find((resume) => resume.id === state.currentResumeId) ?? state.resumes[0] ?? null
   const currentVersion =
     state.versions.find((version) => version.id === state.currentVersionId && version.resumeId === currentResume?.id) ??
@@ -104,6 +144,8 @@ export const useResumeStore = defineStore('resume', {
     versions: [],
     currentResumeId: null,
     currentVersionId: null,
+    isLoading: false,
+    loadError: null,
   }),
 
   getters: {
@@ -125,6 +167,30 @@ export const useResumeStore = defineStore('resume', {
   },
 
   actions: {
+    async loadFromApi() {
+      this.isLoading = true
+      this.loadError = null
+
+      try {
+        const { resumes, versions } = await resumeApi.getResumeWorkspace()
+
+        const currentIds = resolveCurrentIds({
+          resumes,
+          versions,
+          currentResumeId: this.currentResumeId,
+          currentVersionId: this.currentVersionId,
+        })
+
+        this.resumes = resumes
+        this.versions = versions
+        this.currentResumeId = currentIds.currentResumeId
+        this.currentVersionId = currentIds.currentVersionId
+      } catch (error) {
+        this.loadError = error instanceof Error ? error.message : 'load resume failed'
+      } finally {
+        this.isLoading = false
+      }
+    },
     hydrateFromStorage() {
       if (!canUseLocalStorage()) return
 
@@ -133,8 +199,11 @@ export const useResumeStore = defineStore('resume', {
 
       try {
         const parsedState = JSON.parse(storedState) as ResumeState
-        const resumes = Array.isArray(parsedState.resumes) ? parsedState.resumes : []
-        const versions = Array.isArray(parsedState.versions) ? normalizeVersions(parsedState.versions, resumes) : []
+        const storedResumes = Array.isArray(parsedState.resumes) ? (parsedState.resumes as LegacyResume[]) : []
+        const resumes = normalizeResumes(storedResumes)
+        const versions = Array.isArray(parsedState.versions)
+          ? normalizeVersions(parsedState.versions as LegacyResumeVersion[], storedResumes)
+          : []
         const currentIds = resolveCurrentIds({
           resumes,
           versions,
@@ -165,116 +234,68 @@ export const useResumeStore = defineStore('resume', {
       )
     },
 
-    createResume(payload: CreateResumePayload) {
-      const now = new Date().toISOString()
-      const resumeId = crypto.randomUUID()
-      const versionId = crypto.randomUUID()
+    async createResume(payload: CreateResumePayload) {
+      const result = await resumeApi.createResume({
+        title: payload.title,
+        content: cloneResumeContent(payload.content),
+      })
 
-      const { title, targetDirection, content } = payload
-      const resumeInfo = {
-        title,
-        targetDirection,
-        id: resumeId,
-        currentVersionId: versionId,
-        createdAt: now,
-        updatedAt: now,
-      }
+      this.resumes.push(result.resume)
+      this.versions.push(...result.versions)
+      this.currentResumeId = result.resume.id
+      this.currentVersionId = result.currentVersion.id
 
-      const versionInfo = {
-        id: versionId,
-        resumeId,
-        versionNumber: 1,
-        parentVersionId: null,
-        targetDirection,
-        content: cloneResumeContent(content),
-        changeNote: 'create resume',
-        createdAt: now,
-      }
-
-      this.resumes.push(resumeInfo)
-      this.versions.push(versionInfo)
-      this.currentResumeId = resumeId
-      this.currentVersionId = versionId
-      this.persistToStorage()
-
-      return resumeInfo
+      return result.resume
     },
 
-    saveNewVersion(payload: SaveNewVersionPayload) {
+    async saveNewVersion(payload: SaveNewVersionPayload) {
       const resume = this.resumes.find((item) => item.id === payload.resumeId)
       if (!resume) return null
 
-      const now = new Date().toISOString()
-      const versionId = crypto.randomUUID()
-      const parentVersion = this.versions.find((version) => version.id === resume.currentVersionId)
-      const latestVersionNumber = Math.max(
-        0,
-        ...this.versions
-          .filter((version) => version.resumeId === payload.resumeId)
-          .map((version) => version.versionNumber),
-      )
-
-      if (parentVersion && !parentVersion.targetDirection) {
-        parentVersion.targetDirection = resume.targetDirection
-      }
-
-      const versionInfo = {
-        id: versionId,
-        resumeId: payload.resumeId,
-        versionNumber: latestVersionNumber + 1,
-        parentVersionId: resume.currentVersionId,
-        targetDirection: payload.targetDirection,
+      const result = await resumeApi.saveResumeVersion(resume.id, {
+        title: payload.title,
         content: cloneResumeContent(payload.content),
         changeNote: payload.changeNote ?? 'update resume',
-        createdAt: now,
-      }
+      })
 
-      resume.title = payload.title
-      resume.targetDirection = payload.targetDirection
-      resume.currentVersionId = versionId
-      resume.updatedAt = now
+      this.upsertResumeSaveResult(result)
 
-      this.versions.push(versionInfo)
-      this.currentResumeId = resume.id
-      this.currentVersionId = versionId
-      this.persistToStorage()
-
-      return versionInfo
+      return result
     },
 
-    updateVersion(payload: UpdateVersionPayload) {
-      const resume = this.resumes.find((item) => item.id === payload.resumeId)
-      const version = this.versions.find((item) => item.id === payload.versionId && item.resumeId === payload.resumeId)
-      if (!resume || !version) return null
-
-      resume.title = payload.title
-      resume.targetDirection = payload.targetDirection
-      resume.updatedAt = new Date().toISOString()
-
-      version.targetDirection = payload.targetDirection
-      version.content = cloneResumeContent(payload.content)
-      version.changeNote = payload.changeNote ?? version.changeNote
-
-      this.currentResumeId = resume.id
-      this.currentVersionId = version.id
-      this.persistToStorage()
-
-      return version
-    },
-
-    deleteResume(resumeId: string) {
-      this.resumes = this.resumes.filter((resume) => resume.id !== resumeId)
-      this.versions = this.versions.filter((version) => version.resumeId !== resumeId)
-
-      if (this.currentResumeId !== resumeId) {
-        this.persistToStorage()
-        return
+    upsertResumeSaveResult(result: SaveResumeVersionResponse) {
+      const resumeIndex = this.resumes.findIndex((item) => item.id === result.resume.id)
+      if (resumeIndex === -1) {
+        this.resumes.push(result.resume)
+      } else {
+        this.resumes.splice(resumeIndex, 1, result.resume)
       }
 
-      const nextResume = this.resumes[0]
-      this.currentResumeId = nextResume?.id ?? null
-      this.currentVersionId = nextResume?.currentVersionId ?? null
-      this.persistToStorage()
+      const versionIndex = this.versions.findIndex((item) => item.id === result.version.id)
+      if (versionIndex === -1) {
+        this.versions.push(result.version)
+      } else {
+        this.versions.splice(versionIndex, 1, result.version)
+      }
+
+      this.currentResumeId = result.resume.id
+      this.currentVersionId = result.version.id
+    },
+
+    async deleteResume(resumeId: string) {
+      const result = await resumeApi.deleteResume(resumeId)
+      const isDeletingCurrentResume = this.currentResumeId === result.deletedResumeId
+
+      this.resumes = this.resumes.filter((resume) => resume.id !== result.deletedResumeId)
+      this.versions = this.versions.filter((version) => version.resumeId !== result.deletedResumeId)
+
+      if (isDeletingCurrentResume) {
+        const nextResume = this.resumes[0] ?? null
+        this.currentResumeId = nextResume?.id ?? null
+        this.currentVersionId = nextResume?.currentVersionId ?? null
+      }
+
+      return result
     },
 
     selectResume(resumeId: string) {

@@ -652,6 +652,7 @@ onBeforeUnmount(() => {
                     :items="industrySelectItems"
                     value-key="value"
                     placeholder="选择公司行业"
+                    :ui="{ content: 'z-[60]' }"
                   />
                   <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
                 </UFormField>
@@ -662,7 +663,7 @@ onBeforeUnmount(() => {
                 </UFormField>
 
                 <UFormField label="工作时间" required class="sm:col-span-2">
-                  <UPopover v-model:open="workExperiencePeriodPopoverOpen">
+                  <UPopover v-model:open="workExperiencePeriodPopoverOpen" :ui="{ content: 'z-[60]' }">
                     <UButton
                       type="button"
                       color="neutral"
@@ -708,8 +709,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 :deep(.city-picker-trigger) {
-  height: 33px !important;
-  min-height: 33px !important;
+  height: 32px !important;
+  min-height: 32px !important;
   border-color: var(--ui-border-accented);
+  border-radius: calc(var(--ui-radius) * 1.5);
 }
 </style>

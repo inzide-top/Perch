@@ -1,8 +1,10 @@
+import type { ResumeContent } from './resume'
+
 /**
  * jd信息
  */
 export type JobOpportunityStatus =
-  'analyzing' | 'pending_apply' | 'applied' | 'written_test' | 'interviewing' | 'oc' | 'offered' | 'closed'
+  'pending_apply' | 'applied' | 'written_test' | 'interviewing' | 'oc' | 'offered' | 'closed'
 
 export type JobOpportunity = {
   id: string
@@ -17,12 +19,9 @@ export type JobOpportunity = {
   industry: string
   note: string
   writtenTestReview: WrittenTestReview
-  assessmentRounds: AssessmentRound[]
-  terminationEvents: OpportunityTermination[]
+  /** 机会关闭后只有一条终止记录；未终止时不存在。 */
+  termination?: OpportunityTermination
   statusHistory: OpportunityStatusChange[]
-  /**
-   * @deprecated 旧页面暂时仍读取 interviewRounds；后续统一迁移到 assessmentRounds。
-   */
   interviewRounds: InterviewRound[]
   createdAt: string
   updatedAt: string
@@ -30,28 +29,26 @@ export type JobOpportunity = {
 
 export type OpportunityIntentionLevel = 'S' | 'A' | 'B' | 'C'
 
-export type AssessmentRoundType = 'technical_basic' | 'project' | 'business' | 'hr' | 'manager' | 'other'
+export type InterviewRoundType = 'technical_basic' | 'project' | 'business' | 'hr' | 'manager' | 'other'
 
-export type AssessmentRoundStatus = 'planned' | 'completed' | 'passed' | 'failed' | 'canceled'
+export type InterviewRoundStatus = 'planned' | 'completed' | 'passed' | 'failed' | 'canceled'
 
-export type AssessmentRoundResult = 'pending' | 'passed' | 'failed' | 'unknown'
+export type InterviewRoundResult = 'pending' | 'passed' | 'failed' | 'unknown'
 
-export type AssessmentRound = {
+export type InterviewRound = {
   id: string
-  type: AssessmentRoundType
+  type: InterviewRoundType
   sequence: number
   title: string
   scheduledAt: string
-  status: AssessmentRoundStatus
-  result: AssessmentRoundResult
+  status: InterviewRoundStatus
+  result: InterviewRoundResult
   note: string
   reviewNote: string
   keyTakeaways: string[]
   createdAt: string
   updatedAt: string
 }
-
-export type InterviewRound = AssessmentRound
 
 export type WrittenTestReview = {
   scheduledAt: string
@@ -84,8 +81,8 @@ export type OpportunityTermination = {
   id: string
   opportunityId: string
   fromStatus: JobOpportunityStatus
-  relatedAssessmentRoundId?: string
-  relatedAssessmentRoundTitle?: string
+  relatedInterviewRoundId?: string
+  relatedInterviewRoundTitle?: string
   reasonCode: OpportunityTerminationReasonCode
   reasonNote: string
   createdAt: string
@@ -96,7 +93,7 @@ export type OpportunityTermination = {
  */
 export type JobAnalysis = {
   id: string
-  jobOpportunityId: string
+  opportunityId: string
   resumeId: string
   resumeVersionId: string
 
@@ -113,6 +110,88 @@ export type JobAnalysis = {
   interviewFocus: InterviewFocusItem[]
 
   createdAt: string
+}
+
+/** AI 分析任务自身的运行状态，与 JobOpportunity 的求职流程状态完全独立。 */
+export type JobAnalysisStatus = 'pending' | 'processing' | 'completed' | 'failed'
+
+/** 持久化的 JD 分析任务；result 为空时，前端只展示任务状态而不渲染匹配结论。 */
+/** 服务端内部持久化对象；不直接作为前端 API 响应。 */
+export type JobAnalysisTask = {
+  id: string
+  opportunityId: string
+  resumeId: string
+  resumeVersionId: string
+  status: JobAnalysisStatus
+  currentAttempt: number
+  modelName: string | null
+  result: JobAnalysisResult | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+/** 面向前端的任务进度，不暴露内部关联 ID。 */
+export type JobAnalysisProgress = {
+  status: JobAnalysisStatus
+  currentAttempt: number
+  maxAttempts: number
+  /** 当前分析任务的首次创建时间，用于恢复页面后的轮询节奏计算。 */
+  createdAt: string
+  updatedAt: string
+  modelName: string | null
+  matchScore: number | null
+  recommendation: JobAnalysisResult['recommendation'] | null
+  result: JobAnalysisResult | null
+  error: Pick<AgentRunError, 'code' | 'message'> | null
+}
+
+/** 机会列表只需要轻量分析摘要，详情页才拉取完整 result。 */
+export type JobAnalysisListSummary = Omit<JobAnalysisProgress, 'result'>
+
+/**
+ * 模型成功输出并通过结构化校验后，写入 JobAnalysis.result 的内容。
+ * 暂时复用现有前端分析展示字段，后续接入 API 时再将页面 DTO 迁移到这个结构。
+ */
+export type JobAnalysisResult = Pick<
+  JobAnalysis,
+  | 'matchScore'
+  | 'recommendation'
+  | 'summary'
+  | 'locationMatch'
+  | 'scoreBreakdown'
+  | 'requirementMatches'
+  | 'strengths'
+  | 'gaps'
+  | 'resumeSuggestions'
+  | 'interviewFocus'
+>
+
+/** 单次 Agent 执行状态；一次分析允许产生多次重试执行。 */
+export type AgentRunStatus = 'pending' | 'processing' | 'completed' | 'failed'
+
+/** 保存模型调用时的 JD 与简历正文快照，不包含实体或版本 ID。 */
+export type JobAnalysisRunInput = {
+  resume: ResumeContent
+  opportunity: Pick<JobOpportunity, 'company' | 'jobTitle' | 'address' | 'introduction' | 'description'>
+}
+
+/** 不保存原生 Error 实例，保存可序列化、可查询的错误信息。 */
+export type AgentRunError = {
+  code: 'structured_output_validation_failed' | 'model_request_failed' | 'timeout' | 'rate_limited' | 'unknown'
+  message: string
+  retryable: boolean
+  validationIssues?: Array<{
+    path: Array<string | number>
+    code: string
+    message: string
+  }>
+}
+
+export type AgentTokenUsage = {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
 }
 
 export type MatchDimensionKey =
@@ -151,7 +230,7 @@ export type JobRequirementSignal = {
 
 export type JobRequirementAnalysis = {
   id: string
-  jobOpportunityId: string
+  opportunityId: string
   company: string
   jobTitle: string
   address?: string[]
@@ -192,5 +271,5 @@ export type RequirementMatch = {
   matchStatus: 'matched' | 'partial' | 'missing' | 'overqualified'
   importance: 'must_have' | 'nice_to_have'
   risk: 'high' | 'medium' | 'low'
-  suggestion?: string
+  suggestion: string | null
 }

@@ -1,4 +1,4 @@
-import type { AssessmentRoundType, JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/opportunity'
+import type { InterviewRoundType, JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/opportunity'
 
 export type DetailNavKey = 'dashboard' | 'info' | 'mock-interview' | `chat-${number}`
 
@@ -22,8 +22,8 @@ export type OpportunityInfoForm = {
   note: string
 }
 
-export type AssessmentRoundForm = {
-  type: AssessmentRoundType
+export type InterviewRoundForm = {
+  type: InterviewRoundType
   title: string
   date: string
   note: string

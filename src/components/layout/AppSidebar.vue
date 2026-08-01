@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.svg'
-import perchMarkLightUrl from '@/assets/brand/perch-mark-light.svg'
+import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.png'
+import perchMarkLightUrl from '@/assets/brand/perch-mark-light.png'
 
 const isExpanded = defineModel<boolean>('expanded', { required: true })
 
@@ -115,18 +115,6 @@ const navigation = [
             </span>
           </RouterLink>
         </UTooltip>
-
-        <div
-          class="ml-14 overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--app-border)_74%,transparent)] bg-[color-mix(in_srgb,var(--app-accent)_7%,transparent)] text-xs text-muted transition-[max-height,opacity,transform,padding] duration-150 ease-out"
-          :class="
-            isExpanded
-              ? 'max-h-28 w-[10.5rem] translate-y-0 p-3 opacity-100'
-              : 'pointer-events-none max-h-0 translate-y-1 p-0 opacity-0'
-          "
-        >
-          <p class="font-medium text-highlighted">本地 Mock 阶段</p>
-          <p class="mt-1 leading-5">先跑通简历版本链，再接入真实数据与 Agent。</p>
-        </div>
       </div>
     </div>
   </aside>

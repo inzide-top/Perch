@@ -1,28 +1,50 @@
 import { defineStore } from 'pinia'
-import type {
-  AssessmentRound,
-  AssessmentRoundResult,
-  AssessmentRoundStatus,
-  AssessmentRoundType,
-  JobAnalysis,
-  JobOpportunity,
-  JobOpportunityStatus,
-  OpportunityStatusChange,
-  OpportunityStatusChangeTrigger,
-  OpportunityTerminationReasonCode,
-  OpportunityIntentionLevel,
-  WrittenTestReview,
-} from '@/types/opportunity'
-import { createMockJobAnalysis, mockJobAnalysis } from '@/pages/opportunity/mocks/analysis'
+import type { JobAnalysis, JobAnalysisListSummary, JobAnalysisResult, JobOpportunity } from '@/types/opportunity'
+import { jobAnalysisApi, type StartJobAnalysisPayload } from '@/services/job-analyses'
+import {
+  opportunityApi,
+  type AddInterviewRoundPayload,
+  type CreateOpportunityPayload,
+  type JobOpportunityListItem,
+  type OpportunityListFilters,
+  type TerminateOpportunityPayload,
+  type UpdateInterviewRoundPayload,
+  type UpdateOpportunityPayload,
+  type UpdateOpportunityStatusPayload,
+  type UpdateWrittenTestReviewPayload,
+} from '@/services/opportunities'
 
 const opportunityStoreStorageKey = 'agent-seek-employment:opportunity-store'
+
+type JobAnalysisTaskState = JobAnalysisListSummary & {
+  opportunityId: string
+  result: JobAnalysisResult | null
+}
+
+type OpportunityDetailCacheEntry = {
+  cachedAt: number
+  opportunityUpdatedAt: string
+  analysisUpdatedAt: string | null
+}
 
 type OpportunityState = {
   opportunities: JobOpportunity[]
   analyses: JobAnalysis[]
+  analysisTasks: JobAnalysisTaskState[]
   currentOpportunityId: string | null
   currentAnalysisId: string | null
+  opportunityDetailCache: Record<string, OpportunityDetailCacheEntry>
+  isInitialLoading: boolean
+  isRefreshing: boolean
+  opportunitiesLoadedAt: number | null
+  opportunityListFilterKey: string
+  loadError: string | null
 }
+
+type OpportunitySelectionState = Pick<
+  OpportunityState,
+  'opportunities' | 'analyses' | 'currentOpportunityId' | 'currentAnalysisId'
+>
 
 const legacyAnalysisDimensionKeys = new Set([
   'hard_skills',
@@ -32,62 +54,6 @@ const legacyAnalysisDimensionKeys = new Set([
   'location',
   'resume_expression',
 ])
-
-type CreateOpportunityPayload = {
-  company: string
-  jobTitle: string
-  address?: string[] | string
-  introduction?: string
-  description: string
-}
-
-type UpdateOpportunityPayload = Partial<Omit<CreateOpportunityPayload, 'description'>> & {
-  description?: string
-  status?: JobOpportunityStatus
-  includeWrittenTest?: boolean
-  intentionLevel?: OpportunityIntentionLevel
-  industry?: string
-  note?: string
-}
-
-type UpdateWrittenTestReviewPayload = Partial<Pick<WrittenTestReview, 'scheduledAt' | 'reviewNote'>>
-
-type AddInterviewRoundPayload = {
-  title: string
-  scheduledAt: string
-  note: string
-}
-
-type UpdateInterviewRoundPayload = Partial<AddInterviewRoundPayload>
-
-type AddAssessmentRoundPayload = {
-  type: AssessmentRoundType
-  title?: string
-  scheduledAt?: string
-  status?: AssessmentRoundStatus
-  result?: AssessmentRoundResult
-  note?: string
-  reviewNote?: string
-  keyTakeaways?: string[]
-}
-
-type UpdateAssessmentRoundPayload = Partial<AddAssessmentRoundPayload>
-
-type TerminateOpportunityPayload = {
-  relatedAssessmentRoundId?: string
-  reasonCode?: OpportunityTerminationReasonCode
-  reasonNote?: string
-}
-
-type StoredJobOpportunity = Omit<JobOpportunity, 'assessmentRounds' | 'interviewRounds' | 'writtenTestReview'> & {
-  assessmentRounds?: StoredAssessmentRound[]
-  interviewRounds?: StoredAssessmentRound[]
-  writtenTestReview?: Partial<WrittenTestReview>
-}
-
-type StoredAssessmentRound = Partial<Omit<AssessmentRound, 'type'>> & {
-  type?: AssessmentRoundType | 'written_test'
-}
 
 function canUseLocalStorage() {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined'
@@ -100,54 +66,19 @@ function normalizeCityList(value: string[] | string | undefined) {
   return []
 }
 
-function resolveCurrentIds(state: OpportunityState) {
+function resolveCurrentIds(state: OpportunitySelectionState) {
   const currentOpportunity =
     state.opportunities.find((opportunity) => opportunity.id === state.currentOpportunityId) ??
     state.opportunities[0] ??
     null
   const currentAnalysis =
     state.analyses.find((analysis) => analysis.id === state.currentAnalysisId) ??
-    state.analyses.find((analysis) => analysis.jobOpportunityId === currentOpportunity?.id) ??
+    state.analyses.find((analysis) => analysis.opportunityId === currentOpportunity?.id) ??
     null
 
   return {
     currentOpportunityId: currentOpportunity?.id ?? null,
     currentAnalysisId: currentAnalysis?.id ?? null,
-  }
-}
-
-function createStatusHistoryItem(
-  toStatus: JobOpportunityStatus,
-  fromStatus: JobOpportunityStatus | null,
-  trigger: OpportunityStatusChangeTrigger = 'user',
-  note?: string,
-): OpportunityStatusChange {
-  return {
-    id: crypto.randomUUID(),
-    fromStatus,
-    toStatus,
-    trigger,
-    note,
-    createdAt: new Date().toISOString(),
-  }
-}
-
-function normalizeAssessmentRound(round: StoredAssessmentRound, index: number): AssessmentRound {
-  const now = new Date().toISOString()
-
-  return {
-    id: round.id ?? crypto.randomUUID(),
-    type: round.type === 'written_test' ? 'technical_basic' : (round.type ?? 'technical_basic'),
-    sequence: round.sequence ?? index + 1,
-    title: round.title?.trim() || `第 ${index + 1} 轮`,
-    scheduledAt: round.scheduledAt ?? '',
-    status: round.status ?? 'planned',
-    result: round.result ?? 'pending',
-    note: round.note ?? '',
-    reviewNote: round.reviewNote ?? '',
-    keyTakeaways: Array.isArray(round.keyTakeaways) ? round.keyTakeaways : [],
-    createdAt: round.createdAt ?? now,
-    updatedAt: round.updatedAt ?? round.createdAt ?? now,
   }
 }
 
@@ -157,50 +88,187 @@ function hasLegacyAnalysisDimension(analysis: JobAnalysis) {
   return analysis.scoreBreakdown.some((item) => legacyAnalysisDimensionKeys.has(String(item.key)))
 }
 
-function normalizeAnalysis(analysis: JobAnalysis) {
-  if (!hasLegacyAnalysisDimension(analysis)) return analysis
+function normalizeOpportunitySummary(opportunity: JobOpportunityListItem): JobOpportunity {
+  const now = new Date().toISOString()
 
   return {
-    ...mockJobAnalysis,
-    id: analysis.id,
-    jobOpportunityId: analysis.jobOpportunityId,
-    resumeId: analysis.resumeId,
-    resumeVersionId: analysis.resumeVersionId,
-    createdAt: analysis.createdAt,
+    id: opportunity.id,
+    company: opportunity.company,
+    jobTitle: opportunity.jobTitle,
+    address: normalizeCityList(opportunity.address),
+    introduction: '',
+    description: '',
+    status: opportunity.status,
+    includeWrittenTest: false,
+    intentionLevel: opportunity.intentionLevel,
+    industry: opportunity.industry,
+    note: '',
+    writtenTestReview: {
+      scheduledAt: '',
+      reviewNote: '',
+      updatedAt: opportunity.updatedAt,
+    },
+    termination: undefined,
+    statusHistory: [],
+    interviewRounds: [],
+    createdAt: opportunity.createdAt || now,
+    updatedAt: opportunity.updatedAt || now,
   }
 }
 
-function normalizeOpportunity(opportunity: StoredJobOpportunity): JobOpportunity {
-  const sourceRounds = Array.isArray(opportunity.assessmentRounds)
-    ? opportunity.assessmentRounds
-    : Array.isArray(opportunity.interviewRounds)
-      ? opportunity.interviewRounds
-      : []
-  const writtenTestRound = sourceRounds.find((round) => round.type === 'written_test')
-  const assessmentRounds = sourceRounds.filter((round) => round.type !== 'written_test').map(normalizeAssessmentRound)
-  const now = new Date().toISOString()
-  const writtenTestReview: WrittenTestReview = {
-    scheduledAt: opportunity.writtenTestReview?.scheduledAt ?? writtenTestRound?.scheduledAt ?? '',
-    reviewNote:
-      opportunity.writtenTestReview?.reviewNote ?? writtenTestRound?.reviewNote ?? writtenTestRound?.note ?? '',
-    updatedAt:
-      opportunity.writtenTestReview?.updatedAt ?? writtenTestRound?.updatedAt ?? writtenTestRound?.createdAt ?? now,
-  }
+function mergeOpportunitySummary(summary: JobOpportunityListItem, currentOpportunity?: JobOpportunity) {
+  if (!currentOpportunity) return normalizeOpportunitySummary(summary)
 
   return {
-    ...opportunity,
-    status: opportunity.status ?? 'analyzing',
-    address: normalizeCityList(opportunity.address),
-    includeWrittenTest: opportunity.includeWrittenTest ?? opportunity.status === 'written_test',
-    intentionLevel: opportunity.intentionLevel ?? 'B',
-    industry: opportunity.industry ?? '',
-    note: opportunity.note ?? '',
-    writtenTestReview,
-    assessmentRounds,
-    terminationEvents: Array.isArray(opportunity.terminationEvents) ? opportunity.terminationEvents : [],
-    statusHistory: Array.isArray(opportunity.statusHistory) ? opportunity.statusHistory : [],
-    // 兼容旧页面：当前 UI 仍使用 interviewRounds，后面会逐步迁移到 assessmentRounds。
-    interviewRounds: assessmentRounds,
+    ...currentOpportunity,
+    company: summary.company,
+    jobTitle: summary.jobTitle,
+    address: normalizeCityList(summary.address),
+    status: summary.status,
+    intentionLevel: summary.intentionLevel,
+    industry: summary.industry,
+    createdAt: summary.createdAt,
+    updatedAt: summary.updatedAt,
+  }
+}
+
+function upsertOpportunity(list: JobOpportunity[], opportunity: JobOpportunity) {
+  const index = list.findIndex((item) => item.id === opportunity.id)
+
+  if (index === -1) {
+    list.unshift(opportunity)
+    return
+  }
+
+  list.splice(index, 1, opportunity)
+}
+
+function upsertAnalysisTask(list: JobAnalysisTaskState[], task: JobAnalysisTaskState) {
+  const index = list.findIndex((item) => item.opportunityId === task.opportunityId)
+
+  if (index === -1) {
+    list.unshift(task)
+    return
+  }
+
+  list.splice(index, 1, task)
+}
+
+function upsertOpportunityAnalysis(list: JobAnalysis[], analysis: JobAnalysis) {
+  const index = list.findIndex((item) => item.opportunityId === analysis.opportunityId)
+
+  if (index === -1) {
+    list.unshift(analysis)
+    return
+  }
+
+  list.splice(index, 1, analysis)
+}
+
+function removeOpportunityAnalysis(list: JobAnalysis[], opportunityId: string) {
+  const index = list.findIndex((item) => item.opportunityId === opportunityId)
+  if (index >= 0) list.splice(index, 1)
+}
+
+function toDisplayAnalysis(task: JobAnalysisTaskState): JobAnalysis | null {
+  if (task.status !== 'completed' || !task.result) return null
+
+  return {
+    id: task.opportunityId,
+    opportunityId: task.opportunityId,
+    resumeId: '',
+    resumeVersionId: '',
+    ...task.result,
+    createdAt: task.createdAt,
+  }
+}
+
+let analysisPollingPromise: Promise<void> | null = null
+let activePollDelayResolver: ((reason: 'timeout' | 'visibility') => void) | null = null
+const maxAnalysisPollingAttempts = 192
+const opportunityListCacheTtlMs = 60_000
+const opportunityDetailCacheMaxAgeMs = 30 * 60 * 1_000
+const maxOpportunityDetailCacheEntries = 20
+const opportunityDetailRequests = new Map<string, Promise<JobOpportunity>>()
+let opportunitiesLoadRequest: { filterKey: string; promise: Promise<void> } | null = null
+let opportunityListLoadSequence = 0
+
+function isDocumentHidden() {
+  return typeof document !== 'undefined' && document.hidden
+}
+
+function getActiveAnalysisPollDelay(tasks: JobAnalysisTaskState[]) {
+  if (isDocumentHidden()) return 30_000
+
+  const earliestCreatedAt = tasks.reduce<number>((earliest, task) => {
+    const createdAt = Date.parse(task.createdAt)
+    return Number.isFinite(createdAt) ? Math.min(earliest, createdAt) : earliest
+  }, Date.now())
+  const elapsedMs = Math.max(0, Date.now() - earliestCreatedAt)
+
+  if (elapsedMs < 45_000) return 15_000
+  if (elapsedMs < 75_000) return 10_000
+  return 5_000
+}
+
+function waitForAnalysisPoll(milliseconds: number) {
+  return new Promise<'timeout' | 'visibility'>((resolve) => {
+    const finish = (reason: 'timeout' | 'visibility') => {
+      window.clearTimeout(timer)
+      if (activePollDelayResolver === finish) activePollDelayResolver = null
+      resolve(reason)
+    }
+    const timer = window.setTimeout(() => finish('timeout'), milliseconds)
+    activePollDelayResolver = finish
+  })
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    activePollDelayResolver?.('visibility')
+  })
+}
+
+function isDetailCacheFresh(
+  entry: OpportunityDetailCacheEntry | undefined,
+  opportunity: JobOpportunity | undefined,
+  analysisTask: JobAnalysisTaskState | undefined,
+) {
+  if (!entry || !opportunity) return false
+
+  return (
+    entry.opportunityUpdatedAt === opportunity.updatedAt &&
+    entry.analysisUpdatedAt === (analysisTask?.updatedAt ?? null) &&
+    Date.now() - entry.cachedAt < opportunityDetailCacheMaxAgeMs
+  )
+}
+
+function createOpportunityListFilterKey(filters: OpportunityListFilters) {
+  return JSON.stringify({
+    statuses: [...(filters.statuses ?? [])].sort(),
+    intentionLevels: [...(filters.intentionLevels ?? [])].sort(),
+    recommendations: [...(filters.recommendations ?? [])].sort(),
+    regions: [...(filters.regions ?? [])].sort(),
+  })
+}
+
+function cacheOpportunityDetail(
+  cache: Record<string, OpportunityDetailCacheEntry>,
+  opportunity: JobOpportunity,
+  analysisTask: JobAnalysisTaskState | undefined,
+) {
+  cache[opportunity.id] = {
+    cachedAt: Date.now(),
+    opportunityUpdatedAt: opportunity.updatedAt,
+    analysisUpdatedAt: analysisTask?.updatedAt ?? null,
+  }
+
+  const overflowEntries = Object.entries(cache)
+    .sort(([, current], [, next]) => current.cachedAt - next.cachedAt)
+    .slice(0, Math.max(0, Object.keys(cache).length - maxOpportunityDetailCacheEntries))
+
+  for (const [expiredOpportunityId] of overflowEntries) {
+    delete cache[expiredOpportunityId]
   }
 }
 
@@ -208,8 +276,15 @@ export const useOpportunityStore = defineStore('opportunity', {
   state: (): OpportunityState => ({
     opportunities: [],
     analyses: [],
+    analysisTasks: [],
     currentOpportunityId: null,
     currentAnalysisId: null,
+    opportunityDetailCache: {},
+    isInitialLoading: false,
+    isRefreshing: false,
+    opportunitiesLoadedAt: null,
+    opportunityListFilterKey: '',
+    loadError: null,
   }),
 
   getters: {
@@ -219,6 +294,24 @@ export const useOpportunityStore = defineStore('opportunity', {
 
     currentAnalysis: (state) => {
       return state.analyses.find((analysis) => analysis.id === state.currentAnalysisId) ?? null
+    },
+
+    hasOpportunityDetail: (state) => (opportunityId: string) => {
+      return Boolean(state.opportunityDetailCache[opportunityId])
+    },
+
+    isOpportunityDetailFresh: (state) => (opportunityId: string) => {
+      return isDetailCacheFresh(
+        state.opportunityDetailCache[opportunityId],
+        state.opportunities.find((opportunity) => opportunity.id === opportunityId),
+        state.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
+    },
+
+    isOpportunityListCached: (state) => {
+      return Boolean(
+        state.opportunitiesLoadedAt && Date.now() - state.opportunitiesLoadedAt < opportunityListCacheTtlMs,
+      )
     },
   },
 
@@ -230,26 +323,16 @@ export const useOpportunityStore = defineStore('opportunity', {
       if (!storedState) return
 
       try {
-        const parsedState = JSON.parse(storedState) as OpportunityState
-        const opportunities = Array.isArray(parsedState.opportunities)
-          ? parsedState.opportunities.map((opportunity) => normalizeOpportunity(opportunity))
-          : []
+        const parsedState = JSON.parse(storedState) as Partial<OpportunityState>
         const storedAnalyses = Array.isArray(parsedState.analyses) ? parsedState.analyses : []
-        const analyses = storedAnalyses.map((analysis) => normalizeAnalysis(analysis))
-        const hasMigratedAnalysis = analyses.some((analysis, index) => analysis !== storedAnalyses[index])
-        const currentIds = resolveCurrentIds({
-          opportunities,
-          analyses,
-          currentOpportunityId: parsedState.currentOpportunityId ?? null,
-          currentAnalysisId: parsedState.currentAnalysisId ?? null,
-        })
+        const analyses = storedAnalyses.filter((analysis) => !hasLegacyAnalysisDimension(analysis))
+        const hasRemovedLegacyAnalysis = analyses.length !== storedAnalyses.length
 
-        this.opportunities = opportunities
         this.analyses = analyses
-        this.currentOpportunityId = currentIds.currentOpportunityId
-        this.currentAnalysisId = currentIds.currentAnalysisId
+        this.currentOpportunityId = parsedState.currentOpportunityId ?? null
+        this.currentAnalysisId = parsedState.currentAnalysisId ?? null
 
-        if (hasMigratedAnalysis) this.persistToStorage()
+        if (hasRemovedLegacyAnalysis) this.persistToStorage()
       } catch {
         localStorage.removeItem(opportunityStoreStorageKey)
       }
@@ -261,7 +344,6 @@ export const useOpportunityStore = defineStore('opportunity', {
       localStorage.setItem(
         opportunityStoreStorageKey,
         JSON.stringify({
-          opportunities: this.opportunities,
           analyses: this.analyses,
           currentOpportunityId: this.currentOpportunityId,
           currentAnalysisId: this.currentAnalysisId,
@@ -269,220 +351,346 @@ export const useOpportunityStore = defineStore('opportunity', {
       )
     },
 
-    createOpportunity(payload: CreateOpportunityPayload) {
-      const now = new Date().toISOString()
-      const opportunity: JobOpportunity = {
-        id: crypto.randomUUID(),
-        company: payload.company.trim(),
-        jobTitle: payload.jobTitle.trim(),
-        address: normalizeCityList(payload.address),
-        introduction: payload.introduction?.trim() ?? '',
-        description: payload.description.trim(),
-        status: 'analyzing',
-        includeWrittenTest: false,
-        intentionLevel: 'B',
-        industry: '',
-        note: '',
-        writtenTestReview: {
-          scheduledAt: '',
-          reviewNote: '',
-          updatedAt: now,
-        },
-        assessmentRounds: [],
-        terminationEvents: [],
-        statusHistory: [createStatusHistoryItem('analyzing', null, 'system', '创建机会后进入分析中')],
-        interviewRounds: [],
-        createdAt: now,
-        updatedAt: now,
+    async loadOpportunities(options: { force?: boolean; filters?: OpportunityListFilters } = {}) {
+      const filters = options.filters ?? {}
+      const filterKey = createOpportunityListFilterKey(filters)
+      const hasMatchingCache = this.opportunityListFilterKey === filterKey
+      if (!options.force && hasMatchingCache && this.isOpportunityListCached) return
+      if (opportunitiesLoadRequest?.filterKey === filterKey) return opportunitiesLoadRequest.promise
+
+      const isInitialLoad = this.opportunities.length === 0
+      if (isInitialLoad) this.isInitialLoading = true
+      else this.isRefreshing = true
+      this.loadError = null
+
+      const requestSequence = ++opportunityListLoadSequence
+      const request = (async () => {
+        const opportunities = await opportunityApi.getOpportunities(filters)
+        if (requestSequence !== opportunityListLoadSequence) return
+        const normalizedOpportunities = opportunities.map((opportunity) =>
+          mergeOpportunitySummary(
+            opportunity,
+            this.opportunities.find((item) => item.id === opportunity.id),
+          ),
+        )
+        const analysisTasks = opportunities.flatMap((opportunity) =>
+          opportunity.analysis ? [{ ...opportunity.analysis, opportunityId: opportunity.id, result: null }] : [],
+        )
+        const currentIds = resolveCurrentIds({
+          opportunities: normalizedOpportunities,
+          analyses: this.analyses,
+          currentOpportunityId: this.currentOpportunityId,
+          currentAnalysisId: this.currentAnalysisId,
+        })
+
+        this.opportunities = normalizedOpportunities
+        this.analysisTasks = analysisTasks
+        this.currentOpportunityId = currentIds.currentOpportunityId
+        this.currentAnalysisId = currentIds.currentAnalysisId
+        this.opportunitiesLoadedAt = Date.now()
+        this.opportunityListFilterKey = filterKey
+        this.persistToStorage()
+
+        if (analysisTasks.some((task) => task.status === 'pending' || task.status === 'processing')) {
+          void this.pollJobAnalyses()
+        }
+      })()
+      opportunitiesLoadRequest = { filterKey, promise: request }
+
+      try {
+        await request
+      } catch (error) {
+        this.loadError = error instanceof Error ? error.message : 'load opportunities failed'
+      } finally {
+        this.isInitialLoading = false
+        this.isRefreshing = false
+        if (opportunitiesLoadRequest?.promise === request) opportunitiesLoadRequest = null
       }
-
-      this.opportunities.unshift(opportunity)
-      this.currentOpportunityId = opportunity.id
-      this.currentAnalysisId = null
-      this.persistToStorage()
-
-      return opportunity
     },
 
-    updateWrittenTestReview(opportunityId: string, payload: UpdateWrittenTestReviewPayload) {
+    async loadOpportunityDetail(opportunityId: string, options: { force?: boolean; silent?: boolean } = {}) {
+      if (!options.silent) this.loadError = null
+
+      if (!options.force && this.isOpportunityDetailFresh(opportunityId)) {
+        return this.opportunities.find((item) => item.id === opportunityId) ?? null
+      }
+
+      let detailRequest = opportunityDetailRequests.get(opportunityId)
+      if (!detailRequest) {
+        detailRequest = (async () => {
+          const opportunity = await opportunityApi.getOpportunityById(opportunityId)
+
+          upsertOpportunity(this.opportunities, opportunity)
+          const analysisTask = await this.loadJobAnalysis(opportunityId, { select: false })
+          cacheOpportunityDetail(this.opportunityDetailCache, opportunity, analysisTask ?? undefined)
+          this.persistToStorage()
+
+          return opportunity
+        })()
+        opportunityDetailRequests.set(opportunityId, detailRequest)
+      }
+
+      try {
+        const opportunity = await detailRequest
+
+        if (!options.silent) {
+          this.currentOpportunityId = opportunity.id
+          this.currentAnalysisId =
+            this.analyses.find((analysis) => analysis.opportunityId === opportunity.id)?.id ?? this.currentAnalysisId
+          this.persistToStorage()
+        }
+
+        return opportunity
+      } catch (error) {
+        if (!options.silent) {
+          this.loadError = error instanceof Error ? error.message : 'load opportunity detail failed'
+        }
+        return null
+      } finally {
+        if (opportunityDetailRequests.get(opportunityId) === detailRequest) {
+          opportunityDetailRequests.delete(opportunityId)
+        }
+      }
+    },
+
+    async createOpportunity(payload: CreateOpportunityPayload) {
+      return opportunityApi.createOpportunity(payload)
+    },
+
+    async deleteOpportunity(opportunityId: string) {
+      const result = await opportunityApi.deleteOpportunity(opportunityId)
+
+      this.opportunities = this.opportunities.filter((opportunity) => opportunity.id !== result.id)
+      this.analysisTasks = this.analysisTasks.filter((task) => task.opportunityId !== result.id)
+      this.analyses = this.analyses.filter((analysis) => analysis.opportunityId !== result.id)
+      delete this.opportunityDetailCache[result.id]
+
+      const currentIds = resolveCurrentIds({
+        opportunities: this.opportunities,
+        analyses: this.analyses,
+        currentOpportunityId: this.currentOpportunityId,
+        currentAnalysisId: this.currentAnalysisId,
+      })
+      this.currentOpportunityId = currentIds.currentOpportunityId
+      this.currentAnalysisId = currentIds.currentAnalysisId
+      this.opportunitiesLoadedAt = Date.now()
+      this.persistToStorage()
+
+      return result
+    },
+
+    async loadJobAnalysis(opportunityId: string, options: { select?: boolean } = {}) {
+      const [progressItem] = await jobAnalysisApi.getJobAnalyses([opportunityId], { includeResult: true })
+      const progress = progressItem?.analysis ?? null
+      if (!progress) return null
+      const task = { ...progress, opportunityId }
+
+      upsertAnalysisTask(this.analysisTasks, task)
+      const analysis = toDisplayAnalysis(task)
+      if (analysis) upsertOpportunityAnalysis(this.analyses, analysis)
+
+      if (options.select !== false) this.currentAnalysisId = analysis?.id ?? this.currentAnalysisId
+      this.persistToStorage()
+
+      return task
+    },
+
+    async startJobAnalysis(opportunityId: string, payload: StartJobAnalysisPayload) {
+      const progress = await jobAnalysisApi.startJobAnalysis(opportunityId, payload)
+      return { ...progress, opportunityId }
+    },
+
+    async retryJobAnalysis(opportunityId: string, payload: StartJobAnalysisPayload) {
+      const task = await this.startJobAnalysis(opportunityId, { ...payload, force: true })
+
+      upsertAnalysisTask(this.analysisTasks, task)
+      removeOpportunityAnalysis(this.analyses, opportunityId)
+      delete this.opportunityDetailCache[opportunityId]
+      this.currentAnalysisId = null
+      this.opportunitiesLoadedAt = Date.now()
+      this.persistToStorage()
+
+      void this.pollJobAnalyses()
+
+      return task
+    },
+
+    publishCreatedOpportunity(opportunity: JobOpportunity, task: JobAnalysisTaskState) {
+      upsertOpportunity(this.opportunities, opportunity)
+      upsertAnalysisTask(this.analysisTasks, task)
+      removeOpportunityAnalysis(this.analyses, opportunity.id)
+      delete this.opportunityDetailCache[opportunity.id]
+      this.currentOpportunityId = opportunity.id
+      this.currentAnalysisId = null
+      this.opportunitiesLoadedAt = Date.now()
+      this.persistToStorage()
+
+      void this.pollJobAnalyses()
+    },
+
+    async pollJobAnalyses() {
+      if (analysisPollingPromise) return analysisPollingPromise
+
+      analysisPollingPromise = (async () => {
+        for (let attempt = 0; attempt < maxAnalysisPollingAttempts; attempt += 1) {
+          const activeTasks = this.analysisTasks.filter(
+            (task) => task.status === 'pending' || task.status === 'processing',
+          )
+          const activeOpportunityIds = activeTasks.map((task) => task.opportunityId)
+          if (activeOpportunityIds.length === 0) return
+
+          const wakeReason = await waitForAnalysisPoll(getActiveAnalysisPollDelay(activeTasks))
+          if (wakeReason === 'visibility' && isDocumentHidden()) continue
+
+          const pendingOpportunityIds = this.analysisTasks
+            .filter((task) => task.status === 'pending' || task.status === 'processing')
+            .map((task) => task.opportunityId)
+          if (pendingOpportunityIds.length === 0) return
+
+          let progressItems
+          try {
+            progressItems = await jobAnalysisApi.getJobAnalyses(pendingOpportunityIds)
+          } catch (error) {
+            this.loadError = error instanceof Error ? error.message : 'load job analysis failed'
+            continue
+          }
+          const existingOpportunityIds = new Set(this.opportunities.map((opportunity) => opportunity.id))
+
+          for (const { opportunityId, analysis } of progressItems) {
+            if (!analysis || !existingOpportunityIds.has(opportunityId)) continue
+
+            upsertAnalysisTask(this.analysisTasks, { ...analysis, opportunityId, result: null })
+          }
+
+          this.persistToStorage()
+        }
+      })().finally(() => {
+        analysisPollingPromise = null
+      })
+
+      return analysisPollingPromise
+    },
+
+    async updateWrittenTestReview(opportunityId: string, payload: UpdateWrittenTestReviewPayload) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return null
 
-      const now = new Date().toISOString()
+      const writtenTestReview = await opportunityApi.updateWrittenTestReview(opportunityId, payload)
 
-      opportunity.writtenTestReview = {
-        scheduledAt: payload.scheduledAt ?? opportunity.writtenTestReview.scheduledAt,
-        reviewNote: payload.reviewNote?.trim() ?? opportunity.writtenTestReview.reviewNote,
-        updatedAt: now,
-      }
-      opportunity.updatedAt = now
+      opportunity.writtenTestReview = writtenTestReview
+      opportunity.updatedAt = writtenTestReview.updatedAt
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
       this.persistToStorage()
 
       return opportunity.writtenTestReview
     },
 
-    updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity) return null
+    async updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {
+      const opportunity = await opportunityApi.updateOpportunity(opportunityId, payload)
 
-      if (payload.company !== undefined) opportunity.company = payload.company.trim()
-      if (payload.jobTitle !== undefined) opportunity.jobTitle = payload.jobTitle.trim()
-      if (payload.address !== undefined) opportunity.address = normalizeCityList(payload.address)
-      if (payload.introduction !== undefined) opportunity.introduction = payload.introduction.trim()
-      if (payload.description !== undefined) opportunity.description = payload.description.trim()
-      if (payload.status !== undefined && payload.status !== opportunity.status) {
-        opportunity.statusHistory.unshift(createStatusHistoryItem(payload.status, opportunity.status))
-        opportunity.status = payload.status
-      }
-      if (payload.includeWrittenTest !== undefined) opportunity.includeWrittenTest = payload.includeWrittenTest
-      if (payload.intentionLevel !== undefined) opportunity.intentionLevel = payload.intentionLevel
-      if (payload.industry !== undefined) opportunity.industry = payload.industry.trim()
-      if (payload.note !== undefined) opportunity.note = payload.note.trim()
-
-      opportunity.updatedAt = new Date().toISOString()
+      upsertOpportunity(this.opportunities, opportunity)
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunity.id),
+      )
+      this.currentOpportunityId = opportunity.id
+      this.opportunitiesLoadedAt = Date.now()
       this.persistToStorage()
 
       return opportunity
     },
 
-    updateOpportunityStatus(opportunityId: string, status: JobOpportunityStatus) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity || opportunity.status === status) return
+    async updateOpportunityStatus(opportunityId: string, payload: UpdateOpportunityStatusPayload) {
+      const opportunity = await opportunityApi.updateOpportunityStatus(opportunityId, payload)
 
-      opportunity.statusHistory.unshift(createStatusHistoryItem(status, opportunity.status))
-      opportunity.status = status
-      opportunity.updatedAt = new Date().toISOString()
+      upsertOpportunity(this.opportunities, opportunity)
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunity.id),
+      )
+      this.currentOpportunityId = opportunity.id
+      this.opportunitiesLoadedAt = Date.now()
       this.persistToStorage()
+
+      return opportunity
     },
 
-    addAssessmentRound(opportunityId: string, payload: AddAssessmentRoundPayload) {
+    async addInterviewRound(opportunityId: string, payload: AddInterviewRoundPayload) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return null
 
-      const now = new Date().toISOString()
-      const nextSequence = opportunity.assessmentRounds.length + 1
-      const round: AssessmentRound = {
-        id: crypto.randomUUID(),
-        type: payload.type,
-        sequence: nextSequence,
-        title: payload.title?.trim() || `第 ${nextSequence} 轮`,
-        scheduledAt: payload.scheduledAt ?? '',
-        status: payload.status ?? 'planned',
-        result: payload.result ?? 'pending',
-        note: payload.note?.trim() ?? '',
-        reviewNote: payload.reviewNote?.trim() ?? '',
-        keyTakeaways: payload.keyTakeaways ?? [],
-        createdAt: now,
-        updatedAt: now,
-      }
+      const round = await opportunityApi.addInterviewRound(opportunityId, payload)
 
-      opportunity.assessmentRounds.unshift(round)
-      opportunity.interviewRounds = opportunity.assessmentRounds
-      opportunity.updatedAt = now
-      this.persistToStorage()
-
-      return round
-    },
-
-    updateAssessmentRound(opportunityId: string, roundId: string, payload: UpdateAssessmentRoundPayload) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity) return null
-
-      const round = opportunity.assessmentRounds.find((item) => item.id === roundId)
-      if (!round) return null
-
-      if (payload.type !== undefined) round.type = payload.type
-      if (payload.title !== undefined) round.title = payload.title.trim()
-      if (payload.scheduledAt !== undefined) round.scheduledAt = payload.scheduledAt
-      if (payload.status !== undefined) round.status = payload.status
-      if (payload.result !== undefined) round.result = payload.result
-      if (payload.note !== undefined) round.note = payload.note.trim()
-      if (payload.reviewNote !== undefined) round.reviewNote = payload.reviewNote.trim()
-      if (payload.keyTakeaways !== undefined) round.keyTakeaways = payload.keyTakeaways
-
-      round.updatedAt = new Date().toISOString()
-      opportunity.interviewRounds = opportunity.assessmentRounds
+      opportunity.interviewRounds.push(round)
       opportunity.updatedAt = round.updatedAt
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
       this.persistToStorage()
 
       return round
     },
 
-    deleteAssessmentRound(opportunityId: string, roundId: string) {
+    async updateInterviewRound(opportunityId: string, roundId: string, payload: UpdateInterviewRoundPayload) {
+      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+      if (!opportunity) return null
+
+      const round = await opportunityApi.updateInterviewRound(opportunityId, roundId, payload)
+      const roundIndex = opportunity.interviewRounds.findIndex((item) => item.id === round.id)
+
+      if (roundIndex === -1) {
+        opportunity.interviewRounds.push(round)
+      } else {
+        opportunity.interviewRounds.splice(roundIndex, 1, round)
+      }
+      opportunity.updatedAt = round.updatedAt
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
+      this.persistToStorage()
+
+      return round
+    },
+
+    async deleteInterviewRound(opportunityId: string, roundId: string) {
       const opportunity = this.opportunities.find((item) => item.id === opportunityId)
       if (!opportunity) return
 
-      opportunity.assessmentRounds = opportunity.assessmentRounds.filter((round) => round.id !== roundId)
-      opportunity.interviewRounds = opportunity.assessmentRounds
+      const result = await opportunityApi.deleteInterviewRound(opportunityId, roundId)
+
+      opportunity.interviewRounds = opportunity.interviewRounds.filter((round) => round.id !== result.id)
       opportunity.updatedAt = new Date().toISOString()
-      this.persistToStorage()
-    },
-
-    addInterviewRound(opportunityId: string, payload: AddInterviewRoundPayload) {
-      return this.addAssessmentRound(opportunityId, {
-        type: 'technical_basic',
-        title: payload.title,
-        scheduledAt: payload.scheduledAt,
-        note: payload.note,
-      })
-    },
-
-    updateInterviewRound(opportunityId: string, roundId: string, payload: UpdateInterviewRoundPayload) {
-      return this.updateAssessmentRound(opportunityId, roundId, payload)
-    },
-
-    deleteInterviewRound(opportunityId: string, roundId: string) {
-      this.deleteAssessmentRound(opportunityId, roundId)
-    },
-
-    terminateOpportunity(opportunityId: string, payload: TerminateOpportunityPayload = {}) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity || opportunity.status === 'closed') return null
-
-      const relatedRound = payload.relatedAssessmentRoundId
-        ? opportunity.assessmentRounds.find((round) => round.id === payload.relatedAssessmentRoundId)
-        : null
-      const now = new Date().toISOString()
-      const termination = {
-        id: crypto.randomUUID(),
-        opportunityId,
-        fromStatus: opportunity.status,
-        relatedAssessmentRoundId: relatedRound?.id,
-        relatedAssessmentRoundTitle: relatedRound?.title,
-        reasonCode: payload.reasonCode ?? 'other',
-        reasonNote: payload.reasonNote?.trim() ?? '',
-        createdAt: now,
-      }
-
-      opportunity.terminationEvents.unshift(termination)
-      opportunity.statusHistory.unshift(createStatusHistoryItem('closed', opportunity.status, 'user', '流程终止'))
-      opportunity.status = 'closed'
-      opportunity.updatedAt = now
-      this.persistToStorage()
-
-      return termination
-    },
-
-    generateMockAnalysis(opportunityId: string, resumeId: string, resumeVersionId: string) {
-      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
-      if (!opportunity) return null
-
-      const analysis: JobAnalysis = createMockJobAnalysis({
-        jobOpportunityId: opportunity.id,
-        resumeId,
-        resumeVersionId,
-      })
-
-      this.analyses.unshift(analysis)
-      this.currentAnalysisId = analysis.id
-      opportunity.statusHistory.unshift(
-        createStatusHistoryItem('pending_apply', opportunity.status, 'analysis', '生成 JD 匹配分析'),
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
       )
-      opportunity.status = 'pending_apply'
-      opportunity.updatedAt = new Date().toISOString()
+      this.persistToStorage()
+    },
+
+    async terminateOpportunity(opportunityId: string, payload: TerminateOpportunityPayload = {}) {
+      const opportunity = await opportunityApi.terminateOpportunity(opportunityId, payload)
+
+      upsertOpportunity(this.opportunities, opportunity)
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunity.id),
+      )
+      this.currentOpportunityId = opportunity.id
       this.persistToStorage()
 
-      return analysis
+      return opportunity.termination ?? null
     },
 
     selectOpportunity(opportunityId: string) {
@@ -490,8 +698,7 @@ export const useOpportunityStore = defineStore('opportunity', {
       if (!opportunity) return
 
       this.currentOpportunityId = opportunity.id
-      this.currentAnalysisId =
-        this.analyses.find((analysis) => analysis.jobOpportunityId === opportunity.id)?.id ?? null
+      this.currentAnalysisId = this.analyses.find((analysis) => analysis.opportunityId === opportunity.id)?.id ?? null
       this.persistToStorage()
     },
 
@@ -500,7 +707,7 @@ export const useOpportunityStore = defineStore('opportunity', {
       if (!analysis) return
 
       this.currentAnalysisId = analysis.id
-      this.currentOpportunityId = analysis.jobOpportunityId
+      this.currentOpportunityId = analysis.opportunityId
       this.persistToStorage()
     },
   },
