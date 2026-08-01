@@ -144,14 +144,7 @@
 - 输出必须符合 `JobAnalysis` JSON schema
 - `matchScore` 应由 `scoreBreakdown` 加权计算或近似得到
 
-## 当前 mock 文件
+## 测试样例与数据边界
 
-- `mockResumeAnalysis`：简历结构化分析结果
-- `mockJobRequirementAnalysis`：JD 结构化分析结果
-- `mockJobAnalysis`：简历与 JD 匹配结果
-
-这些 mock 位于：
-
-```text
-src/pages/opportunity/mocks/analysis.ts
-```
+早期用于页面演示的 `src/pages/opportunity/mocks/analysis.ts` 已经移除，当前真实页面以 API 返回和空数据状态为准。
+模型输出的可复现样例放在 `server/src/**/*.test.ts` 与 `.prompt-evals/interview-turn-cases.example.json`；本地含真实运行记录的 `.prompt-evals/*.local` 不进入 Git。

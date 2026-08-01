@@ -50,7 +50,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeWhenClickOu
       <UIcon name="i-lucide-chevron-down" class="size-4 shrink-0 text-muted" :class="{ 'rotate-180': isOpen }" />
     </button>
 
-    <div v-if="isOpen" class="app-panel absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden p-1 shadow-xl">
+    <div
+      v-if="isOpen"
+      class="app-panel absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden p-1 shadow-xl"
+    >
       <button
         type="button"
         class="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors"
@@ -65,7 +68,11 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeWhenClickOu
         :key="option.value"
         type="button"
         class="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors"
-        :class="modelValue === option.value ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'"
+        :class="
+          modelValue === option.value
+            ? 'bg-elevated text-highlighted'
+            : 'text-muted hover:bg-elevated hover:text-highlighted'
+        "
         @click="select(option.value)"
       >
         {{ option.label }}

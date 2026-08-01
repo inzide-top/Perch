@@ -18,6 +18,7 @@
   --app-surface-elevated: #ffffff;
   --app-border: #e5eaf0;
   --app-border-strong: #cfd9e5;
+  --app-neutral: #bfbfbf;
   --app-text: #111827;
   --app-text-muted: #5f6b7a;
   --app-text-soft: #8b96a5;
@@ -29,11 +30,24 @@
   --app-accent-subtle: #dfedf6;
   --app-ai-start: #6366f1;
   --app-ai-end: #dd45a4;
+  --app-review-accent: #ad62c8;
   --app-danger: #d14d4d;
   --app-warning: #c8872f;
   --app-success: #3d9864;
   --app-radius-panel: 20px;
   --app-radius-card: 16px;
+  --duration-fast: 160ms;
+  --duration-normal: 220ms;
+  --duration-panel: 300ms;
+  --duration-drawer: 360ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-panel: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-z-dropdown: 40;
+  --app-z-popover: 60;
+  --app-z-overlay: 80;
+  --app-z-drawer: 90;
+  --app-z-modal: 100;
   --app-shadow-panel: 0 16px 44px rgb(15 23 42 / 9%);
   --app-shadow-soft: 0 10px 28px rgb(15 23 42 / 7%);
   --app-shadow-float: 0 18px 52px rgb(15 23 42 / 10%);
@@ -76,6 +90,7 @@ textarea::placeholder {
   --app-surface-elevated: #1a1e22;
   --app-border: #272c31;
   --app-border-strong: #3b4249;
+  --app-neutral: #bfbfbf;
   --app-text: #f0f2f4;
   --app-text-muted: #aeb4ba;
   --app-text-soft: #7d858d;
@@ -86,6 +101,7 @@ textarea::placeholder {
   --app-accent-subtle: #1d3038;
   --app-ai-start: #ff9a52;
   --app-ai-end: #f062b5;
+  --app-review-accent: #d78bd9;
   --app-danger: #f87171;
   --app-warning: #f1b667;
   --app-success: #7ccf98;
@@ -140,6 +156,27 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.app-skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: calc(var(--app-z-modal) + 1);
+  transform: translateY(-160%);
+  border-radius: 0.75rem;
+  background: var(--app-text);
+  padding: 0.6rem 0.85rem;
+  color: var(--app-surface);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.app-skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid var(--app-accent-strong);
+  outline-offset: 2px;
+}
+
 button,
 [role='button'],
 label,
@@ -188,10 +225,10 @@ button:disabled,
   background: color-mix(in srgb, var(--app-surface) 94%, transparent);
   box-shadow: var(--app-shadow-soft);
   transition:
-    border-color 180ms ease,
-    background-color 180ms ease,
-    box-shadow 180ms ease,
-    transform 180ms ease;
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
 }
 
 :root.dark .app-card {
@@ -205,6 +242,106 @@ button:disabled,
   background: color-mix(in srgb, var(--app-surface-elevated) 92%, transparent);
   box-shadow: var(--app-shadow-float);
   transform: translateY(-1px);
+}
+
+.resume-mainline-card {
+  background: var(--app-surface);
+  box-shadow: none;
+}
+
+:root.dark .resume-mainline-card {
+  background: var(--app-surface);
+}
+
+.resume-mainline-card.is-selected {
+  border-color: var(--app-accent-strong);
+  background: color-mix(in srgb, var(--app-accent) 10%, var(--app-surface));
+}
+
+.resume-mainline-card:hover,
+.resume-mainline-card:focus-within {
+  box-shadow: none;
+}
+
+.resume-version-tag.is-current {
+  border-color: var(--app-accent-strong);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-deep);
+}
+
+:root.dark .resume-version-tag.is-current {
+  background: color-mix(in srgb, var(--app-accent-deep) 24%, var(--app-surface));
+  color: var(--app-accent);
+}
+
+.model-config-tag-group,
+.model-config-tag,
+.model-config-tag-remove {
+  box-shadow: none !important;
+}
+
+.model-config-tag-group.is-active {
+  border-color: var(--app-accent-strong);
+}
+
+.model-config-tag.is-active {
+  background: var(--app-accent-soft) !important;
+  color: var(--app-accent-deep) !important;
+}
+
+:root.dark .model-config-tag.is-active {
+  background: var(--app-accent-subtle) !important;
+  color: var(--app-accent) !important;
+}
+
+.app-fact-grid {
+  display: grid;
+  gap: 1rem 2rem;
+}
+
+.app-fact-grid > div {
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .app-fact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.app-fact-grid dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--app-text-soft);
+}
+
+.app-fact-grid dd {
+  margin-top: 0.2rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--app-text);
+}
+
+.app-code-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.app-popover-layer {
+  z-index: var(--app-z-popover) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 .app-toolbar {
@@ -281,7 +418,7 @@ button:disabled,
 }
 
 .app-match-score-badge.is-score-low {
-  background: color-mix(in srgb, #a1a1a1 13%, transparent);
+  background: color-mix(in srgb, var(--app-neutral) 13%, transparent);
 }
 
 .app-match-score-badge.is-score-medium {
@@ -297,7 +434,7 @@ button:disabled,
 }
 
 .app-match-score-badge.is-score-low .app-score-icon {
-  color: #a1a1a1;
+  color: var(--app-neutral);
 }
 
 .app-match-score-badge.is-score-medium .app-score-icon {
@@ -331,7 +468,7 @@ button:disabled,
 }
 
 .app-recommendation-badge.is-not-recommended {
-  color: #a1a1a1;
+  color: var(--app-neutral);
 }
 
 :root.dark .app-recommendation-badge.is-strong-match {
@@ -347,7 +484,7 @@ button:disabled,
 }
 
 :root.dark .app-recommendation-badge.is-not-recommended {
-  color: #a1a1aa;
+  color: var(--app-neutral);
 }
 
 .app-recommendation-text.is-strong-match {
@@ -363,7 +500,7 @@ button:disabled,
 }
 
 .app-recommendation-text.is-not-recommended {
-  color: #a1a1a1;
+  color: var(--app-neutral);
 }
 
 :root.dark .app-recommendation-text.is-strong-match {
@@ -371,11 +508,11 @@ button:disabled,
 }
 
 .app-score-text.is-score-low {
-  color: #a1a1a1;
+  color: var(--app-neutral);
 }
 
 .app-score-bar.is-score-low {
-  background: #a1a1a1;
+  background: var(--app-neutral);
 }
 
 .app-score-text.is-score-medium {
@@ -407,11 +544,11 @@ button:disabled,
 }
 
 :root.dark .app-score-text.is-score-low {
-  color: #a1a1aa;
+  color: var(--app-neutral);
 }
 
 :root.dark .app-score-bar.is-score-low {
-  background: #a1a1aa;
+  background: var(--app-neutral);
 }
 
 :root.dark .app-score-text.is-score-medium {
@@ -439,7 +576,7 @@ button:disabled,
 }
 
 :root.dark .app-recommendation-text.is-not-recommended {
-  color: #a1a1aa;
+  color: var(--app-neutral);
 }
 
 .app-primary-button,
@@ -755,6 +892,1127 @@ button[data-slot='base'][class*='bg-primary'] {
   transform: translateX(-4px);
 }
 
+/* Mock interview: a focused interview desk rather than a generic chat surface. */
+.interview-config-option {
+  min-height: 5.5rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface) 92%, transparent);
+  padding: 0.875rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.interview-config-option:hover:not(:disabled),
+.interview-config-option:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-accent) 60%, var(--app-border));
+  background: var(--app-accent-soft);
+  outline: none;
+}
+
+.interview-config-option.is-selected {
+  border-color: color-mix(in srgb, var(--app-accent-deep) 70%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent) 22%, transparent);
+}
+
+.interview-config-option > span,
+.interview-config-option span {
+  white-space: normal;
+}
+
+.interview-create-modal {
+  height: min(53rem, calc(100vh - 4.5rem));
+}
+
+.interview-config-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface-muted) 62%, transparent);
+  padding: 1rem;
+}
+
+.interview-config-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.interview-switch {
+  position: relative;
+  width: 2.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--app-border-strong);
+  transition: background-color 160ms ease;
+}
+
+.interview-switch > span {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.2rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-soft);
+  transition: transform 160ms ease;
+}
+
+.interview-config-toggle input:checked + .interview-switch {
+  background: var(--app-accent-deep);
+}
+
+.interview-config-toggle input:checked + .interview-switch > span {
+  transform: translateX(1rem);
+}
+
+.interview-config-toggle:has(input:focus-visible) {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.interview-skeleton-card {
+  height: 7.6rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: var(--app-surface-muted);
+}
+
+.interview-history-item {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface) 94%, transparent);
+  padding: 1rem;
+  white-space: normal;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.interview-history-item:hover:not(:disabled),
+.interview-history-item:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-accent) 58%, var(--app-border));
+  background: color-mix(in srgb, var(--app-surface) 94%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--app-text) 5%, transparent);
+  outline: none;
+}
+
+.interview-history-item.is-opening {
+  opacity: 0.7;
+}
+
+.interview-history-list {
+  scrollbar-gutter: stable;
+}
+
+.interview-history-create {
+  flex: 0 0 auto;
+  border-radius: 0.7rem;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--app-accent-deep) 22%, transparent);
+}
+
+.interview-history-type-icon {
+  display: flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 45%, var(--app-border));
+  border-radius: 0.75rem;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-deep);
+}
+
+.interview-history-meta {
+  border-radius: 999px;
+  background: var(--app-surface-muted);
+  padding: 0.16rem 0.42rem;
+  font-size: 0.66rem;
+  line-height: 1.1rem;
+  color: var(--app-text-muted);
+}
+
+.interview-history-score {
+  display: flex;
+  min-width: 3.35rem;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.12rem;
+  padding-top: 0.05rem;
+}
+
+.interview-history-score strong {
+  font-size: 1.25rem;
+  line-height: 1.4rem;
+}
+
+.interview-history-score span {
+  font-size: 0.65rem;
+  color: var(--app-text-soft);
+}
+
+.interview-history-score.is-good strong {
+  color: #35c46b;
+}
+
+.interview-history-score.is-fair strong {
+  color: #fc871c;
+}
+
+.interview-history-score.is-muted strong {
+  color: var(--app-neutral);
+}
+
+.interview-history-score.is-score-good strong,
+.interview-score-value.is-score-good,
+.interview-overview-score-value.is-score-good {
+  color: #35c46b;
+}
+
+.interview-history-score.is-score-medium strong,
+.interview-score-value.is-score-medium,
+.interview-overview-score-value.is-score-medium {
+  color: #fc871c;
+}
+
+.interview-history-score.is-score-low strong,
+.interview-score-value.is-score-low,
+.interview-overview-score-value.is-score-low {
+  color: var(--app-neutral);
+}
+
+.interview-history-score.is-score-excellent strong,
+.interview-score-value.is-score-excellent,
+.interview-overview-score-value.is-score-excellent {
+  background: linear-gradient(100deg, #6366f1, #dd45a4);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.interview-history-score.is-excellent strong,
+.interview-score-value.is-excellent,
+.interview-overview-score-value.is-excellent {
+  background: linear-gradient(100deg, #6366f1, #dd45a4);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.interview-score-value,
+.interview-overview-score-value {
+  color: var(--app-text);
+}
+
+.interview-score-value.is-good,
+.interview-overview-score-value.is-good {
+  color: #35c46b;
+}
+
+.interview-score-value.is-fair,
+.interview-overview-score-value.is-fair {
+  color: #fc871c;
+}
+
+.interview-score-value.is-muted,
+.interview-overview-score-value.is-muted {
+  color: var(--app-neutral);
+}
+
+.interview-score-progress {
+  background: var(--app-neutral);
+  transition: width 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.interview-score-progress.is-good {
+  background: #35c46b;
+}
+
+.interview-score-progress.is-fair {
+  background: #fc871c;
+}
+
+.interview-score-progress.is-muted {
+  background: var(--app-neutral);
+}
+
+.interview-score-progress.is-excellent {
+  background: linear-gradient(90deg, #6366f1, #dd45a4);
+}
+
+.interview-score-progress.is-score-good {
+  background: #35c46b;
+}
+
+.interview-score-progress.is-score-medium {
+  background: #fc871c;
+}
+
+.interview-score-progress.is-score-low {
+  background: var(--app-neutral);
+}
+
+.interview-score-progress.is-score-excellent {
+  background: linear-gradient(90deg, #6366f1, #dd45a4);
+}
+
+.interview-session-type {
+  border-left: 1px solid var(--app-border-strong);
+  padding-left: 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--app-text-muted);
+}
+
+.interview-session-config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  font-size: 0.73rem;
+  line-height: 1.1rem;
+  color: var(--app-text-muted);
+}
+
+.interview-session-config > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.interview-session-config .is-history-aware {
+  color: var(--app-accent-deep);
+}
+
+.interview-session-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  color: var(--app-text-muted);
+  font-size: 0.73rem;
+  line-height: 1.1rem;
+}
+
+.interview-session-phase svg {
+  color: var(--app-accent-deep);
+}
+
+.interview-session-header {
+  overflow: hidden;
+  transition:
+    height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.interview-session-header.is-collapsed {
+  padding: 0.7rem 0.6rem;
+}
+
+.interview-header-content-enter-active,
+.interview-header-content-leave-active {
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease;
+}
+
+.interview-header-content-enter-from {
+  opacity: 0;
+  transform: translateX(-0.75rem);
+}
+
+.interview-header-content-leave-to {
+  opacity: 0;
+  transform: translateX(0.75rem);
+}
+
+.interview-overview-dashboard {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.8fr) minmax(0, 1.2fr);
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface-muted) 60%, var(--app-surface));
+}
+
+.interview-overview-score-card {
+  min-height: 11.25rem;
+  border-right: 1px solid var(--app-border);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--app-accent-soft) 74%, var(--app-surface)),
+    var(--app-surface)
+  );
+  padding: 1.2rem;
+}
+
+.interview-overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.interview-overview-metric {
+  display: flex;
+  min-height: 5.625rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.95rem 1rem;
+}
+
+.interview-overview-metric:nth-child(odd) {
+  border-right: 1px solid var(--app-border);
+}
+
+.interview-overview-metric:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.interview-overview-metric span {
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+}
+
+.interview-overview-metric strong {
+  margin-top: 0.28rem;
+  font-size: 1.35rem;
+  line-height: 1.6rem;
+  color: var(--app-text);
+}
+
+.interview-overview-insight {
+  display: flex;
+  gap: 0.75rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
+  padding: 1rem 1.05rem;
+}
+
+.interview-overview-note {
+  display: flex;
+  gap: 0.65rem;
+  border-top: 1px solid var(--app-border);
+  padding: 1rem 0.2rem 0;
+  font-size: 0.75rem;
+  line-height: 1.35rem;
+  color: var(--app-text-muted);
+}
+
+.interview-message {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.interview-message-user {
+  justify-content: flex-end;
+}
+
+.interview-message-body {
+  min-width: 0;
+  max-width: min(56rem, calc(100% - 5rem));
+  flex: 0 1 min(56rem, calc(100% - 5rem));
+}
+
+.interview-message-user .interview-message-body {
+  max-width: min(50rem, 88%);
+  flex-basis: min(50rem, 88%);
+}
+
+.interview-message-avatar {
+  display: flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-border);
+  border-radius: 0.75rem;
+  background: var(--app-surface-muted);
+  color: var(--app-accent-deep);
+}
+
+.interview-message-user .interview-message-avatar {
+  color: var(--app-text-muted);
+}
+
+.interview-message-bubble {
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border: 1px solid var(--app-border);
+  border-radius: 0.25rem var(--app-radius-card) var(--app-radius-card) var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface) 94%, transparent);
+  padding: 0.875rem 1rem;
+  box-shadow: var(--app-shadow-soft);
+}
+
+.interview-message-user .interview-message-bubble {
+  margin-left: auto;
+  border-radius: var(--app-radius-card) 0.25rem var(--app-radius-card) var(--app-radius-card);
+  border-color: color-mix(in srgb, var(--app-accent) 44%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 78%, var(--app-surface));
+}
+
+.interview-message-bubble p,
+.interview-message-bubble li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.interview-message-action {
+  display: inline-grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--app-text-soft);
+  transition: color 160ms ease;
+}
+
+.interview-message-action:hover:not(:disabled),
+.interview-message-action:focus-visible:not(:disabled),
+.interview-message-action.is-active {
+  color: var(--app-accent-deep);
+  outline: none;
+}
+
+.interview-message-action.is-negative.is-active {
+  color: var(--app-danger);
+}
+
+.interview-retry-action {
+  color: var(--app-accent-deep);
+}
+
+.interview-retry-action:hover:not(:disabled),
+.interview-retry-action:focus-visible:not(:disabled) {
+  color: color-mix(in srgb, var(--app-accent-deep) 78%, var(--app-text));
+}
+
+.interview-answer-review-action {
+  display: inline-flex;
+  width: auto;
+  padding: 0 0.25rem;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.interview-answer-review-action.is-completed {
+  color: var(--app-review-accent);
+  transition: none;
+}
+
+.interview-answer-review-action.is-completed:hover,
+.interview-answer-review-action.is-completed:focus-visible {
+  color: var(--app-review-accent);
+}
+
+.interview-feedback-reason {
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--app-text-muted);
+}
+
+.interview-feedback-reason:hover,
+.interview-feedback-reason.is-selected {
+  border-color: color-mix(in srgb, var(--app-accent) 66%, var(--app-border));
+  background: var(--app-accent-soft);
+  color: var(--app-accent-deep);
+}
+
+.interview-skip-reason {
+  border: 1px solid var(--app-border);
+  border-radius: 0.75rem;
+  background: var(--app-surface);
+  padding: 0.45rem 0.55rem;
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--app-text-muted);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.interview-skip-reason:hover,
+.interview-skip-reason.is-selected {
+  border-color: color-mix(in srgb, var(--app-accent) 62%, var(--app-border));
+  background: var(--app-accent-soft);
+  color: var(--app-accent-deep);
+}
+
+.interview-composer {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
+  padding: 0.875rem;
+  box-shadow: var(--app-shadow-soft);
+}
+
+.interview-stop-button {
+  display: inline-grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--app-accent-deep);
+  border-radius: 999px;
+  background: var(--app-accent-deep);
+  padding: 0;
+  color: var(--ui-text-inverted);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--app-accent-deep) 24%, transparent);
+  transition:
+    filter 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.interview-stop-button:hover:not(:disabled),
+.interview-stop-button:focus-visible:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--app-accent-deep) 32%, transparent);
+  outline: none;
+}
+
+.interview-stop-button:focus-visible {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--app-accent) 34%, transparent),
+    0 7px 18px color-mix(in srgb, var(--app-accent-deep) 32%, transparent);
+}
+
+.interview-stop-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.interview-stop-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.interview-stop-glyph {
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 0.1rem;
+  background: currentColor;
+}
+
+.interview-hint-panel {
+  max-height: 4.75rem;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--app-warning) 34%, var(--app-border));
+  border-left: 1px solid color-mix(in srgb, var(--app-warning) 34%, var(--app-border));
+  background: color-mix(in srgb, var(--app-surface) 96%, var(--app-warning));
+}
+
+.interview-hint-panel-first {
+  border-top: 1px solid color-mix(in srgb, var(--app-warning) 34%, var(--app-border));
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.interview-hint-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.45rem;
+  padding: 0 0.7rem;
+  background: color-mix(in srgb, var(--app-warning) 19%, var(--app-surface-elevated));
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--app-warning) 82%, var(--app-text));
+}
+
+.interview-hint-content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.45rem;
+}
+
+.interview-hint-panel-second {
+  border-top: 1px solid color-mix(in srgb, var(--app-warning) 18%, var(--app-border));
+}
+
+.interview-hint-level {
+  margin: 0.42rem 0 0 0.7rem;
+  border-radius: 0.28rem;
+  background: color-mix(in srgb, var(--app-warning) 12%, transparent);
+  padding: 0.06rem 0.28rem;
+  font-size: 0.65rem;
+  line-height: 1rem;
+  color: var(--app-warning);
+}
+
+.interview-hint-panel p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  padding: 0.42rem 0.7rem 0.42rem 0;
+  font-size: 0.72rem;
+  line-height: 1.12rem;
+  color: var(--app-text-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+:root.dark .interview-history-score.is-good strong,
+:root.dark .interview-score-value.is-good,
+:root.dark .interview-overview-score-value.is-good {
+  color: #4ade80;
+}
+
+:root.dark .interview-score-progress.is-good {
+  background: #4ade80;
+}
+
+.interview-hint-first-enter-active,
+.interview-hint-first-leave-active,
+.interview-hint-second-enter-active,
+.interview-hint-second-leave-active {
+  overflow: hidden;
+  transition:
+    max-height 190ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 130ms ease,
+    transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: bottom center;
+}
+
+.interview-hint-first-enter-from,
+.interview-hint-first-leave-to,
+.interview-hint-second-enter-from,
+.interview-hint-second-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(0.2rem);
+}
+
+.interview-hint-first-enter-to,
+.interview-hint-first-leave-from,
+.interview-hint-second-enter-to,
+.interview-hint-second-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.interview-transcript-content {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.interview-return-latest {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface-elevated);
+  padding: 0;
+  color: var(--app-text-muted);
+  box-shadow: var(--app-shadow-soft);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.interview-return-latest:hover,
+.interview-return-latest:focus-visible {
+  border-color: var(--app-accent);
+  color: var(--app-accent-deep);
+}
+
+.interview-return-latest:active {
+  transform: translateY(1px);
+}
+
+.interview-insights-panel {
+  display: flex;
+  max-height: calc(100vh - 10.75rem);
+  min-height: 23rem;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.interview-insights-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem 1.25rem 1rem;
+}
+
+.interview-insights-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 1.25rem;
+  border-radius: 0.7rem;
+  background: var(--app-surface-muted);
+  padding: 0.2rem;
+}
+
+.interview-insights-tabs button {
+  min-height: 2rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--app-text-muted);
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.interview-insights-tabs button:hover,
+.interview-insights-tabs button:focus-visible {
+  color: var(--app-text);
+}
+
+.interview-insights-tabs button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-accent) 72%, transparent);
+  outline-offset: 1px;
+}
+
+.interview-insights-tabs button.is-active {
+  background: var(--app-surface);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 8%);
+  color: var(--app-text);
+}
+
+.interview-insights-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
+.interview-score-dimension {
+  transform-origin: top center;
+}
+
+.interview-score-dimension-enter-active,
+.interview-score-dimension-leave-active,
+.interview-score-dimension-move {
+  transition:
+    opacity 240ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.interview-score-dimension-enter-from,
+.interview-score-dimension-leave-to {
+  opacity: 0;
+  transform: translateY(-0.45rem);
+}
+
+.interview-insights-view-enter-active,
+.interview-insights-view-leave-active {
+  transition:
+    opacity 150ms ease,
+    transform 180ms ease;
+}
+
+.interview-insights-view-enter-from {
+  opacity: 0;
+  transform: translateX(0.35rem);
+}
+
+.interview-insights-view-leave-to {
+  opacity: 0;
+  transform: translateX(-0.25rem);
+}
+
+.interview-review-section {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--app-border);
+  padding-top: 1rem;
+}
+
+.interview-review-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--app-text);
+}
+
+.interview-review-section > ul {
+  margin-top: 0.75rem;
+}
+
+.interview-review-section > ul > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+}
+
+.interview-review-section > ul > li + li {
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+}
+
+.interview-review-marker {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  margin-top: 0.4rem;
+  border-radius: 999px;
+}
+
+.interview-review-marker.is-strength {
+  background: var(--app-success);
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--app-success) 12%, transparent);
+}
+
+.interview-review-priority {
+  flex: 0 0 auto;
+  margin-top: 0.05rem;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.62rem;
+  line-height: 1rem;
+}
+
+.interview-review-priority.is-high {
+  background: color-mix(in srgb, var(--app-danger) 11%, transparent);
+  color: var(--app-danger);
+}
+
+.interview-review-priority.is-medium {
+  background: color-mix(in srgb, var(--app-warning) 12%, transparent);
+  color: var(--app-warning);
+}
+
+.interview-review-priority.is-low {
+  background: var(--app-surface-muted);
+  color: var(--app-text-muted);
+}
+
+.interview-review-reference {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-primary) 35%, transparent);
+  background: transparent;
+  padding: 0 0.08rem;
+  color: var(--app-primary);
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.interview-review-reference:hover,
+.interview-review-reference:focus-visible {
+  border-color: currentColor;
+  color: var(--app-accent-deep);
+}
+
+.interview-review-reference:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-primary) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.interview-review-reference.is-single {
+  flex: 0 0 auto;
+  gap: 0.15rem;
+  padding-bottom: 0.12rem;
+  white-space: nowrap;
+}
+
+.interview-review-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.interview-review-inline-references {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin-left: 0.35rem;
+  vertical-align: super;
+}
+
+.interview-review-next-list {
+  margin-top: 0.75rem;
+}
+
+.interview-review-next-list li + li {
+  margin-top: 0.2rem;
+}
+
+.interview-review-next-list li {
+  display: grid;
+  grid-template-columns: 1.35rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.45rem 0;
+  font-size: 0.75rem;
+  line-height: 1.3rem;
+  color: var(--app-text-muted);
+}
+
+.interview-review-next-list span {
+  display: grid;
+  width: 1.35rem;
+  height: 1.35rem;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 0.45rem;
+  background: var(--app-surface-muted);
+  font-size: 0.65rem;
+  color: var(--app-text);
+}
+
+.interview-message-user.is-review-reference {
+  scroll-margin-block-start: 0.75rem;
+  border-radius: calc(var(--app-radius-card) + 0.25rem);
+  animation: interview-review-reference-highlight 2.4s ease-in-out both;
+}
+
+@keyframes interview-review-reference-highlight {
+  0%,
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0.55rem transparent;
+  }
+
+  14%,
+  42%,
+  70% {
+    background-color: color-mix(in srgb, #facc15 16%, var(--app-surface));
+    box-shadow: 0 0 0 0.55rem color-mix(in srgb, #facc15 16%, var(--app-surface));
+  }
+
+  28%,
+  56%,
+  84% {
+    background-color: color-mix(in srgb, #facc15 5%, var(--app-surface));
+    box-shadow: 0 0 0 0.55rem color-mix(in srgb, #facc15 5%, var(--app-surface));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interview-message-user.is-review-reference {
+    animation: none;
+    background-color: color-mix(in srgb, #facc15 14%, var(--app-surface));
+    box-shadow: 0 0 0 0.55rem color-mix(in srgb, #facc15 14%, var(--app-surface));
+  }
+}
+
+@media (max-width: 640px) {
+  .interview-overview-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .interview-overview-score-card {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--app-border);
+  }
+
+  .interview-session-header {
+    height: auto !important;
+  }
+}
+
+@media (max-width: 1279px) {
+  .interview-insights-panel {
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interview-score-progress,
+  .interview-score-dimension-enter-active,
+  .interview-score-dimension-leave-active,
+  .interview-score-dimension-move,
+  .interview-insights-view-enter-active,
+  .interview-insights-view-leave-active {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:root.dark .interview-history-score.is-fair strong,
+:root.dark .interview-score-value.is-fair,
+:root.dark .interview-overview-score-value.is-fair {
+  color: #fbbf24;
+}
+
+:root.dark .interview-score-progress.is-fair {
+  background: #fbbf24;
+}
+
+.interview-phase-card,
+.interview-error-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-card);
+  background: color-mix(in srgb, var(--app-surface-muted) 72%, transparent);
+  padding: 0.875rem;
+  font-size: 0.8rem;
+  line-height: 1.35rem;
+  color: var(--app-text-muted);
+}
+
+.interview-error-card {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--app-danger) 36%, var(--app-border));
+}
+
+.interview-stream-cursor {
+  display: inline-block;
+  width: 0.4rem;
+  height: 1rem;
+  margin-left: 0.15rem;
+  vertical-align: -0.15rem;
+  background: var(--app-accent-deep);
+  animation: interview-cursor 900ms steps(2, start) infinite;
+}
+
+@keyframes interview-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .project-summary-card,
   .app-card,
@@ -776,7 +2034,9 @@ button[data-slot='base'][class*='bg-primary'] {
   .sidebar-fade-enter-active,
   .sidebar-fade-leave-active,
   .sidebar-label-fade-enter-active,
-  .sidebar-label-fade-leave-active {
+  .sidebar-label-fade-leave-active,
+  .interview-stream-cursor {
     transition-duration: 0ms;
+    animation: none;
   }
 }

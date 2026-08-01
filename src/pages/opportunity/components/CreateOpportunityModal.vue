@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import CityPicker from '@/components/CityPicker.vue'
 import type { CreateOpportunityPayload } from '@/services/opportunities'
 import { defaultMockJobDraft, type MockJobDraft } from '../mocks/jobDraft'
@@ -18,7 +18,6 @@ const emit = defineEmits<{
 
 const mockJobDraftStorageKey = 'agent-seek-employment:mock-job-draft:v2'
 let mockSavedTimer: number | null = null
-let originalBodyOverflow = ''
 
 const mockSavedMessage = ref('')
 const form = reactive<MockJobDraft>({
@@ -50,19 +49,6 @@ function clearAllErrors() {
   errors.company = ''
   errors.jobTitle = ''
   errors.description = ''
-}
-
-function lockBodyScroll() {
-  if (typeof document === 'undefined') return
-
-  originalBodyOverflow = document.body.style.overflow
-  document.body.style.overflow = 'hidden'
-}
-
-function unlockBodyScroll() {
-  if (typeof document === 'undefined') return
-
-  document.body.style.overflow = originalBodyOverflow
 }
 
 function readMockJobDraft(): MockJobDraft {
@@ -140,39 +126,27 @@ function submit() {
 watch(
   () => props.open,
   (isOpen, wasOpen) => {
-    if (isOpen) {
-      lockBodyScroll()
-      return
-    }
-
-    unlockBodyScroll()
-    if (wasOpen) resetForm()
+    if (!isOpen && wasOpen) resetForm()
   },
 )
-
-onBeforeUnmount(() => {
-  unlockBodyScroll()
-  if (mockSavedTimer) window.clearTimeout(mockSavedTimer)
-})
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
-      <div class="app-panel w-full max-w-2xl shadow-xl">
+  <UModal
+    :open="open"
+    :dismissible="!loading"
+    :close="false"
+    :ui="{ overlay: 'bg-black/55', content: 'app-panel w-[calc(100%-2rem)] max-w-2xl overflow-hidden shadow-xl' }"
+    @update:open="(nextOpen: boolean) => !nextOpen && close()"
+  >
+    <template #content>
+      <div>
         <header class="flex items-start justify-between gap-4 border-b border-default px-6 py-5">
           <div>
             <h2 class="text-lg font-semibold text-highlighted">创建 JD 分析</h2>
             <p class="mt-1 text-sm text-muted">先保存 JD 信息，后续会基于简历版本生成结构化分析。</p>
           </div>
-          <UButton
-            type="button"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-x"
-            :disabled="loading"
-            @click="close"
-          />
+          <UButton type="button" color="neutral" variant="ghost" icon="i-lucide-x" :disabled="loading" @click="close" />
         </header>
 
         <div class="max-h-[70vh] overflow-y-auto px-6 py-5">
@@ -185,7 +159,10 @@ onBeforeUnmount(() => {
                 placeholder="例如：小红书"
                 @update:model-value="clearError('company')"
               />
-              <p class="mt-1 min-h-[14px] text-[11px] leading-[14px]" :class="errors.company ? 'text-error' : 'invisible'">
+              <p
+                class="mt-1 min-h-[14px] text-[11px] leading-[14px]"
+                :class="errors.company ? 'text-error' : 'invisible'"
+              >
                 {{ errors.company || '占位' }}
               </p>
             </UFormField>
@@ -198,7 +175,10 @@ onBeforeUnmount(() => {
                 placeholder="例如：前端开发工程师"
                 @update:model-value="clearError('jobTitle')"
               />
-              <p class="mt-1 min-h-[14px] text-[11px] leading-[14px]" :class="errors.jobTitle ? 'text-error' : 'invisible'">
+              <p
+                class="mt-1 min-h-[14px] text-[11px] leading-[14px]"
+                :class="errors.jobTitle ? 'text-error' : 'invisible'"
+              >
                 {{ errors.jobTitle || '占位' }}
               </p>
             </UFormField>
@@ -211,7 +191,12 @@ onBeforeUnmount(() => {
             </UFormField>
 
             <UFormField label="岗位介绍">
-              <UTextarea v-model="form.introduction" class="w-full" :rows="4" placeholder="粘贴岗位背景、团队方向或业务介绍" />
+              <UTextarea
+                v-model="form.introduction"
+                class="w-full"
+                :rows="4"
+                placeholder="粘贴岗位背景、团队方向或业务介绍"
+              />
               <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
             </UFormField>
 
@@ -224,7 +209,10 @@ onBeforeUnmount(() => {
                 placeholder="粘贴 JD 中的岗位职责、任职要求、加分项"
                 @update:model-value="clearError('description')"
               />
-              <p class="mt-1 min-h-[14px] text-[11px] leading-[14px]" :class="errors.description ? 'text-error' : 'invisible'">
+              <p
+                class="mt-1 min-h-[14px] text-[11px] leading-[14px]"
+                :class="errors.description ? 'text-error' : 'invisible'"
+              >
                 {{ errors.description || '占位' }}
               </p>
             </UFormField>
@@ -233,10 +221,24 @@ onBeforeUnmount(() => {
 
         <footer class="flex items-center justify-between gap-3 border-t border-default px-6 py-4">
           <div class="flex items-center gap-2">
-            <UButton type="button" color="neutral" variant="outline" icon="i-lucide-file-input" :disabled="loading" @click="importMockJobDraft">
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-file-input"
+              :disabled="loading"
+              @click="importMockJobDraft"
+            >
               导入 mock 数据
             </UButton>
-            <UButton type="button" color="neutral" variant="outline" icon="i-lucide-save" :disabled="loading" @click="setCurrentJobDraftAsMockData">
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-save"
+              :disabled="loading"
+              @click="setCurrentJobDraftAsMockData"
+            >
               设为 mock 数据
             </UButton>
             <span v-if="mockSavedMessage" class="text-xs text-muted">{{ mockSavedMessage }}</span>
@@ -244,12 +246,14 @@ onBeforeUnmount(() => {
 
           <div class="flex justify-end gap-2">
             <UButton type="button" color="neutral" variant="ghost" :disabled="loading" @click="close">取消</UButton>
-            <UButton type="button" icon="i-lucide-check" :loading="loading" :disabled="loading" @click="submit">确认创建</UButton>
+            <UButton type="button" icon="i-lucide-check" :loading="loading" :disabled="loading" @click="submit"
+              >确认创建</UButton
+            >
           </div>
         </footer>
       </div>
-    </div>
-  </Teleport>
+    </template>
+  </UModal>
 </template>
 
 <style scoped>

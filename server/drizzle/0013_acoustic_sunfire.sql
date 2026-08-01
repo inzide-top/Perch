@@ -1,0 +1,1 @@
+ALTER TABLE "review_documents" ADD CONSTRAINT "review_documents_source_relation_check" CHECK (("source_type" = 'written_test' AND "interview_round_id" IS NULL) OR ("source_type" = 'interview' AND "interview_round_id" IS NOT NULL));

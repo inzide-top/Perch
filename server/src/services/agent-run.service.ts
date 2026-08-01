@@ -1,37 +1,18 @@
-import { jobAnalysisRepository } from '../repositories/job-analysis.repository'
+import { agentRunRepository, type AgentRunDebugListFilters } from '../repositories/agent-run.repository'
+import { toAgentRunDebugItem } from './agent-run-debug'
 
 export class AgentRunNotFoundError extends Error {
   statusCode = 404
 }
 
-function toAgentRunDebugItem(entry: Awaited<ReturnType<typeof jobAnalysisRepository.findAgentRunDebugList>>[number]) {
-  return {
-    id: entry.run.id,
-    analysisId: entry.analysisId,
-    sourceAnalysisId: entry.sourceAnalysisId,
-    opportunityId: entry.opportunityId,
-    company: entry.company,
-    jobTitle: entry.jobTitle,
-    attemptNumber: entry.run.attemptNumber,
-    status: entry.run.status,
-    modelName: entry.run.modelName,
-    promptVersion: entry.run.promptVersion,
-    durationMs: entry.run.durationMs,
-    tokenUsage: entry.run.tokenUsage,
-    error: entry.run.error,
-    startedAt: entry.run.startedAt,
-    finishedAt: entry.run.finishedAt,
-  }
-}
-
-export async function getAgentRunDebugList(limit = 50) {
-  const entries = await jobAnalysisRepository.findAgentRunDebugList(limit)
+export async function getAgentRunDebugList(filters: AgentRunDebugListFilters) {
+  const entries = await agentRunRepository.findDebugList(filters)
 
   return entries.map(toAgentRunDebugItem)
 }
 
 export async function getAgentRunDebugDetail(runId: string) {
-  const entry = await jobAnalysisRepository.findAgentRunDebugById(runId)
+  const entry = await agentRunRepository.findDebugById(runId)
   if (!entry) throw new AgentRunNotFoundError('AgentRun 不存在')
 
   return {

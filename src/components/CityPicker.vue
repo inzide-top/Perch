@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
           {{ city }}
           <UIcon name="i-lucide-x" class="size-2.5 text-muted" />
         </button>
-        <span v-if="!selectedCities.length" class="text-muted">请选择意向城市</span>
+        <span v-if="!selectedCities.length" class="text-dimmed">请选择城市</span>
       </div>
       <UIcon
         name="i-lucide-chevron-down"

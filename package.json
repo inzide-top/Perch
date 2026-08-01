@@ -3,6 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "description": "PERCH · AI Career Workspace",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inzide-top/web-seek-employ.git"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:api": "tsx watch --tsconfig server/tsconfig.json server/src/index.ts",
@@ -14,7 +24,10 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:core": "tsx --tsconfig server/tsconfig.json --test server/src/services/opportunity-fingerprint.test.ts server/src/services/job-analysis/prompt.test.ts server/src/services/analysis-presentation.test.ts",
+    "test:core": "tsx --tsconfig server/tsconfig.json --test server/src/services/opportunity-fingerprint.test.ts server/src/services/ai/model-client.test.ts server/src/services/job-analysis/prompt.test.ts server/src/services/analysis-presentation.test.ts server/src/services/agent-run-debug.test.ts server/src/services/dashboard.service.test.ts server/src/services/capability-profile.service.test.ts server/src/services/action-strategy/engine.test.ts server/src/schemas/action-strategy.schema.test.ts server/src/services/interview/scoring.test.ts server/src/services/interview/plan-input.test.ts server/src/services/interview/history-context.test.ts server/src/services/review/review-extraction.service.test.ts server/src/services/review/review-extraction.test.ts server/src/services/review/review-text-chunk.test.ts server/src/schemas/opportunity.schema.test.ts server/src/schemas/interview.schema.test.ts server/src/schemas/interview-deep-evaluation.schema.test.ts server/src/schemas/background-task.schema.test.ts server/src/services/interview/plan-prompt.test.ts server/src/services/interview/turn-prompt.test.ts server/src/services/interview/skip-prompt.test.ts server/src/services/interview/deep-evaluation.test.ts server/src/services/interview/runtime.test.ts server/src/services/interview/state-machine.test.ts",
+    "benchmark:interview-turn": "tsx --tsconfig server/tsconfig.json server/src/scripts/interview-turn-prompt-benchmark.ts",
+    "benchmark:interview-turn:validate": "tsx --tsconfig server/tsconfig.json server/src/scripts/interview-turn-prompt-benchmark.ts --validate-cases",
+    "repair:interview-scores": "tsx --tsconfig server/tsconfig.json server/src/scripts/recalculate-interview-scores.ts",
     "typecheck": "vue-tsc -b",
     "typecheck:server": "tsc -p server/tsconfig.json --noEmit",
     "preview": "vite preview"
@@ -25,6 +38,8 @@
     "diff": "^9.0.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
+    "echarts": "^5.6.0",
+    "echarts-wordcloud": "^2.1.0",
     "fastify": "^5.10.0",
     "lodash-es": "^4.18.1",
     "pinia": "^4.0.2",

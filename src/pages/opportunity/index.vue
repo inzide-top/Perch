@@ -3,12 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
+import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import type { JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/opportunity'
 import { useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import {
   getDuplicateOpportunityConflict,
   type CreateOpportunityPayload,
   type DuplicateOpportunityConflict,
+  type OpportunityListFilters,
 } from '@/services/opportunities'
 import { getScoreClass, type AnalysisRecommendation } from '@/shared/opportunity/analysisPresentation'
 import { opportunityRegionOptions, type OpportunityRegion } from '@/shared/opportunity/geography'
@@ -44,6 +46,7 @@ const settingsStore = useSettingsStore()
 const router = useRouter()
 const toast = useToast()
 const { opportunities, analysisTasks, isInitialLoading, isRefreshing, loadError } = storeToRefs(opportunityStore)
+const isFiltering = ref(false)
 
 const selectedStatus = ref<JobOpportunityStatus | ''>('')
 const selectedIntentionLevel = ref<OpportunityIntentionLevel | ''>('')
@@ -52,12 +55,13 @@ const selectedRegion = ref<OpportunityRegion | ''>('')
 const isCreateModalOpen = ref(false)
 const isCreatingOpportunity = ref(false)
 const retryingOpportunityId = ref<string | null>(null)
-const openingOpportunityId = ref<string | null>(null)
 const deleteOpportunityId = ref<string | null>(null)
 const isDeletingOpportunity = ref(false)
 const duplicateOpportunityConflict = ref<DuplicateOpportunityConflict | null>(null)
 const isResolvingDuplicateOpportunity = ref(false)
 const detailPrefetchTimers = new Map<string, number>()
+let filterDebounceTimer: number | null = null
+let filterRequestSequence = 0
 
 const listFilters = computed(() => {
   return {
@@ -67,6 +71,8 @@ const listFilters = computed(() => {
     regions: selectedRegion.value ? [selectedRegion.value] : [],
   }
 })
+const isListBootstrapping = ref(!opportunityStore.isOpportunityListFresh(listFilters.value))
+const showListSkeleton = computed(() => isListBootstrapping.value || isInitialLoading.value || isRefreshing.value)
 const hasActiveListFilters = computed(() => {
   return Object.values(listFilters.value).some((values) => values.length > 0)
 })
@@ -203,6 +209,10 @@ function getOpportunityAnalysisTask(opportunityId: string) {
   return analysisTasks.value.find((task) => task.opportunityId === opportunityId) ?? null
 }
 
+function getAnalysisFailurePresentation(opportunityId: string) {
+  return getAiTaskErrorPresentation(getOpportunityAnalysisTask(opportunityId)?.error)
+}
+
 function isAnalysisCompleted(opportunityId: string) {
   return getOpportunityAnalysisTask(opportunityId)?.status === 'completed'
 }
@@ -309,27 +319,6 @@ function formatCityList(cities: string[] | string | undefined) {
   return cities ?? ''
 }
 
-async function openOpportunityDetail(opportunityId: string) {
-  if (openingOpportunityId.value) return
-
-  if (!isAnalysisCompleted(opportunityId)) return
-
-  openingOpportunityId.value = opportunityId
-  try {
-    opportunityStore.selectOpportunity(opportunityId)
-    await router.push({ name: 'opportunity-detail', params: { id: opportunityId } })
-  } catch (error) {
-    toast.add({
-      title: '打开机会详情失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
-      color: 'error',
-      icon: 'i-lucide-circle-alert',
-    })
-  } finally {
-    openingOpportunityId.value = null
-  }
-}
-
 function scheduleOpportunityDetailPrefetch(opportunityId: string) {
   if (!isAnalysisCompleted(opportunityId) || opportunityStore.isOpportunityDetailFresh(opportunityId)) return
   if (detailPrefetchTimers.has(opportunityId)) return
@@ -350,8 +339,28 @@ function cancelOpportunityDetailPrefetch(opportunityId: string) {
   detailPrefetchTimers.delete(opportunityId)
 }
 
-onMounted(() => {
-  void opportunityStore.loadOpportunities({ filters: listFilters.value })
+function scheduleFilteredOpportunityLoad(filters: OpportunityListFilters) {
+  filterRequestSequence += 1
+  const requestSequence = filterRequestSequence
+  isFiltering.value = true
+
+  if (filterDebounceTimer !== null) window.clearTimeout(filterDebounceTimer)
+  filterDebounceTimer = window.setTimeout(async () => {
+    filterDebounceTimer = null
+    try {
+      await opportunityStore.loadOpportunities({ force: true, filters })
+    } finally {
+      if (requestSequence === filterRequestSequence) isFiltering.value = false
+    }
+  }, 220)
+}
+
+onMounted(async () => {
+  try {
+    await opportunityStore.loadOpportunities({ filters: listFilters.value })
+  } finally {
+    isListBootstrapping.value = false
+  }
 })
 
 onBeforeUnmount(() => {
@@ -359,29 +368,18 @@ onBeforeUnmount(() => {
     window.clearTimeout(timer)
   }
   detailPrefetchTimers.clear()
+  if (filterDebounceTimer !== null) window.clearTimeout(filterDebounceTimer)
 })
 
 watch(listFilters, (filters) => {
-  void opportunityStore.loadOpportunities({ force: true, filters })
+  scheduleFilteredOpportunityLoad(filters)
 })
 </script>
 
 <template>
   <section class="w-full">
-    <div v-if="loadError && !isInitialLoading" class="app-panel-muted p-10 text-center">
-      <p class="text-sm text-error">{{ loadError }}</p>
-      <UButton
-        class="mt-4"
-        color="neutral"
-        variant="outline"
-        @click="opportunityStore.loadOpportunities({ force: true, filters: listFilters })"
-      >
-        重新加载
-      </UButton>
-    </div>
-
     <UCard
-      v-else-if="!isInitialLoading && opportunities.length === 0 && !hasActiveListFilters"
+      v-if="!loadError && !isInitialLoading && opportunities.length === 0 && !hasActiveListFilters"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-lg px-6 py-14 text-center">
@@ -422,37 +420,76 @@ watch(listFilters, (filters) => {
         </div>
       </section>
 
-      <OpportunityListSkeleton v-if="isInitialLoading && opportunities.length === 0" />
-
-      <div v-else-if="filteredOpportunities.length === 0" class="app-panel-muted p-10 text-center">
-        <p class="text-sm text-muted">当前筛选条件下没有机会记录。</p>
-      </div>
-
-      <div v-else class="space-y-3">
-        <article
-          v-for="opportunity in filteredOpportunities"
-          :key="opportunity.id"
-          class="app-card p-4"
-          :class="{
-            'app-card-interactive cursor-pointer': isAnalysisCompleted(opportunity.id),
-            'cursor-default': !isAnalysisCompleted(opportunity.id),
-            'pointer-events-none opacity-70': Boolean(openingOpportunityId),
-          }"
-          role="button"
-          tabindex="0"
-          :aria-busy="openingOpportunityId === opportunity.id"
-          :aria-label="
-            isAnalysisCompleted(opportunity.id)
-              ? `进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`
-              : `${opportunity.company} ${opportunity.jobTitle} 正在等待分析结果`
-          "
-          @click="openOpportunityDetail(opportunity.id)"
-          @keydown.enter.prevent="openOpportunityDetail(opportunity.id)"
-          @mouseenter="scheduleOpportunityDetailPrefetch(opportunity.id)"
-          @mouseleave="cancelOpportunityDetailPrefetch(opportunity.id)"
+      <div class="min-h-[20rem]" aria-live="polite">
+        <div
+          v-if="loadError && !isInitialLoading"
+          class="app-panel-muted flex min-h-[20rem] flex-col items-center justify-center p-10 text-center"
         >
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex min-w-0 items-center gap-3">
+          <span class="flex size-10 items-center justify-center rounded-2xl bg-error/10 text-error">
+            <UIcon name="i-lucide-circle-alert" class="size-5" aria-hidden="true" />
+          </span>
+          <p class="mt-4 text-sm font-medium text-highlighted">机会列表加载失败</p>
+          <p class="mt-2 max-w-md text-sm leading-6 text-muted">{{ loadError }}</p>
+          <UButton
+            class="mt-5"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            @click="opportunityStore.loadOpportunities({ force: true, filters: listFilters })"
+          >
+            重新加载列表
+          </UButton>
+        </div>
+
+        <OpportunityListSkeleton v-else-if="showListSkeleton || isFiltering" />
+
+        <div v-else-if="filteredOpportunities.length === 0" class="app-panel-muted p-10 text-center">
+          <p class="text-sm text-muted">当前筛选条件下没有机会记录。</p>
+        </div>
+
+        <div v-else class="space-y-3">
+          <article
+            v-for="opportunity in filteredOpportunities"
+            :key="opportunity.id"
+            class="app-card flex items-center gap-4 p-4"
+            :class="{
+              'app-card-interactive': isAnalysisCompleted(opportunity.id),
+            }"
+          >
+            <RouterLink
+              v-if="isAnalysisCompleted(opportunity.id)"
+              class="opportunity-card-main flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              :to="{ name: 'opportunity-detail', params: { id: opportunity.id } }"
+              :aria-label="`进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`"
+              @click="opportunityStore.selectOpportunity(opportunity.id)"
+              @mouseenter="scheduleOpportunityDetailPrefetch(opportunity.id)"
+              @mouseleave="cancelOpportunityDetailPrefetch(opportunity.id)"
+            >
+              <span
+                class="flex size-9 shrink-0 items-center justify-center rounded-md border border-default bg-elevated text-muted"
+                aria-hidden="true"
+              >
+                <UIcon name="i-lucide-building-2" class="size-4" />
+              </span>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="truncate text-base font-semibold text-highlighted">{{ opportunity.company }}</h2>
+                  <UBadge
+                    v-if="formatCityList(opportunity.address)"
+                    color="neutral"
+                    variant="subtle"
+                    :label="formatCityList(opportunity.address)"
+                  />
+                </div>
+                <p class="mt-1 truncate text-sm text-muted">{{ opportunity.jobTitle }}</p>
+              </div>
+            </RouterLink>
+
+            <div
+              v-else
+              class="flex min-w-0 flex-1 items-center gap-3"
+              :aria-label="`${opportunity.company} ${opportunity.jobTitle} 正在等待分析结果`"
+            >
               <span
                 class="flex size-9 shrink-0 items-center justify-center rounded-md border border-default bg-elevated text-muted"
                 aria-hidden="true"
@@ -473,7 +510,7 @@ watch(listFilters, (filters) => {
               </div>
             </div>
 
-            <div class="flex shrink-0 items-center gap-3">
+            <div class="opportunity-card-status flex w-[12.5rem] shrink-0 items-center justify-end gap-3">
               <UDropdownMenu
                 :items="getOpportunityActionItems(opportunity.id)"
                 :content="{ align: 'end', sideOffset: 8 }"
@@ -487,7 +524,6 @@ watch(listFilters, (filters) => {
                   title="更多操作"
                   aria-label="更多操作"
                   :disabled="isDeletingOpportunity || retryingOpportunityId !== null"
-                  @click.stop
                 />
               </UDropdownMenu>
               <UBadge v-if="opportunity.status === 'closed'" color="error" variant="subtle" label="流程终止" />
@@ -527,42 +563,60 @@ watch(listFilters, (filters) => {
                 v-else-if="getOpportunityAnalysisTask(opportunity.id)?.status === 'failed'"
                 class="flex items-center gap-2"
               >
-                <span class="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">
-                  分析失败 · 已尝试 {{ getOpportunityAnalysisTask(opportunity.id)?.currentAttempt ?? 1 }}/
+                <span
+                  class="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error"
+                  :title="getAnalysisFailurePresentation(opportunity.id).description"
+                >
+                  {{ getAnalysisFailurePresentation(opportunity.id).title }} · 已尝试
+                  {{ getOpportunityAnalysisTask(opportunity.id)?.currentAttempt ?? 1 }}/
                   {{ getOpportunityAnalysisTask(opportunity.id)?.maxAttempts ?? 3 }} 次
                 </span>
                 <UButton
-                  color="error"
+                  :color="getAnalysisFailurePresentation(opportunity.id).requiresModelAttention ? 'warning' : 'error'"
                   variant="soft"
                   size="sm"
                   square
-                  icon="i-lucide-rotate-cw"
-                  title="重新分析"
-                  aria-label="重新分析"
+                  :icon="
+                    getAnalysisFailurePresentation(opportunity.id).requiresModelAttention
+                      ? 'i-lucide-settings'
+                      : 'i-lucide-rotate-cw'
+                  "
+                  :title="
+                    getAnalysisFailurePresentation(opportunity.id).requiresModelAttention ? '检查模型配置' : '重新分析'
+                  "
+                  :aria-label="
+                    getAnalysisFailurePresentation(opportunity.id).requiresModelAttention ? '检查模型配置' : '重新分析'
+                  "
                   :loading="retryingOpportunityId === opportunity.id"
                   :disabled="retryingOpportunityId !== null || deleteOpportunityId !== null"
-                  @click.stop="retryJobAnalysis(opportunity.id)"
+                  @click.stop="
+                    getAnalysisFailurePresentation(opportunity.id).requiresModelAttention
+                      ? router.push('/settings')
+                      : retryJobAnalysis(opportunity.id)
+                  "
                 />
               </div>
               <span
                 v-if="isAnalysisCompleted(opportunity.id)"
                 class="inline-flex size-8 items-center justify-center rounded-md text-muted"
               >
-                <UIcon
-                  :name="openingOpportunityId === opportunity.id ? 'i-lucide-loader-circle' : 'i-lucide-chevron-right'"
-                  class="size-4"
-                  :class="{ 'animate-spin': openingOpportunityId === opportunity.id }"
-                />
+                <UIcon name="i-lucide-chevron-right" class="size-4" />
               </span>
             </div>
-          </div>
-        </article>
+          </article>
+        </div>
       </div>
     </div>
 
-    <Teleport to="body">
-      <div v-if="deleteOpportunityId" class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
-        <div class="app-panel w-full max-w-sm p-5 shadow-xl">
+    <UModal
+      :open="Boolean(deleteOpportunityId)"
+      :dismissible="!isDeletingOpportunity"
+      :close="false"
+      :ui="{ overlay: 'bg-black/55', content: 'app-panel w-[calc(100%-2rem)] max-w-sm p-5 shadow-xl' }"
+      @update:open="(nextOpen: boolean) => !nextOpen && closeDeleteOpportunityConfirm()"
+    >
+      <template #content>
+        <div>
           <div class="flex items-start gap-3">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-error/10 text-error">
               <UIcon name="i-lucide-trash-2" class="size-4" />
@@ -600,16 +654,18 @@ watch(listFilters, (filters) => {
             </UButton>
           </div>
         </div>
-      </div>
+      </template>
+    </UModal>
 
-      <div
-        v-if="duplicateOpportunityConflict"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="duplicate-opportunity-dialog-title"
-      >
-        <div class="app-panel w-full max-w-md p-5 shadow-xl">
+    <UModal
+      :open="Boolean(duplicateOpportunityConflict)"
+      :dismissible="!isResolvingDuplicateOpportunity"
+      :close="false"
+      :ui="{ overlay: 'bg-black/55', content: 'app-panel w-[calc(100%-2rem)] max-w-md p-5 shadow-xl' }"
+      @update:open="(nextOpen: boolean) => !nextOpen && closeDuplicateOpportunityDialog()"
+    >
+      <template #content>
+        <div v-if="duplicateOpportunityConflict">
           <div class="flex items-start gap-3">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
               <UIcon name="i-lucide-copy" class="size-4" />
@@ -681,8 +737,8 @@ watch(listFilters, (filters) => {
             当前 JD 正在分析中，完成后才可以重新分析。
           </p>
         </div>
-      </div>
-    </Teleport>
+      </template>
+    </UModal>
 
     <CreateOpportunityModal
       :open="isCreateModalOpen"

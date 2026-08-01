@@ -4,9 +4,13 @@ import {
   jobAnalysisProgressQuerySchema,
   jobOpportunityListQuerySchema,
   opportunityIdParamsSchema,
+  retryReviewDocumentInputSchema,
+  reviewDocumentParamsSchema,
 } from '../schemas/opportunity.schema'
 import {
   addInterviewRound,
+  cancelInterviewRound,
+  completeInterviewRound,
   createJobOpportunity,
   deleteJobOpportunity,
   deleteInterviewRound,
@@ -19,6 +23,10 @@ import {
   updateWrittenTestReview,
 } from '../services/opportunity.service'
 import { getJobAnalyses, startJobAnalysis } from '../services/job-analysis.service'
+import {
+  getReviewDocumentSummaries,
+  retryReviewDocumentForOpportunity,
+} from '../services/review/review-document.service'
 
 function parseOpportunityId(params: unknown) {
   return opportunityIdParamsSchema.parse(params).opportunityId
@@ -66,6 +74,27 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
     return reply.status(200).send(result)
   })
 
+  app.get<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/review-documents',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await getReviewDocumentSummaries(opportunityId)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string; documentId: string } }>(
+    '/opportunities/:opportunityId/review-documents/:documentId/retry',
+    async (request, reply) => {
+      const { opportunityId, documentId } = reviewDocumentParamsSchema.parse(request.params)
+      const { modelConnection } = retryReviewDocumentInputSchema.parse(request.body)
+      const result = await retryReviewDocumentForOpportunity(opportunityId, documentId, modelConnection)
+
+      return reply.status(202).send(result)
+    },
+  )
+
   app.delete<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
     const opportunityId = parseOpportunityId(request.params)
     const result = await deleteJobOpportunity(opportunityId)
@@ -112,6 +141,26 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const { opportunityId, roundId } = parseInterviewRoundParams(request.params)
       const result = await updateInterviewRound(opportunityId, roundId, request.body)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string; roundId: string } }>(
+    '/opportunities/:opportunityId/interview-rounds/:roundId/complete',
+    async (request, reply) => {
+      const { opportunityId, roundId } = parseInterviewRoundParams(request.params)
+      const result = await completeInterviewRound(opportunityId, roundId, request.body)
+
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.post<{ Params: { opportunityId: string; roundId: string } }>(
+    '/opportunities/:opportunityId/interview-rounds/:roundId/cancel',
+    async (request, reply) => {
+      const { opportunityId, roundId } = parseInterviewRoundParams(request.params)
+      const result = await cancelInterviewRound(opportunityId, roundId, request.body)
 
       return reply.status(200).send(result)
     },

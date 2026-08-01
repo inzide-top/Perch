@@ -1,13 +1,13 @@
 import { ZodError } from 'zod'
 import type { AgentRunError, JobAnalysisRunInput } from '@/types/opportunity'
+import { createValidationRepairContext, type ValidationRepairContext } from '../../utils/model-validation'
 
-export type ValidationRepairContext = {
-  validationIssues: AgentRunError['validationIssues']
-  invalidFieldValues: string
-}
+export { parseModelOutputJson } from '../../utils/model-output'
+export { createJsonSyntaxRepairContext, createValidationRepairContext } from '../../utils/model-validation'
+export type { ValidationRepairContext } from '../../utils/model-validation'
 
 export function buildSystemPrompt() {
-  return `你是 PERCH 的 JD-简历匹配分析 Agent。请只基于输入中明确提供的 JD 和简历证据分析；没有证据时必须标记为 missing 或 partial，不能臆测候选人能力。
+  return `你是 AI 求职工作台的 JD-简历匹配分析 Agent。请只基于输入中明确提供的 JD 和简历证据分析；没有证据时必须标记为 missing 或 partial，不能臆测候选人能力。
 
 必须只返回一个完整、合法的 JSON 对象：不要 Markdown、不要代码块、不要解释文字。顶层字段和每个数组对象的必填字段都必须存在；数组可为空。所有出现的文本字段必须是去除首尾空白后的非空文本，绝不能输出空字符串 ""。
 
@@ -55,99 +55,6 @@ scoreBreakdown 必须且只能包含下列六个固定 key 各一次；它们在
 
 export function buildInitialUserPrompt(input: JobAnalysisRunInput) {
   return `请分析以下岗位与候选人简历，并返回完整 JSON。\n\nJD：\n${JSON.stringify(input.opportunity, null, 2)}\n\n简历：\n${JSON.stringify(input.resume, null, 2)}`
-}
-
-function extractJsonObject(rawOutput: string) {
-  const firstObjectIndex = rawOutput.indexOf('{')
-  if (firstObjectIndex < 0) throw new SyntaxError('模型输出中未找到 JSON 对象')
-
-  let depth = 0
-  let isInsideString = false
-  let isEscaped = false
-
-  for (let index = firstObjectIndex; index < rawOutput.length; index += 1) {
-    const character = rawOutput[index]
-
-    if (isInsideString) {
-      if (isEscaped) {
-        isEscaped = false
-      } else if (character === '\\') {
-        isEscaped = true
-      } else if (character === '"') {
-        isInsideString = false
-      }
-      continue
-    }
-
-    if (character === '"') {
-      isInsideString = true
-    } else if (character === '{') {
-      depth += 1
-    } else if (character === '}') {
-      depth -= 1
-      if (depth === 0) return rawOutput.slice(firstObjectIndex, index + 1)
-    }
-  }
-
-  throw new SyntaxError('模型输出中的 JSON 对象不完整')
-}
-
-export function parseModelOutputJson(rawOutput: string) {
-  const trimmedOutput = rawOutput.trim()
-  const codeBlockMatch = trimmedOutput.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
-  const normalizedOutput = codeBlockMatch?.[1]?.trim() ?? trimmedOutput
-
-  try {
-    return JSON.parse(normalizedOutput)
-  } catch {
-    return JSON.parse(extractJsonObject(normalizedOutput))
-  }
-}
-
-function getValueAtPath(value: unknown, path: Array<string | number>) {
-  return path.reduce<unknown>((current, key) => {
-    if (!current || typeof current !== 'object') return undefined
-
-    return (current as Record<string | number, unknown>)[key]
-  }, value)
-}
-
-export function createValidationRepairContext(rawOutput: string, error: ZodError): ValidationRepairContext {
-  let parsedOutput: unknown = rawOutput
-
-  try {
-    parsedOutput = JSON.parse(rawOutput)
-  } catch {
-    // 非法 JSON 没有可定位字段，直接把原始片段作为修复参考。
-  }
-
-  const validationIssues = error.issues.map((issue) => ({
-    path: issue.path.map((part) => String(part)),
-    code: issue.code,
-    message: issue.message,
-  }))
-  const invalidFieldValues = validationIssues.map((issue) => ({
-    path: issue.path,
-    value: getValueAtPath(parsedOutput, issue.path),
-  }))
-
-  return {
-    validationIssues,
-    invalidFieldValues: JSON.stringify(invalidFieldValues).slice(0, 8_000),
-  }
-}
-
-export function createJsonSyntaxRepairContext(rawOutput: string, error: unknown): ValidationRepairContext {
-  return {
-    validationIssues: [
-      {
-        path: [],
-        code: 'invalid_json',
-        message: error instanceof Error ? error.message : '模型输出不是合法 JSON',
-      },
-    ],
-    invalidFieldValues: JSON.stringify([{ path: [], value: rawOutput.slice(0, 8_000) }]),
-  }
 }
 
 export function buildRepairUserPrompt(input: JobAnalysisRunInput, repairContext: ValidationRepairContext) {

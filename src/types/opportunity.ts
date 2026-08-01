@@ -31,7 +31,8 @@ export type OpportunityIntentionLevel = 'S' | 'A' | 'B' | 'C'
 
 export type InterviewRoundType = 'technical_basic' | 'project' | 'business' | 'hr' | 'manager' | 'other'
 
-export type InterviewRoundStatus = 'planned' | 'completed' | 'passed' | 'failed' | 'canceled'
+/** 面试轮次生命周期；面试结论由 result 单独表达，避免状态与结果重复。 */
+export type InterviewRoundStatus = 'planned' | 'completed' | 'canceled'
 
 export type InterviewRoundResult = 'pending' | 'passed' | 'failed' | 'unknown'
 
@@ -168,7 +169,7 @@ export type JobAnalysisResult = Pick<
 >
 
 /** 单次 Agent 执行状态；一次分析允许产生多次重试执行。 */
-export type AgentRunStatus = 'pending' | 'processing' | 'completed' | 'failed'
+export type AgentRunStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
 
 /** 保存模型调用时的 JD 与简历正文快照，不包含实体或版本 ID。 */
 export type JobAnalysisRunInput = {
@@ -178,13 +179,15 @@ export type JobAnalysisRunInput = {
 
 /** 不保存原生 Error 实例，保存可序列化、可查询的错误信息。 */
 export type AgentRunError = {
-  code: 'structured_output_validation_failed' | 'model_request_failed' | 'timeout' | 'rate_limited' | 'unknown'
+  code: AiModelErrorCode
   message: string
   retryable: boolean
   validationIssues?: Array<{
     path: Array<string | number>
     code: string
     message: string
+    /** 模型在该路径实际返回的值；字段完全缺失时不写入。 */
+    receivedValue?: unknown
   }>
 }
 
@@ -273,3 +276,4 @@ export type RequirementMatch = {
   risk: 'high' | 'medium' | 'low'
   suggestion: string | null
 }
+import type { AiModelErrorCode } from './ai'

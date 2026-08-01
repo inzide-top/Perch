@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "name": "formal-answer-example",
+      "runId": "00000000-0000-4000-8000-000000000000",
+      "expected": {
+        "inputClassification": "formal_answer",
+        "allowedActionTypes": ["ask_follow_up", "ask_next_topic"],
+        "pointResults": [
+          {
+            "pointKey": "example_point",
+            "allowedStatuses": ["covered", "partially_covered"],
+            "minimumScore": 50,
+            "maximumScore": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "clarification-example",
+      "runId": "00000000-0000-4000-8000-000000000000",
+      "candidateAnswerOverride": "我不太理解这个问题，可以换一种方式说明吗？",
+      "budgetProgressOverride": {
+        "remainingMainQuestions": 1,
+        "remainingTotalQuestions": 1
+      },
+      "expected": {
+        "inputClassification": "clarification_request",
+        "allowedActionTypes": ["clarify_current_question"]
+      }
+    }
+  ]
+}

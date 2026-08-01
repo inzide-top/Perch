@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { useRoute } from 'vue-router'
 import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.png'
 import perchMarkLightUrl from '@/assets/brand/perch-mark-light.png'
 
 const isExpanded = defineModel<boolean>('expanded', { required: true })
+const route = useRoute()
 
 const navigation = [
   { label: '首页', to: '/', icon: 'i-lucide-layout-dashboard' },
@@ -10,11 +12,15 @@ const navigation = [
   { label: '机会管理', to: '/opportunities', icon: 'i-lucide-briefcase-business' },
   { label: '求职策略', to: '/strategy', icon: 'i-lucide-compass' },
 ]
+
+function isNavigationActive(path: string) {
+  return route.path === path || route.path.startsWith(`${path}/`)
+}
 </script>
 
 <template>
   <aside
-    class="fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-[var(--app-border)] bg-[color-mix(in_srgb,var(--app-surface)_92%,transparent)] shadow-[12px_0_34px_rgb(15_23_42/6%)] backdrop-blur-xl transition-[width] duration-200 ease-out lg:block"
+    class="fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-[var(--app-border)] bg-[color-mix(in_srgb,var(--app-surface)_92%,transparent)] shadow-[12px_0_34px_rgb(15_23_42/6%)] backdrop-blur-xl transition-[width] [transition-duration:var(--duration-panel)] [transition-timing-function:var(--ease-panel)] lg:block"
     :class="isExpanded ? 'w-64' : 'w-16'"
   >
     <div class="absolute inset-y-0 top-0 left-1 w-16 px-2 py-3.5">
@@ -42,7 +48,7 @@ const navigation = [
     </div>
 
     <div
-      class="absolute inset-y-0 py-3.5 transition-[opacity,transform] duration-150 ease-out"
+      class="absolute inset-y-0 py-3.5 transition-[opacity,transform] [transition-duration:var(--duration-normal)] [transition-timing-function:var(--ease-out)]"
       :class="
         isExpanded
           ? 'left-16 w-48 translate-x-0 pr-3 opacity-100'
@@ -79,15 +85,18 @@ const navigation = [
         >
           <RouterLink
             :to="item.to"
-            class="relative flex h-10 items-center rounded-xl text-sm font-medium text-muted transition-[width,background-color,color,box-shadow] duration-150 hover:bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-            :class="isExpanded ? 'w-60' : 'w-12'"
-            active-class="sidebar-nav-active text-highlighted"
+            class="relative flex h-10 items-center rounded-xl text-sm font-medium text-muted transition-[width,background-color,color,box-shadow] [transition-duration:var(--duration-fast)] [transition-timing-function:var(--ease-out)] hover:bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            :class="[
+              isExpanded ? 'w-60' : 'w-12',
+              isNavigationActive(item.to) ? 'sidebar-nav-active text-highlighted' : '',
+            ]"
+            :aria-current="isNavigationActive(item.to) ? 'page' : undefined"
           >
             <span class="absolute left-0 top-0 flex h-10 w-12 items-center justify-center">
               <UIcon :name="item.icon" class="size-4 shrink-0" />
             </span>
             <span
-              class="absolute left-12 top-0 flex h-10 items-center overflow-hidden whitespace-nowrap transition-[opacity,transform] duration-150 ease-out"
+              class="absolute left-12 top-0 flex h-10 items-center overflow-hidden whitespace-nowrap transition-[opacity,transform] [transition-duration:var(--duration-normal)] [transition-timing-function:var(--ease-out)]"
               :class="isExpanded ? 'translate-x-0 opacity-100' : 'pointer-events-none -translate-x-1 opacity-0'"
             >
               {{ item.label }}
@@ -100,7 +109,7 @@ const navigation = [
         <UTooltip text="设置" :disabled="isExpanded" :content="{ side: 'right', sideOffset: 12 }">
           <RouterLink
             to="/settings"
-            class="relative flex h-10 items-center rounded-xl text-sm font-medium text-muted transition-[width,background-color,color,box-shadow] duration-150 hover:bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            class="relative flex h-10 items-center rounded-xl text-sm font-medium text-muted transition-[width,background-color,color,box-shadow] [transition-duration:var(--duration-fast)] [transition-timing-function:var(--ease-out)] hover:bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             :class="isExpanded ? 'w-60' : 'w-12'"
             active-class="sidebar-nav-active text-highlighted"
           >
@@ -108,7 +117,7 @@ const navigation = [
               <UIcon name="i-lucide-settings" class="size-4 shrink-0" />
             </span>
             <span
-              class="absolute left-12 top-0 flex h-10 items-center overflow-hidden whitespace-nowrap transition-[opacity,transform] duration-150 ease-out"
+              class="absolute left-12 top-0 flex h-10 items-center overflow-hidden whitespace-nowrap transition-[opacity,transform] [transition-duration:var(--duration-normal)] [transition-timing-function:var(--ease-out)]"
               :class="isExpanded ? 'translate-x-0 opacity-100' : 'pointer-events-none -translate-x-1 opacity-0'"
             >
               设置

@@ -7,9 +7,10 @@ import type {
   JobOpportunityStatus,
   OpportunityIntentionLevel,
 } from '@/types/opportunity'
+import type { ReviewDocumentSummary } from '@/types/review'
 import CityPicker from '@/components/CityPicker.vue'
 import { industryOptions } from '@/data/industryOptions'
-import type { InterviewRoundForm, OpportunityInfoForm, WrittenTestReviewForm } from '../types'
+import type { InterviewManagementTab, InterviewRoundForm, OpportunityInfoForm, WrittenTestReviewForm } from '../types'
 import InterviewReviewDrawer from './info/InterviewReviewDrawer.vue'
 import RoundEditDrawer from './info/RoundEditDrawer.vue'
 import WrittenTestReviewDrawer from './info/WrittenTestReviewDrawer.vue'
@@ -44,15 +45,21 @@ const props = defineProps<{
   canChangeWrittenTestFlow: boolean
   isTerminatingOpportunity: boolean
   isAddingInterviewRound: boolean
+  completingInterviewRoundId: string | null
+  cancelingInterviewRoundId: string | null
   isSavingWrittenTestReview: boolean
   isSavingRoundEdit: boolean
   deletingRoundActionId: string | null
   canOpenWrittenTestReview: boolean
   canOpenInterviewReview: boolean
+  canCreateInterviewSchedule: boolean
   terminationRoundOptions: { label: string; value: string }[]
   availableInterviewRoundTypeOptions: { label: string; value: InterviewRoundType }[]
   interviewRoundDateLabel: string
   writtenTestDateLabel: string
+  reviewDocuments: ReviewDocumentSummary[]
+  retryingReviewDocumentId: string | null
+  editingInterviewRound: InterviewRound | null
 }>()
 
 const emit = defineEmits<{
@@ -68,7 +75,9 @@ const emit = defineEmits<{
   saveWrittenTestReview: []
   openInterviewReviewDrawer: []
   closeInterviewReviewDrawer: []
-  addInterviewRound: []
+  addInterviewRound: [mode: InterviewManagementTab]
+  completeInterviewRound: [round: InterviewRound]
+  cancelInterviewRound: [round: InterviewRound]
   handleRoundDateSelect: [value: unknown]
   openRoundEditDrawer: [round: InterviewRound]
   confirmDeleteRound: [roundId: string]
@@ -76,6 +85,7 @@ const emit = defineEmits<{
   handleEditRoundDateSelect: [value: unknown]
   handleWrittenTestDateSelect: [value: unknown]
   saveRoundEdit: []
+  retryReviewDocument: [document: ReviewDocumentSummary]
 }>()
 
 const infoForm = defineModel<OpportunityInfoForm>('infoForm', { required: true })
@@ -90,6 +100,7 @@ const writtenTestReviewForm = defineModel<WrittenTestReviewForm>('writtenTestRev
 const writtenTestDatePopoverOpen = defineModel<boolean>('writtenTestDatePopoverOpen', { required: true })
 const writtenTestCalendarDate = defineModel<unknown>('writtenTestCalendarDate', { required: true })
 const isInterviewReviewDrawerOpen = defineModel<boolean>('isInterviewReviewDrawerOpen', { required: true })
+const interviewManagementTab = defineModel<InterviewManagementTab>('interviewManagementTab', { required: true })
 const roundForm = defineModel<InterviewRoundForm>('roundForm', { required: true })
 const roundDatePopoverOpen = defineModel<boolean>('roundDatePopoverOpen', { required: true })
 const roundCalendarDate = defineModel<unknown>('roundCalendarDate', { required: true })
@@ -115,7 +126,7 @@ function canOpenReviewFromStatus(status: JobOpportunityStatus) {
 
 function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
   if (status === 'written_test') return '笔试复盘'
-  if (status === 'interviewing') return '面试复盘'
+  if (status === 'interviewing') return '面试管理'
 
   return '复盘'
 }
@@ -351,13 +362,15 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
             修改 JD 信息不会自动更新现有匹配结果。如需应用最新岗位信息，请在机会列表中手动重新分析。
           </div>
 
-          <div class="grid gap-x-5 gap-y-3 md:grid-cols-3">
+          <div class="grid gap-x-5 gap-y-3 md:grid-cols-2">
             <UFormField label="公司名称">
               <UInput v-model="infoForm.company" class="w-full" />
             </UFormField>
             <UFormField label="岗位名称">
               <UInput v-model="infoForm.jobTitle" class="w-full" />
             </UFormField>
+          </div>
+          <div class="relative z-20">
             <UFormField label="Base 地址">
               <CityPicker v-model="infoForm.address" :max="5" panel-height-class="h-52" />
             </UFormField>
@@ -529,7 +542,7 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
                 class="interview-review-action-appear app-interactive-button"
                 @click="emit('openInterviewReviewDrawer')"
               >
-                面试复盘
+                面试管理
               </UButton>
               <UButton
                 v-if="canOpenWrittenTestReview"
@@ -569,29 +582,39 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
       :open="isWrittenTestReviewDrawerOpen"
       :saving="isSavingWrittenTestReview"
       :date-label="writtenTestDateLabel"
+      :review-document="reviewDocuments.find((document) => document.sourceType === 'written_test') ?? null"
+      :retrying-document-id="retryingReviewDocumentId"
       @close="emit('closeWrittenTestReviewDrawer')"
       @save="emit('saveWrittenTestReview')"
+      @retry="emit('retryReviewDocument', $event)"
       @select-date="emit('handleWrittenTestDateSelect', $event)"
     />
 
     <InterviewReviewDrawer
       v-model:form="roundForm"
+      v-model:active-tab="interviewManagementTab"
       v-model:date-popover-open="roundDatePopoverOpen"
       v-model:calendar-date="roundCalendarDate"
       v-model:deleting-round-id="deletingRoundId"
       :open="isInterviewReviewDrawerOpen"
       :opportunity="opportunity"
-      :status="infoForm.status"
-      :status-label-map="statusLabelMap"
       :round-type-options="availableInterviewRoundTypeOptions"
       :date-label="interviewRoundDateLabel"
       :adding="isAddingInterviewRound"
+      :completing-round-id="completingInterviewRoundId"
+      :canceling-round-id="cancelingInterviewRoundId"
+      :can-create-schedule="canCreateInterviewSchedule"
       :deleting-round-action-id="deletingRoundActionId"
+      :review-documents="reviewDocuments"
+      :retrying-document-id="retryingReviewDocumentId"
       @close="emit('closeInterviewReviewDrawer')"
-      @add="emit('addInterviewRound')"
+      @add="emit('addInterviewRound', $event)"
+      @complete="emit('completeInterviewRound', $event)"
+      @cancel="emit('cancelInterviewRound', $event)"
       @select-date="emit('handleRoundDateSelect', $event)"
       @edit="emit('openRoundEditDrawer', $event)"
       @delete="emit('confirmDeleteRound', $event)"
+      @retry="emit('retryReviewDocument', $event)"
     />
 
     <RoundEditDrawer
@@ -602,6 +625,7 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
       :saving="isSavingRoundEdit"
       :changed="hasRoundEditChanged"
       :round-type-options="availableInterviewRoundTypeOptions"
+      :round="editingInterviewRound"
       @close="emit('closeRoundEditDrawer')"
       @save="emit('saveRoundEdit')"
       @select-date="emit('handleEditRoundDateSelect', $event)"

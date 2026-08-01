@@ -29,6 +29,7 @@ const { resumes, versions, currentResume, currentVersion, currentResumeVersions,
   storeToRefs(resumeStore)
 
 const editorMode = ref<EditorMode | null>(null)
+const showWorkspaceSkeleton = computed(() => isLoading.value && editorMode.value === null)
 const editingResumeId = ref<string | null>(null)
 const editorInitialDraft = ref<ResumeDraft | null>(null)
 const isEditorDirty = ref(false)
@@ -416,7 +417,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="w-full">
-    <ResumeWorkspaceSkeleton v-if="isLoading && editorMode === null" />
+    <ResumeWorkspaceSkeleton v-if="showWorkspaceSkeleton" />
 
     <UCard
       v-else-if="loadError && editorMode === null"
@@ -475,7 +476,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="grid items-start gap-6 xl:grid-cols-[minmax(18rem,0.85fr)_minmax(0,1.15fr)]">
-        <section>
+        <section class="xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:pr-1">
           <div class="mb-3 flex items-center justify-between gap-3">
             <h2 class="app-section-title">简历主线</h2>
             <UBadge color="neutral" variant="subtle" :label="`${resumes.length} 份`" />
@@ -486,12 +487,8 @@ onBeforeUnmount(() => {
               v-for="resume in resumes"
               :key="resume.id"
               type="button"
-              class="app-card app-card-interactive w-full p-4 text-left"
-              :class="
-                currentResume?.id === resume.id
-                  ? 'border-primary bg-[color-mix(in_srgb,var(--app-accent)_10%,var(--app-surface))]'
-                  : ''
-              "
+              class="resume-mainline-card app-card app-card-interactive w-full p-4 text-left"
+              :class="{ 'is-selected': currentResume?.id === resume.id }"
               @click="resumeStore.selectResume(resume.id)"
             >
               <div class="flex items-start justify-between gap-3">
@@ -511,7 +508,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section v-if="currentResume && currentVersion" class="app-panel p-5">
-          <div class="flex items-start justify-between gap-4">
+          <div class="top-0 z-10 -mx-1 flex items-start justify-between gap-4 bg-[var(--app-surface)] px-1 pb-3">
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <p class="text-sm text-muted">当前快照</p>
@@ -546,7 +543,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="app-panel-muted mt-5 p-4">
+          <div class="app-panel-muted mt-2 p-4">
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
                 <h3 class="text-sm font-semibold text-highlighted">版本记录</h3>
@@ -575,7 +572,10 @@ onBeforeUnmount(() => {
                     type="button"
                     size="sm"
                     color="neutral"
-                    :variant="currentVersion.id === version.id ? 'solid' : 'outline'"
+                    variant="outline"
+                    class="resume-version-tag"
+                    :class="{ 'is-current': currentVersion.id === version.id }"
+                    :aria-pressed="currentVersion.id === version.id"
                     @click="resumeStore.selectVersion(version.id)"
                   >
                     版本 {{ version.versionNumber }} · {{ formatDate(version.createdAt) }}
@@ -622,44 +622,38 @@ onBeforeUnmount(() => {
             </Transition>
           </div>
 
-          <div class="mt-6 grid gap-4 md:grid-cols-2">
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">姓名</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">{{ currentVersion.content.name }}</p>
+          <dl class="app-fact-grid mt-6 px-2">
+            <div>
+              <dt>姓名</dt>
+              <dd>{{ currentVersion.content.name }}</dd>
             </div>
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">意向城市</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">
-                {{ formatCityList(currentVersion.content.address) || '未填写' }}
-              </p>
+            <div>
+              <dt>意向城市</dt>
+              <dd>{{ formatCityList(currentVersion.content.address) || '未填写' }}</dd>
             </div>
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">学历</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">
-                {{ educationLevelLabels[currentVersion.content.educationLevel ?? 'bachelor'] }}
-              </p>
+            <div>
+              <dt>学历</dt>
+              <dd>{{ educationLevelLabels[currentVersion.content.educationLevel ?? 'bachelor'] }}</dd>
             </div>
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">毕业/在读学校 / 专业</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">
-                {{ currentVersion.content.school || '未填写' }}
-                <span v-if="currentVersion.content.major"> · {{ currentVersion.content.major }}</span>
-              </p>
+            <div>
+              <dt>毕业/在读学校 / 专业</dt>
+              <dd>
+                {{ currentVersion.content.school || '未填写'
+                }}<span v-if="currentVersion.content.major"> · {{ currentVersion.content.major }}</span>
+              </dd>
             </div>
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">毕业时间</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">
-                {{ currentVersion.content.graduationYear || '未填写' }}
-              </p>
+            <div>
+              <dt>毕业时间</dt>
+              <dd>{{ currentVersion.content.graduationYear || '未填写' }}</dd>
             </div>
-            <div class="app-card px-4 py-3">
-              <p class="text-xs text-muted">求职身份 / 当前状态</p>
-              <p class="mt-1 text-sm font-medium text-highlighted">
-                {{ jobSearchIdentityLabels[currentVersion.content.jobSearchIdentity ?? 'experienced'] }}
-                · {{ currentStatusLabels[currentVersion.content.currentStatus ?? 'employed'] }}
-              </p>
+            <div>
+              <dt>求职身份 / 当前状态</dt>
+              <dd>
+                {{ jobSearchIdentityLabels[currentVersion.content.jobSearchIdentity ?? 'experienced'] }} ·
+                {{ currentStatusLabels[currentVersion.content.currentStatus ?? 'employed'] }}
+              </dd>
             </div>
-          </div>
+          </dl>
 
           <div class="mt-5 space-y-5">
             <div
