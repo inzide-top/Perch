@@ -1,0 +1,2 @@
+ALTER TABLE "job_opportunities" ADD COLUMN "dedupe_fingerprint" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "job_opportunities_user_dedupe_fingerprint_unique" ON "job_opportunities" USING btree ("user_id","dedupe_fingerprint");

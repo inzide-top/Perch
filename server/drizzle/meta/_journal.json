@@ -29,6 +29,55 @@
       "when": 1785410543415,
       "tag": "0003_curious_firebird",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785542400000,
+      "tag": "0004_calm_moondragon",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785542400001,
+      "tag": "0005_lying_james_howlett",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785550755859,
+      "tag": "0006_faithful_thunderbolts",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785557162569,
+      "tag": "0007_nosy_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785565475836,
+      "tag": "0008_elite_madrox",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785566172140,
+      "tag": "0009_curly_alice",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785575280038,
+      "tag": "0010_slow_silvermane",
+      "breakpoints": true
     }
   ]
 }

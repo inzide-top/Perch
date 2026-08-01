@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import type {
   InterviewRoundType,
@@ -12,10 +12,12 @@ import type {
 } from '@/types/opportunity'
 import { useOpportunityStore } from '@/stores'
 import { ApiRequestError } from '@/services/http'
+import { getRecommendationClass, getRecommendationLabel } from '@/shared/opportunity/analysisPresentation'
 import ChatSection from './components/ChatSection.vue'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
 import MockInterviewSection from './components/MockInterviewSection.vue'
+import OpportunityDetailSkeleton from './components/OpportunityDetailSkeleton.vue'
 import type {
   InterviewRoundForm,
   ChatItem,
@@ -120,10 +122,22 @@ const isAddingInterviewRound = ref(false)
 const isSavingWrittenTestReview = ref(false)
 const isSavingRoundEdit = ref(false)
 const deletingRoundActionId = ref<string | null>(null)
+const isUnsavedPreferenceLeaveDialogOpen = ref(false)
+let pendingInternalLeaveAction: (() => void) | null = null
+let pendingRouteLeaveResolver: ((shouldLeave: boolean) => void) | null = null
 
 const opportunityId = computed(() => String(route.params.id ?? ''))
 const opportunity = computed(() => opportunities.value.find((item) => item.id === opportunityId.value) ?? null)
-const analysis = computed(() => analyses.value.find((item) => item.jobOpportunityId === opportunityId.value) ?? null)
+const analysis = computed(() => analyses.value.find((item) => item.opportunityId === opportunityId.value) ?? null)
+const hasLoadedOpportunityDetail = computed(() => {
+  return Boolean(opportunityId.value) && opportunityStore.hasOpportunityDetail(opportunityId.value)
+})
+const shouldShowDetailSkeleton = computed(() => isDetailLoading.value && !hasLoadedOpportunityDetail.value)
+const analysisModelName = computed(() => {
+  const task = opportunityStore.analysisTasks.find((item) => item.opportunityId === opportunityId.value)
+
+  return task?.status === 'completed' ? task.modelName : null
+})
 const isChatPage = computed(() => String(activeNavKey.value).startsWith('chat-'))
 const activeChat = computed(() => {
   if (!isChatPage.value) return null
@@ -324,6 +338,51 @@ function goBack() {
   void router.push({ name: 'opportunities' })
 }
 
+function shouldConfirmUnsavedPreferenceLeave() {
+  return activeNavKey.value === 'info' && hasOpportunityMetaChanged.value && !isSavingOpportunityMeta.value
+}
+
+function navigateDetailSection(navKey: DetailNavKey) {
+  if (navKey === activeNavKey.value) return
+
+  if (!shouldConfirmUnsavedPreferenceLeave()) {
+    activeNavKey.value = navKey
+    return
+  }
+
+  pendingInternalLeaveAction = () => {
+    activeNavKey.value = navKey
+  }
+  isUnsavedPreferenceLeaveDialogOpen.value = true
+}
+
+function cancelUnsavedPreferenceLeave() {
+  pendingInternalLeaveAction = null
+  isUnsavedPreferenceLeaveDialogOpen.value = false
+  pendingRouteLeaveResolver?.(false)
+  pendingRouteLeaveResolver = null
+}
+
+function confirmUnsavedPreferenceLeave() {
+  const internalLeaveAction = pendingInternalLeaveAction
+  const routeLeaveResolver = pendingRouteLeaveResolver
+
+  syncInfoForm()
+  pendingInternalLeaveAction = null
+  pendingRouteLeaveResolver = null
+  isUnsavedPreferenceLeaveDialogOpen.value = false
+
+  internalLeaveAction?.()
+  routeLeaveResolver?.(true)
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!shouldConfirmUnsavedPreferenceLeave()) return
+
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 function normalizeCityList(cities: string[] | string | undefined) {
   if (Array.isArray(cities)) return cities
   if (typeof cities === 'string' && cities.trim()) return [cities.trim()]
@@ -337,12 +396,17 @@ function formatCityList(cities: string[] | string | undefined) {
   return normalizedCities.length ? normalizedCities.join('、') : ''
 }
 
-async function loadOpportunityDetail() {
+async function loadOpportunityDetail(force = false) {
   if (!opportunityId.value) return
 
-  isDetailLoading.value = true
-  await opportunityStore.loadOpportunityDetail(opportunityId.value)
-  isDetailLoading.value = false
+  const shouldShowLoading = force || !opportunityStore.hasOpportunityDetail(opportunityId.value)
+  if (shouldShowLoading) isDetailLoading.value = true
+
+  try {
+    await opportunityStore.loadOpportunityDetail(opportunityId.value, { force })
+  } finally {
+    if (shouldShowLoading) isDetailLoading.value = false
+  }
 }
 
 async function saveInfo() {
@@ -410,7 +474,7 @@ async function changeOpportunityStatus(status: JobOpportunityStatus) {
     toast.add({ title: `已更新为${statusLabelMap[status]}`, color: 'success', icon: 'i-lucide-circle-check' })
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 409) {
-      await loadOpportunityDetail()
+      await loadOpportunityDetail(true)
       toast.add({ title: '状态已同步', description: '该机会刚刚被其他操作更新，请按最新状态继续。', color: 'warning' })
     } else {
       showRequestError('更新机会状态失败', error)
@@ -737,37 +801,35 @@ function openReviewPanelFromStatus(status: JobOpportunityStatus) {
 }
 
 function createChat() {
-  const nextId = Math.max(0, ...chatItems.value.map((chat) => chat.id)) + 1
+  const create = () => {
+    const nextId = Math.max(0, ...chatItems.value.map((chat) => chat.id)) + 1
 
-  chatItems.value.unshift({
-    id: nextId,
-    title: `新对话 ${nextId}`,
-    preview: '围绕当前 JD 和简历继续提问',
+    chatItems.value.unshift({
+      id: nextId,
+      title: `新对话 ${nextId}`,
+      preview: '围绕当前 JD 和简历继续提问',
+    })
+    activeNavKey.value = `chat-${nextId}`
+  }
+
+  if (!shouldConfirmUnsavedPreferenceLeave()) {
+    create()
+    return
+  }
+
+  pendingInternalLeaveAction = create
+  isUnsavedPreferenceLeaveDialogOpen.value = true
+}
+
+onBeforeRouteLeave(() => {
+  if (!shouldConfirmUnsavedPreferenceLeave()) return true
+
+  return new Promise<boolean>((resolve) => {
+    pendingInternalLeaveAction = null
+    pendingRouteLeaveResolver = resolve
+    isUnsavedPreferenceLeaveDialogOpen.value = true
   })
-  activeNavKey.value = `chat-${nextId}`
-}
-
-function getRecommendationLabel(value: string | undefined) {
-  const map: Record<string, string> = {
-    strong_match: '强匹配',
-    worth_trying: '值得投递',
-    risky: '谨慎投递',
-    not_recommended: '不建议',
-  }
-
-  return value ? (map[value] ?? value) : '待分析'
-}
-
-function getRecommendationBadgeClass(value: string | undefined) {
-  const map: Record<string, string> = {
-    strong_match: 'is-strong-match',
-    worth_trying: 'is-worth-trying',
-    risky: 'is-risky',
-    not_recommended: 'is-not-recommended',
-  }
-
-  return `app-recommendation-badge ${value ? (map[value] ?? 'is-not-recommended') : 'is-not-recommended'}`
-}
+})
 
 watch(opportunity, syncInfoForm, { immediate: true })
 watch(
@@ -785,10 +847,13 @@ watch(isTerminatePopoverOpen, (isOpen) => {
   terminationNewRoundTitle.value = ''
   terminationReasonNote.value = ''
 })
+
 onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
   void loadOpportunityDetail()
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   if (isInterviewReviewDrawerOpen.value || isWrittenTestReviewDrawerOpen.value || isRoundEditDrawerOpen.value) {
     roundDrawerLockCount.value = 1
     unlockRoundDrawerScroll()
@@ -797,12 +862,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-if="isDetailLoading && !opportunity" class="app-panel-muted p-10 text-center">
-    <UIcon name="i-lucide-loader-circle" class="mx-auto size-5 animate-spin text-muted" />
-    <p class="mt-3 text-sm text-muted">正在加载机会详情...</p>
-  </section>
+  <OpportunityDetailSkeleton v-if="shouldShowDetailSkeleton" />
 
-  <section v-else-if="loadError && !opportunity" class="app-empty-state p-10 text-center">
+  <section v-else-if="loadError && !hasLoadedOpportunityDetail" class="app-empty-state p-10 text-center">
     <p class="text-sm text-error">{{ loadError }}</p>
     <UButton
       class="mt-4"
@@ -843,16 +905,21 @@ onBeforeUnmount(() => {
           <UBadge
             v-if="analysis"
             variant="subtle"
-            :class="getRecommendationBadgeClass(analysis.recommendation)"
+            :class="`app-recommendation-badge ${getRecommendationClass(analysis.recommendation)}`"
             :label="`${analysis.matchScore} 分 · ${getRecommendationLabel(analysis.recommendation)}`"
           />
         </div>
-        <p class="mt-1 text-sm text-muted">{{ opportunity.jobTitle }}</p>
+        <div class="flex items-center">
+          <p class="mt-1 text-sm text-muted">{{ opportunity.jobTitle }}</p>
+          <p v-if="analysisModelName" class="ml-auto text-xs text-muted">
+            当前分析结果来自 {{ analysisModelName }} 模型
+          </p>
+        </div>
       </div>
     </div>
 
-    <div class="grid min-h-[calc(100vh-9.5rem)] items-start gap-5 px-4 py-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:px-6">
-      <aside class="app-panel app-workspace-nav min-h-[calc(100vh-9.5rem)] p-3 backdrop-blur-xl lg:sticky lg:top-20">
+    <div class="grid min-h-[calc(100vh-6.5rem)] items-start gap-5 px-4 py-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:px-6">
+      <aside class="app-panel app-workspace-nav min-h-[calc(100vh-6.5rem)] p-3 backdrop-blur-xl lg:sticky lg:top-20">
         <div class="space-y-1">
           <button
             v-for="item in fixedNavItems"
@@ -864,7 +931,7 @@ onBeforeUnmount(() => {
                 ? 'bg-primary/10 text-highlighted shadow-[inset_3px_0_0_var(--app-accent)]'
                 : 'text-muted hover:bg-[color-mix(in_srgb,var(--app-accent)_8%,transparent)] hover:text-highlighted'
             "
-            @click="activeNavKey = item.key"
+            @click="navigateDetailSection(item.key)"
           >
             <UIcon :name="item.icon" class="size-4 shrink-0" />
             <span class="min-w-0">
@@ -899,7 +966,7 @@ onBeforeUnmount(() => {
                   ? 'bg-[color-mix(in_srgb,var(--app-accent)_10%,transparent)] text-highlighted'
                   : 'text-muted hover:bg-elevated hover:text-highlighted'
               "
-              @click="activeNavKey = `chat-${chat.id}`"
+              @click="navigateDetailSection(`chat-${chat.id}`)"
             >
               <span class="block truncate text-sm font-medium">{{ chat.title }}</span>
               <span class="mt-0.5 block truncate text-xs opacity-75">{{ chat.preview }}</span>
@@ -999,6 +1066,35 @@ onBeforeUnmount(() => {
       返回机会管理
     </UButton>
   </section>
+
+  <Teleport to="body">
+    <div
+      v-if="isUnsavedPreferenceLeaveDialogOpen"
+      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="unsaved-preference-dialog-title"
+    >
+      <div class="app-panel w-full max-w-sm p-5 shadow-xl">
+        <div class="flex items-start gap-3">
+          <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
+            <UIcon name="i-lucide-circle-alert" class="size-4" />
+          </div>
+          <div class="min-w-0">
+            <h2 id="unsaved-preference-dialog-title" class="text-base font-semibold text-highlighted">
+              有未保存的偏好改动
+            </h2>
+            <p class="mt-2 text-sm leading-6 text-muted">离开后本次求职偏好与备注改动将不会保存，是否确认离开？</p>
+          </div>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-2">
+          <UButton type="button" color="neutral" variant="ghost" @click="cancelUnsavedPreferenceLeave"> 取消 </UButton>
+          <UButton type="button" color="warning" @click="confirmUnsavedPreferenceLeave">确认离开</UButton>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>

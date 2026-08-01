@@ -3,8 +3,9 @@ import Fastify from 'fastify'
 import { ZodError } from 'zod'
 import { healthRoute } from './routes/health.route'
 import { opportunityRoute } from './routes/opportunity.route'
+import { agentRunRoute } from './routes/agent-run.route'
 import { resumeRoute } from './routes/resume.route'
-import { OpportunityNotFoundError } from './services/opportunity.service'
+import { DuplicateJobOpportunityError, OpportunityNotFoundError } from './services/opportunity.service'
 import { ResumeNotFoundError } from './services/resume.service'
 import { JobAnalysisNotFoundError } from './services/job-analysis.service'
 
@@ -27,9 +28,21 @@ app.setErrorHandler((error, request, reply) => {
     })
   }
 
-  if (error instanceof ResumeNotFoundError || error instanceof OpportunityNotFoundError || error instanceof JobAnalysisNotFoundError) {
+  if (
+    error instanceof ResumeNotFoundError ||
+    error instanceof OpportunityNotFoundError ||
+    error instanceof JobAnalysisNotFoundError
+  ) {
     return reply.status(404).send({
       message: error.message,
+    })
+  }
+
+  if (error instanceof DuplicateJobOpportunityError) {
+    return reply.status(error.statusCode).send({
+      message: error.message,
+      code: error.code,
+      details: error.details,
     })
   }
 
@@ -54,3 +67,4 @@ await app.register(cors, {
 await app.register(healthRoute, { prefix: '/api' })
 await app.register(opportunityRoute, { prefix: '/api' })
 await app.register(resumeRoute, { prefix: '/api' })
+await app.register(agentRunRoute, { prefix: '/api' })

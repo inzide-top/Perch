@@ -67,7 +67,7 @@ export const jobAnalysisResultSchema = z
         matchStatus: matchStatusSchema,
         importance: z.enum(['must_have', 'nice_to_have']),
         risk: levelSchema,
-        suggestion: optionalText,
+        suggestion: requiredText.nullable(),
       }),
     ),
     strengths: z.array(analysisItemSchema),
@@ -126,6 +126,8 @@ export const startJobAnalysisInputSchema = z
   .object({
     resumeId: z.string().uuid(),
     resumeVersionId: z.string().uuid(),
+    /** 用户从更多操作手动触发时，跳过已有结果复用并刷新缓存。 */
+    force: z.boolean().optional().default(false),
     modelConnection: modelConnectionSchema,
   })
   .strict()

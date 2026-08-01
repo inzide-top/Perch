@@ -709,8 +709,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 :deep(.city-picker-trigger) {
-  height: 33px !important;
-  min-height: 33px !important;
+  height: 32px !important;
+  min-height: 32px !important;
   border-color: var(--ui-border-accented);
+  border-radius: calc(var(--ui-radius) * 1.5);
 }
 </style>

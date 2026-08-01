@@ -25,7 +25,7 @@ defineProps<{
         </p>
       </div>
       <div class="ml-auto max-w-[82%] rounded-2xl border border-primary/30 bg-primary/10 p-4">
-        <p class="text-sm leading-6 text-highlighted">帮我围绕 Bilibili 这个岗位准备项目面。</p>
+        <p class="text-sm leading-6 text-highlighted">帮我围绕当前岗位准备一轮项目面试。</p>
       </div>
     </div>
 

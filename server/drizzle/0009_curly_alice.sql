@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "job_analyses_active_source_fingerprint_unique" ON "job_analyses" USING btree ("input_fingerprint") WHERE "source_analysis_id" IS NULL AND "status" IN ('pending', 'processing');

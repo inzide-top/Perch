@@ -1,8 +1,14 @@
 import type { FastifyPluginAsync } from 'fastify'
-import { interviewRoundParamsSchema, opportunityIdParamsSchema } from '../schemas/opportunity.schema'
+import {
+  interviewRoundParamsSchema,
+  jobAnalysisProgressQuerySchema,
+  jobOpportunityListQuerySchema,
+  opportunityIdParamsSchema,
+} from '../schemas/opportunity.schema'
 import {
   addInterviewRound,
   createJobOpportunity,
+  deleteJobOpportunity,
   deleteInterviewRound,
   getJobOpportunities,
   getJobOpportunityById,
@@ -12,7 +18,7 @@ import {
   updateJobOpportunityStatus,
   updateWrittenTestReview,
 } from '../services/opportunity.service'
-import { getJobAnalysis, startJobAnalysis } from '../services/job-analysis.service'
+import { getJobAnalyses, startJobAnalysis } from '../services/job-analysis.service'
 
 function parseOpportunityId(params: unknown) {
   return opportunityIdParamsSchema.parse(params).opportunityId
@@ -29,28 +35,26 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
     return reply.status(201).send(result)
   })
 
-  app.get<{ Params: { opportunityId: string } }>(
-    '/opportunities/:opportunityId/analysis',
+  app.get<{ Querystring: { opportunityIds?: string; includeResult?: string } }>(
+    '/opportunities/analyses',
     async (request, reply) => {
-      const opportunityId = parseOpportunityId(request.params)
-      const result = await getJobAnalysis(opportunityId)
+      const { opportunityIds, includeResult } = jobAnalysisProgressQuerySchema.parse(request.query)
+      const result = await getJobAnalyses(opportunityIds, { includeResult })
 
       return reply.status(200).send(result)
     },
   )
 
-  app.post<{ Params: { opportunityId: string } }>(
-    '/opportunities/:opportunityId/analysis',
-    async (request, reply) => {
-      const opportunityId = parseOpportunityId(request.params)
-      const result = await startJobAnalysis(opportunityId, request.body)
+  app.post<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId/analysis', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await startJobAnalysis(opportunityId, request.body)
 
-      return reply.status(202).send(result)
-    },
-  )
+    return reply.status(202).send(result)
+  })
 
-  app.get('/opportunities', async (_, reply) => {
-    const result = await getJobOpportunities()
+  app.get('/opportunities', async (request, reply) => {
+    const filters = jobOpportunityListQuerySchema.parse(request.query)
+    const result = await getJobOpportunities(filters)
 
     return reply.status(200).send(result)
   })
@@ -58,6 +62,13 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
     const opportunityId = parseOpportunityId(request.params)
     const result = await getJobOpportunityById(opportunityId)
+
+    return reply.status(200).send(result)
+  })
+
+  app.delete<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
+    const opportunityId = parseOpportunityId(request.params)
+    const result = await deleteJobOpportunity(opportunityId)
 
     return reply.status(200).send(result)
   })
@@ -116,10 +127,13 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
     },
   )
 
-  app.post<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId/termination', async (request, reply) => {
-    const opportunityId = parseOpportunityId(request.params)
-    const result = await terminateJobOpportunity(opportunityId, request.body)
+  app.post<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/termination',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await terminateJobOpportunity(opportunityId, request.body)
 
-    return reply.status(200).send(result)
-  })
+      return reply.status(200).send(result)
+    },
+  )
 }

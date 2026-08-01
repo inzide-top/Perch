@@ -1,42 +1,28 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { JobAnalysis } from '@/types/opportunity'
+import {
+  getRecommendationClass,
+  getRecommendationLabel,
+  getScoreClass,
+  getScoreDimensionLabel,
+} from '@/shared/opportunity/analysisPresentation'
 
-defineProps<{
+const props = defineProps<{
   analysis: JobAnalysis | null
 }>()
 
-function getRecommendationLabel(value: string | undefined) {
-  const map: Record<string, string> = {
-    strong_match: '强匹配',
-    worth_trying: '值得投递',
-    risky: '谨慎投递',
-    not_recommended: '不建议',
-  }
-
-  return value ? (map[value] ?? value) : '待分析'
-}
-
-function getRecommendationBadgeClass(value: string | undefined) {
-  const map: Record<string, string> = {
-    strong_match: 'is-strong-match',
-    worth_trying: 'is-worth-trying',
-    risky: 'is-risky',
-    not_recommended: 'is-not-recommended',
-  }
-
-  return `app-recommendation-badge ${value ? (map[value] ?? 'is-not-recommended') : 'is-not-recommended'}`
-}
-
-function getRecommendationTextClass(value: string | undefined) {
-  const map: Record<string, string> = {
-    strong_match: 'is-strong-match',
-    worth_trying: 'is-worth-trying',
-    risky: 'is-risky',
-    not_recommended: 'is-not-recommended',
-  }
-
-  return `app-recommendation-text ${value ? (map[value] ?? 'is-not-recommended') : 'is-not-recommended'}`
-}
+const levelOrder = { high: 0, medium: 1, low: 2 } as const
+const sortedGaps = computed(() => {
+  return [...(props.analysis?.gaps ?? [])].sort((current, next) => {
+    return levelOrder[current.level] - levelOrder[next.level]
+  })
+})
+const sortedResumeSuggestions = computed(() => {
+  return [...(props.analysis?.resumeSuggestions ?? [])].sort((current, next) => {
+    return levelOrder[current.priority] - levelOrder[next.priority]
+  })
+})
 
 function getLevelLabel(value: string) {
   const map: Record<string, string> = {
@@ -77,14 +63,6 @@ function getPriorityColor(value: string) {
 
   return map[value] ?? 'neutral'
 }
-
-function getScoreMetricClass(score: number) {
-  if (score >= 90) return 'app-score-metric is-score-excellent'
-  if (score > 60) return 'app-score-metric is-score-good'
-  if (score > 30) return 'app-score-metric is-score-medium'
-
-  return 'app-score-metric is-score-low'
-}
 </script>
 
 <template>
@@ -94,18 +72,18 @@ function getScoreMetricClass(score: number) {
         <p class="text-sm text-muted">匹配度评分</p>
         <p
           class="mt-3 text-5xl font-semibold tracking-tight"
-          :class="getRecommendationTextClass(analysis?.recommendation)"
+          :class="`app-recommendation-text ${getRecommendationClass(analysis?.recommendation)}`"
         >
           {{ analysis?.matchScore ?? '--' }}
         </p>
         <UBadge
           class="mt-3"
           variant="subtle"
-          :class="getRecommendationBadgeClass(analysis?.recommendation)"
+          :class="`app-recommendation-badge ${getRecommendationClass(analysis?.recommendation)}`"
           :label="getRecommendationLabel(analysis?.recommendation)"
         />
         <p class="mt-4 text-xs leading-5 text-muted">
-          当前评分来自 mock 分析结果。后续接入后端 AI 后，这里会展示真实生成结果。
+          评分根据当前简历版本与岗位要求综合计算，建议结合各维度证据一并判断。
         </p>
       </div>
 
@@ -118,13 +96,15 @@ function getScoreMetricClass(score: number) {
     <div class="grid gap-4 lg:grid-cols-3">
       <div v-for="item in analysis?.scoreBreakdown ?? []" :key="item.key" class="app-card p-4">
         <div class="flex items-center justify-between gap-3">
-          <p class="text-sm font-medium text-highlighted">{{ item.label }}</p>
-          <span class="text-sm font-semibold" :class="getScoreMetricClass(item.score)">{{ item.score }}</span>
+          <p class="text-sm font-medium text-highlighted">{{ getScoreDimensionLabel(item.key) }}</p>
+          <span class="app-score-text text-sm font-semibold" :class="getScoreClass(item.score)">
+            {{ item.score }}
+          </span>
         </div>
         <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-elevated">
           <div
-            class="h-full rounded-full"
-            :class="getScoreMetricClass(item.score)"
+            class="app-score-bar h-full rounded-full"
+            :class="getScoreClass(item.score)"
             :style="{ width: `${item.score}%` }"
           />
         </div>
@@ -146,7 +126,7 @@ function getScoreMetricClass(score: number) {
       <section class="app-panel p-5">
         <h2 class="app-section-title">风险与短板</h2>
         <div class="mt-4 space-y-3">
-          <article v-for="item in analysis?.gaps ?? []" :key="item.title" class="app-panel-muted p-3">
+          <article v-for="item in sortedGaps" :key="item.title" class="app-panel-muted p-3">
             <div class="flex items-start justify-between gap-3">
               <p class="text-sm font-medium text-highlighted">{{ item.title }}</p>
               <UBadge :color="getRiskColor(item.level)" variant="subtle" :label="getLevelLabel(item.level)" />
@@ -160,7 +140,7 @@ function getScoreMetricClass(score: number) {
     <section class="app-panel p-5">
       <h2 class="app-section-title">简历优化建议</h2>
       <div class="mt-4 grid gap-3 lg:grid-cols-2">
-        <article v-for="suggestion in analysis?.resumeSuggestions ?? []" :key="suggestion.title" class="app-card p-4">
+        <article v-for="suggestion in sortedResumeSuggestions" :key="suggestion.title" class="app-card p-4">
           <div class="flex items-start justify-between gap-3">
             <p class="text-sm font-medium text-highlighted">{{ suggestion.title }}</p>
             <UBadge

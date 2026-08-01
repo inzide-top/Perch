@@ -6,8 +6,8 @@ const settingsStoreStorageKey = 'agent-seek-employment:settings-store'
 type SettingsState = AppSettings
 
 const defaultLlmSettings: LlmConnectionSettings = {
-  baseUrl: 'https://api.deepseek.com',
-  modelName: 'deepseek-chat',
+  baseUrl: '',
+  modelName: '',
   apiKey: '',
 }
 

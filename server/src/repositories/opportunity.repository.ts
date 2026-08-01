@@ -16,6 +16,7 @@ export type JobOpportunityRecord = Omit<
   'writtenTestReview' | 'interviewRounds' | 'statusHistory' | 'termination'
 > & {
   userId: string
+  dedupeFingerprint: string | null
   writtenTestScheduledAt: string | null
   writtenTestReviewNote: string | null
   writtenTestReviewedAt: string | null
@@ -38,6 +39,7 @@ function toJobOpportunityInsertValues(opportunity: JobOpportunityRecord) {
     userId: opportunity.userId,
     company: opportunity.company,
     jobTitle: opportunity.jobTitle,
+    dedupeFingerprint: opportunity.dedupeFingerprint,
     address: opportunity.address ?? [],
     introduction: opportunity.introduction,
     description: opportunity.description,
@@ -58,6 +60,7 @@ function toJobOpportunityUpdateValues(opportunity: JobOpportunityRecord) {
   return {
     company: opportunity.company,
     jobTitle: opportunity.jobTitle,
+    dedupeFingerprint: opportunity.dedupeFingerprint,
     address: opportunity.address ?? [],
     introduction: opportunity.introduction,
     description: opportunity.description,
@@ -83,6 +86,7 @@ function toJobOpportunityRecord(row: JobOpportunityRow): JobOpportunityRecord {
     userId: row.userId,
     company: row.company,
     jobTitle: row.jobTitle,
+    dedupeFingerprint: row.dedupeFingerprint,
     address: row.address,
     introduction: row.introduction,
     description: row.description,
@@ -163,6 +167,15 @@ export class DrizzleOpportunityRepository {
       .where(eq(jobOpportunities.id, opportunity.id))
   }
 
+  async deleteOpportunityForUser(opportunityId: string, userId: string): Promise<string | null> {
+    const [deletedOpportunity] = await db
+      .delete(jobOpportunities)
+      .where(and(eq(jobOpportunities.id, opportunityId), eq(jobOpportunities.userId, userId)))
+      .returning({ id: jobOpportunities.id })
+
+    return deletedOpportunity?.id ?? null
+  }
+
   async updateOpportunityWithStatusHistory(
     opportunity: JobOpportunityRecord,
     statusHistory: OpportunityStatusHistoryRecord,
@@ -232,6 +245,19 @@ export class DrizzleOpportunityRepository {
 
   async findOpportunityById(opportunityId: string): Promise<JobOpportunityRecord | null> {
     const [row] = await db.select().from(jobOpportunities).where(eq(jobOpportunities.id, opportunityId)).limit(1)
+
+    return row ? toJobOpportunityRecord(row) : null
+  }
+
+  async findOpportunityByDedupeFingerprint(
+    userId: string,
+    dedupeFingerprint: string,
+  ): Promise<JobOpportunityRecord | null> {
+    const [row] = await db
+      .select()
+      .from(jobOpportunities)
+      .where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.dedupeFingerprint, dedupeFingerprint)))
+      .limit(1)
 
     return row ? toJobOpportunityRecord(row) : null
   }

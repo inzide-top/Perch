@@ -16,7 +16,6 @@ app.use(ui)
 void useResumeStore(pinia).loadFromApi()
 const opportunityStore = useOpportunityStore(pinia)
 opportunityStore.hydrateFromStorage()
-void opportunityStore.loadOpportunities()
 useSettingsStore(pinia).hydrateFromStorage()
 
 app.mount('#app')

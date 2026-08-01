@@ -3,18 +3,30 @@ import type {
   InterviewRoundResult,
   InterviewRoundStatus,
   InterviewRoundType,
+  JobAnalysisListSummary,
   JobOpportunity,
   JobOpportunityStatus,
   OpportunityIntentionLevel,
   OpportunityTerminationReasonCode,
   WrittenTestReview,
 } from '@/types/opportunity'
-import { request } from './http'
+import type { AnalysisRecommendation } from '@/shared/opportunity/analysisPresentation'
+import type { OpportunityRegion } from '@/shared/opportunity/geography'
+import { ApiRequestError, request } from './http'
 
 export type JobOpportunityListItem = Pick<
   JobOpportunity,
   'id' | 'company' | 'jobTitle' | 'address' | 'status' | 'intentionLevel' | 'industry' | 'createdAt' | 'updatedAt'
->
+> & {
+  analysis: JobAnalysisListSummary | null
+}
+
+export type OpportunityListFilters = {
+  statuses?: JobOpportunityStatus[]
+  intentionLevels?: OpportunityIntentionLevel[]
+  recommendations?: AnalysisRecommendation[]
+  regions?: OpportunityRegion[]
+}
 
 export type CreateOpportunityPayload = {
   company: string
@@ -22,6 +34,31 @@ export type CreateOpportunityPayload = {
   address?: string[] | string
   introduction?: string
   description: string
+}
+
+export type DuplicateOpportunityConflict = {
+  code: 'duplicate_opportunity'
+  details: {
+    existingOpportunity: Pick<JobOpportunity, 'id' | 'company' | 'jobTitle' | 'address'> & {
+      analysisStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
+    }
+  }
+}
+
+export function getDuplicateOpportunityConflict(error: unknown): DuplicateOpportunityConflict | null {
+  if (
+    !(error instanceof ApiRequestError) ||
+    error.status !== 409 ||
+    typeof error.data !== 'object' ||
+    error.data === null
+  ) {
+    return null
+  }
+
+  const data = error.data as Partial<DuplicateOpportunityConflict>
+  if (data.code !== 'duplicate_opportunity' || !data.details?.existingOpportunity) return null
+
+  return data as DuplicateOpportunityConflict
 }
 
 export type UpdateOpportunityPayload = Partial<Omit<CreateOpportunityPayload, 'description'>> & {
@@ -60,8 +97,15 @@ export type TerminateOpportunityPayload = {
 }
 
 export const opportunityApi = {
-  getOpportunities() {
-    return request.get<JobOpportunityListItem[]>('/opportunities')
+  getOpportunities(filters: OpportunityListFilters = {}) {
+    const query = new URLSearchParams()
+    if (filters.statuses?.length) query.set('statuses', filters.statuses.join(','))
+    if (filters.intentionLevels?.length) query.set('intentionLevels', filters.intentionLevels.join(','))
+    if (filters.recommendations?.length) query.set('recommendations', filters.recommendations.join(','))
+    if (filters.regions?.length) query.set('regions', filters.regions.join(','))
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+
+    return request.get<JobOpportunityListItem[]>(`/opportunities${suffix}`)
   },
 
   getOpportunityById(opportunityId: string) {
@@ -73,6 +117,10 @@ export const opportunityApi = {
       ...payload,
       address: normalizeCityList(payload.address),
     })
+  },
+
+  deleteOpportunity(opportunityId: string) {
+    return request.delete<{ id: string }>(`/opportunities/${encodeURIComponent(opportunityId)}`)
   },
 
   updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {

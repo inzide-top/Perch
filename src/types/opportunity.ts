@@ -93,7 +93,7 @@ export type OpportunityTermination = {
  */
 export type JobAnalysis = {
   id: string
-  jobOpportunityId: string
+  opportunityId: string
   resumeId: string
   resumeVersionId: string
 
@@ -123,6 +123,8 @@ export type JobAnalysisTask = {
   resumeId: string
   resumeVersionId: string
   status: JobAnalysisStatus
+  currentAttempt: number
+  modelName: string | null
   result: JobAnalysisResult | null
   createdAt: string
   updatedAt: string
@@ -134,10 +136,14 @@ export type JobAnalysisProgress = {
   status: JobAnalysisStatus
   currentAttempt: number
   maxAttempts: number
+  /** 当前分析任务的首次创建时间，用于恢复页面后的轮询节奏计算。 */
+  createdAt: string
+  updatedAt: string
+  modelName: string | null
   matchScore: number | null
+  recommendation: JobAnalysisResult['recommendation'] | null
   result: JobAnalysisResult | null
   error: Pick<AgentRunError, 'code' | 'message'> | null
-  updatedAt: string
 }
 
 /** 机会列表只需要轻量分析摘要，详情页才拉取完整 result。 */
@@ -164,7 +170,7 @@ export type JobAnalysisResult = Pick<
 /** 单次 Agent 执行状态；一次分析允许产生多次重试执行。 */
 export type AgentRunStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
-/** 保存模型调用时的结构化快照，便于日后回放和排错。 */
+/** 保存模型调用时的 JD 与简历正文快照，不包含实体或版本 ID。 */
 export type JobAnalysisRunInput = {
   resume: ResumeContent
   opportunity: Pick<JobOpportunity, 'company' | 'jobTitle' | 'address' | 'introduction' | 'description'>
@@ -172,12 +178,7 @@ export type JobAnalysisRunInput = {
 
 /** 不保存原生 Error 实例，保存可序列化、可查询的错误信息。 */
 export type AgentRunError = {
-  code:
-    | 'structured_output_validation_failed'
-    | 'model_request_failed'
-    | 'timeout'
-    | 'rate_limited'
-    | 'unknown'
+  code: 'structured_output_validation_failed' | 'model_request_failed' | 'timeout' | 'rate_limited' | 'unknown'
   message: string
   retryable: boolean
   validationIssues?: Array<{
@@ -229,7 +230,7 @@ export type JobRequirementSignal = {
 
 export type JobRequirementAnalysis = {
   id: string
-  jobOpportunityId: string
+  opportunityId: string
   company: string
   jobTitle: string
   address?: string[]
@@ -270,5 +271,5 @@ export type RequirementMatch = {
   matchStatus: 'matched' | 'partial' | 'missing' | 'overqualified'
   importance: 'must_have' | 'nice_to_have'
   risk: 'high' | 'medium' | 'low'
-  suggestion?: string
+  suggestion: string | null
 }

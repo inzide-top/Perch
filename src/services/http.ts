@@ -1,14 +1,20 @@
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8787/api'
+export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8787/api'
+
+export function toApiUrl(path: string) {
+  return `${apiBaseUrl}${path}`
+}
 
 type RequestOptions = Omit<RequestInit, 'body' | 'method'>
 
 export class ApiRequestError extends Error {
   readonly status: number
+  readonly data: unknown
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, data: unknown = null) {
     super(message)
     this.name = 'ApiRequestError'
     this.status = status
+    this.data = data
   }
 }
 
@@ -19,14 +25,14 @@ async function coreRequest<T>(path: string, options: RequestInit = {}): Promise<
     headers.set('content-type', 'application/json')
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(toApiUrl(path), {
     ...options,
     headers,
   })
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new ApiRequestError(errorBody?.message ?? `Request failed: ${response.status}`, response.status)
+    throw new ApiRequestError(errorBody?.message ?? `Request failed: ${response.status}`, response.status, errorBody)
   }
 
   if (response.status === 204) return undefined as T

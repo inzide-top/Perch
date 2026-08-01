@@ -1,4 +1,16 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  type AnyPgColumn,
+} from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 import type { ResumeContent, VersionDiffItem } from '@/types/resume'
 import type {
   AgentRunError,
@@ -51,6 +63,8 @@ export const jobOpportunities = pgTable(
     userId: text('user_id').notNull(),
     company: text('company').notNull(),
     jobTitle: text('job_title').notNull(),
+    /** 同一用户的规范化精确重复 JD 标识；旧数据允许为空，避免历史迁移失败。 */
+    dedupeFingerprint: text('dedupe_fingerprint'),
     address: jsonb('address').$type<string[]>().notNull(),
     introduction: text('introduction').notNull(),
     description: text('description').notNull(),
@@ -65,7 +79,10 @@ export const jobOpportunities = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
-  (table) => [index('job_opportunities_user_id_updated_at_index').on(table.userId, table.updatedAt)],
+  (table) => [
+    index('job_opportunities_user_id_updated_at_index').on(table.userId, table.updatedAt),
+    uniqueIndex('job_opportunities_user_dedupe_fingerprint_unique').on(table.userId, table.dedupeFingerprint),
+  ],
 )
 
 /** 每一次状态变更都保留，供流程回放和后续求职分析使用。 */
@@ -146,12 +163,26 @@ export const jobAnalyses = pgTable(
       .notNull()
       .references(() => resumeVersions.id, { onDelete: 'cascade' }),
     status: text('status').$type<JobAnalysisStatus>().notNull(),
+    /** 指向同一业务输入正在执行或已完成的源分析；空值代表实际发起模型请求的源任务。 */
+    sourceAnalysisId: uuid('source_analysis_id').references((): AnyPgColumn => jobAnalyses.id, {
+      onDelete: 'set null',
+    }),
+    currentAttempt: integer('current_attempt').notNull().default(1),
+    inputFingerprint: text('input_fingerprint'),
+    modelName: text('model_name'),
     result: jsonb('result').$type<JobAnalysisResult>(),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
   },
-  (table) => [uniqueIndex('job_analyses_opportunity_id_unique').on(table.opportunityId)],
+  (table) => [
+    uniqueIndex('job_analyses_opportunity_id_unique').on(table.opportunityId),
+    index('job_analyses_input_fingerprint_index').on(table.inputFingerprint),
+    index('job_analyses_source_analysis_id_index').on(table.sourceAnalysisId),
+    uniqueIndex('job_analyses_active_source_fingerprint_unique')
+      .on(table.inputFingerprint)
+      .where(sql`"source_analysis_id" IS NULL AND "status" IN ('pending', 'processing')`),
+  ],
 )
 
 export const agentRuns = pgTable(

@@ -122,6 +122,15 @@ watch(
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">系统设置</h1>
         <p class="mt-1 text-sm text-muted">配置工作台外观和后续 AI 调用所需的模型连接。</p>
       </div>
+      <UButton
+        to="/developer/agent-runs"
+        target="_blank"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-bug-play"
+      >
+        打开 Agent 调试台
+      </UButton>
     </div>
 
     <section class="app-panel p-5">

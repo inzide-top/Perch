@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave } from 'vue-router'
+import { useToast } from '@nuxt/ui/composables'
 import type {
   CurrentStatus,
   EducationLevel,
@@ -13,6 +14,7 @@ import type {
 } from '@/types/resume'
 import { useResumeStore } from '@/stores'
 import ResumeEdit from './components/Edit/index.vue'
+import ResumeWorkspaceSkeleton from './components/ResumeWorkspaceSkeleton.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
 import { mockResumeDraft } from './mocks/resumeDraft'
 import { getVersionDiff } from '@/shared/resume/versionDiff'
@@ -20,9 +22,9 @@ import { getVersionDiff } from '@/shared/resume/versionDiff'
 type EditorMode = 'create' | 'edit'
 
 const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
-let toastTimer: number | null = null
 
 const resumeStore = useResumeStore()
+const toast = useToast()
 const { resumes, versions, currentResume, currentVersion, currentResumeVersions, isLoading, loadError } =
   storeToRefs(resumeStore)
 
@@ -36,8 +38,6 @@ const isDeletingResume = ref(false)
 const isUnsavedConfirmOpen = ref(false)
 const isLatestVersionDiffOpen = ref(false)
 const isVersionPanelExpanded = ref(true)
-const toastMessage = ref('')
-const toastType = ref<'success' | 'error' | 'warning'>('success')
 const pendingUnsavedConfirmAction = ref<(() => void) | null>(null)
 const pendingUnsavedCancelAction = ref<(() => void) | null>(null)
 const originalBodyOverflow = ref('')
@@ -211,15 +211,13 @@ function writeMockResumeDraft(draft: ResumeDraft) {
 }
 
 function showToast(title: string, color: 'success' | 'error' | 'warning' = 'success') {
-  toastMessage.value = title
-  toastType.value = color
+  const iconByColor = {
+    success: 'i-lucide-circle-check',
+    error: 'i-lucide-circle-x',
+    warning: 'i-lucide-circle-alert',
+  }
 
-  if (toastTimer) window.clearTimeout(toastTimer)
-
-  toastTimer = window.setTimeout(() => {
-    toastMessage.value = ''
-    toastTimer = null
-  }, 3500)
+  toast.add({ title, color, icon: iconByColor[color] })
 }
 
 function formatDate(value: string) {
@@ -413,57 +411,15 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   unlockBodyScroll()
-
-  if (toastTimer) window.clearTimeout(toastTimer)
 })
 </script>
 
 <template>
   <section class="w-full">
-    <Transition name="resume-toast">
-      <div v-if="toastMessage" class="pointer-events-none fixed inset-x-0 top-5 z-50 flex justify-center px-4">
-        <div
-          class="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm shadow-lg backdrop-blur"
-          :class="{
-            'border-success/30 bg-success/15 text-success': toastType === 'success',
-            'border-error/30 bg-error/15 text-error': toastType === 'error',
-            'border-warning/30 bg-warning/15 text-warning': toastType === 'warning',
-          }"
-        >
-          <UIcon
-            :name="
-              toastType === 'success'
-                ? 'i-lucide-circle-check'
-                : toastType === 'error'
-                  ? 'i-lucide-circle-x'
-                  : 'i-lucide-circle-alert'
-            "
-            class="size-4"
-          />
-          <span>{{ toastMessage }}</span>
-        </div>
-      </div>
-    </Transition>
-
-    <Transition name="resume-page-loading">
-      <div
-        v-if="isLoading && editorMode === null"
-        class="fixed inset-0 z-40 flex items-center justify-center bg-white/72 px-6 backdrop-blur-sm dark:bg-[#0d1216]/74"
-        aria-live="polite"
-        aria-busy="true"
-      >
-        <div class="app-panel flex items-center gap-3 px-5 py-4 shadow-xl">
-          <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
-          <div>
-            <p class="text-sm font-medium text-highlighted">正在加载简历</p>
-            <p class="mt-0.5 text-xs text-muted">正在同步你的简历与版本记录</p>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ResumeWorkspaceSkeleton v-if="isLoading && editorMode === null" />
 
     <UCard
-      v-if="loadError && editorMode === null"
+      v-else-if="loadError && editorMode === null"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-md px-6 py-14 text-center">

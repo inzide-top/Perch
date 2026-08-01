@@ -10,6 +10,9 @@ import type {
 import CityPicker from '@/components/CityPicker.vue'
 import { industryOptions } from '@/data/industryOptions'
 import type { InterviewRoundForm, OpportunityInfoForm, WrittenTestReviewForm } from '../types'
+import InterviewReviewDrawer from './info/InterviewReviewDrawer.vue'
+import RoundEditDrawer from './info/RoundEditDrawer.vue'
+import WrittenTestReviewDrawer from './info/WrittenTestReviewDrawer.vue'
 
 type StatusFlowItem = {
   label: string
@@ -115,10 +118,6 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
   if (status === 'interviewing') return '面试复盘'
 
   return '复盘'
-}
-
-function getInterviewRoundTypeLabel(type: InterviewRoundType) {
-  return props.availableInterviewRoundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
 }
 </script>
 
@@ -349,7 +348,7 @@ function getInterviewRoundTypeLabel(type: InterviewRoundType) {
 
         <div v-else class="space-y-4">
           <div class="rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-xs leading-5 text-warning">
-            修改 JD 信息后，当前 mock 分析不会自动重跑。后续我们会单独做“重新分析”动作。
+            修改 JD 信息不会自动更新现有匹配结果。如需应用最新岗位信息，请在机会列表中手动重新分析。
           </div>
 
           <div class="grid gap-x-5 gap-y-3 md:grid-cols-3">
@@ -563,373 +562,58 @@ function getInterviewRoundTypeLabel(type: InterviewRoundType) {
       </aside>
     </div>
 
-    <Transition name="project-edit-drawer">
-      <div
-        v-if="isWrittenTestReviewDrawerOpen"
-        class="fixed inset-0 z-40 flex justify-end bg-black/35 backdrop-blur-[2px]"
-        role="dialog"
-        aria-modal="true"
-        aria-label="笔试复盘"
-        @click.self="emit('closeWrittenTestReviewDrawer')"
-      >
-        <section class="app-drawer flex h-full w-full max-w-lg flex-col border-l border-default shadow-2xl">
-          <div class="flex items-center justify-between border-b border-default px-5 py-4">
-            <div>
-              <h2 class="text-base font-semibold text-highlighted">笔试复盘</h2>
-              <p class="mt-1 text-xs text-muted">
-                记录笔试时间和复盘内容即可。补充得越具体，后续 AI 越容易判断你在笔试阶段的卡点。
-              </p>
-            </div>
-            <UButton
-              type="button"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              aria-label="关闭笔试复盘抽屉"
-              :disabled="isSavingWrittenTestReview"
-              @click="emit('closeWrittenTestReviewDrawer')"
-            />
-          </div>
+    <WrittenTestReviewDrawer
+      v-model:form="writtenTestReviewForm"
+      v-model:date-popover-open="writtenTestDatePopoverOpen"
+      v-model:calendar-date="writtenTestCalendarDate"
+      :open="isWrittenTestReviewDrawerOpen"
+      :saving="isSavingWrittenTestReview"
+      :date-label="writtenTestDateLabel"
+      @close="emit('closeWrittenTestReviewDrawer')"
+      @save="emit('saveWrittenTestReview')"
+      @select-date="emit('handleWrittenTestDateSelect', $event)"
+    />
 
-          <div class="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-            <UFormField label="笔试时间">
-              <UPopover v-model:open="writtenTestDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
-                <UButton
-                  type="button"
-                  color="neutral"
-                  variant="outline"
-                  class="w-full justify-between"
-                  trailing-icon="i-lucide-calendar-days"
-                >
-                  {{ writtenTestDateLabel }}
-                </UButton>
-                <template #content>
-                  <div class="p-2">
-                    <UCalendar
-                      v-model="writtenTestCalendarDate"
-                      @update:model-value="emit('handleWrittenTestDateSelect', $event)"
-                    />
-                  </div>
-                </template>
-              </UPopover>
-            </UFormField>
+    <InterviewReviewDrawer
+      v-model:form="roundForm"
+      v-model:date-popover-open="roundDatePopoverOpen"
+      v-model:calendar-date="roundCalendarDate"
+      v-model:deleting-round-id="deletingRoundId"
+      :open="isInterviewReviewDrawerOpen"
+      :opportunity="opportunity"
+      :status="infoForm.status"
+      :status-label-map="statusLabelMap"
+      :round-type-options="availableInterviewRoundTypeOptions"
+      :date-label="interviewRoundDateLabel"
+      :adding="isAddingInterviewRound"
+      :deleting-round-action-id="deletingRoundActionId"
+      @close="emit('closeInterviewReviewDrawer')"
+      @add="emit('addInterviewRound')"
+      @select-date="emit('handleRoundDateSelect', $event)"
+      @edit="emit('openRoundEditDrawer', $event)"
+      @delete="emit('confirmDeleteRound', $event)"
+    />
 
-            <UFormField label="笔试复盘">
-              <UTextarea
-                v-model="writtenTestReviewForm.reviewNote"
-                class="w-full"
-                :rows="12"
-                placeholder="记录题型、难点、时间分配、未掌握知识点，以及你觉得需要继续补强的内容。"
-              />
-            </UFormField>
-          </div>
-
-          <div class="flex justify-end gap-2 border-t border-default px-5 py-4">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="outline"
-              :disabled="isSavingWrittenTestReview"
-              @click="emit('closeWrittenTestReviewDrawer')"
-            >
-              取消
-            </UButton>
-            <UButton
-              type="button"
-              icon="i-lucide-save"
-              :loading="isSavingWrittenTestReview"
-              :disabled="isSavingWrittenTestReview"
-              @click="emit('saveWrittenTestReview')"
-            >
-              保存复盘
-            </UButton>
-          </div>
-        </section>
-      </div>
-    </Transition>
-
-    <Transition name="project-edit-drawer">
-      <div
-        v-if="isInterviewReviewDrawerOpen"
-        class="fixed inset-0 z-40 flex justify-end bg-black/35 backdrop-blur-[2px]"
-        role="dialog"
-        aria-modal="true"
-        aria-label="测评记录"
-        @click.self="emit('closeInterviewReviewDrawer')"
-      >
-        <section class="app-drawer flex h-full w-full max-w-3xl flex-col border-l border-default shadow-2xl">
-          <div class="flex items-center justify-between border-b border-default px-5 py-4">
-            <div>
-              <h2 class="text-base font-semibold text-highlighted">测评记录</h2>
-              <p class="mt-1 text-xs text-muted">
-                补充面试复盘越完整，后续 AI 越能判断你卡在基础面、项目面、业务面还是 HR 面。
-              </p>
-            </div>
-            <UButton
-              type="button"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              aria-label="关闭测评记录抽屉"
-              :disabled="isAddingInterviewRound"
-              @click="emit('closeInterviewReviewDrawer')"
-            />
-          </div>
-
-          <div class="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <section class="app-panel-muted p-4">
-              <div class="mb-4 flex items-center justify-between gap-3">
-                <h3 class="text-sm font-semibold text-highlighted">新增记录</h3>
-                <UBadge color="neutral" variant="subtle" :label="statusLabelMap[infoForm.status]" />
-              </div>
-
-              <div class="space-y-3">
-                <UFormField label="轮次类型">
-                  <USelect
-                    v-model="roundForm.type"
-                    class="w-full"
-                    :items="availableInterviewRoundTypeOptions"
-                    value-key="value"
-                    :content="drawerSelectContent"
-                  />
-                </UFormField>
-                <UFormField label="轮次名称">
-                  <UInput v-model="roundForm.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
-                </UFormField>
-                <UFormField label="日期">
-                  <UPopover v-model:open="roundDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
-                    <UButton
-                      type="button"
-                      color="neutral"
-                      variant="outline"
-                      class="w-full justify-between"
-                      trailing-icon="i-lucide-calendar-days"
-                    >
-                      {{ interviewRoundDateLabel }}
-                    </UButton>
-                    <template #content>
-                      <div class="p-2">
-                        <UCalendar
-                          v-model="roundCalendarDate"
-                          @update:model-value="emit('handleRoundDateSelect', $event)"
-                        />
-                      </div>
-                    </template>
-                  </UPopover>
-                </UFormField>
-                <UFormField label="复盘备注">
-                  <UTextarea
-                    v-model="roundForm.note"
-                    class="w-full"
-                    :rows="8"
-                    placeholder="记录题目、表现、追问和你觉得卡住的地方"
-                  />
-                </UFormField>
-                <UButton
-                  type="button"
-                  icon="i-lucide-plus"
-                  class="w-full justify-center"
-                  :loading="isAddingInterviewRound"
-                  :disabled="!roundForm.title.trim() || isAddingInterviewRound"
-                  @click="emit('addInterviewRound')"
-                >
-                  添加测评记录
-                </UButton>
-              </div>
-            </section>
-
-            <section class="min-w-0">
-              <div class="mb-4 flex items-center justify-between gap-3">
-                <h3 class="text-sm font-semibold text-highlighted">已有记录</h3>
-                <UBadge color="neutral" variant="subtle" :label="`${opportunity.interviewRounds.length} 条`" />
-              </div>
-
-              <div class="space-y-3">
-                <article v-for="round in opportunity.interviewRounds" :key="round.id" class="app-card p-4">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <p class="truncate text-sm font-medium text-highlighted">{{ round.title }}</p>
-                      <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                        <UBadge color="neutral" variant="subtle" :label="getInterviewRoundTypeLabel(round.type)" />
-                        <span v-if="round.scheduledAt">{{ round.scheduledAt }}</span>
-                      </div>
-                    </div>
-                    <div class="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        class="project-card-edit"
-                        :disabled="deletingRoundActionId === round.id"
-                        aria-label="编辑测评记录"
-                        title="编辑测评记录"
-                        @click="emit('openRoundEditDrawer', round)"
-                      >
-                        <UIcon name="i-lucide-pencil" class="size-4" />
-                      </button>
-                      <UPopover
-                        :open="deletingRoundId === round.id"
-                        :portal="true"
-                        :ui="{ content: 'z-[110]' }"
-                        @update:open="deletingRoundId = $event ? round.id : null"
-                      >
-                        <button
-                          type="button"
-                          class="project-card-remove"
-                          :disabled="deletingRoundActionId === round.id"
-                          aria-label="删除测评记录"
-                          title="删除测评记录"
-                        >
-                          <UIcon name="i-lucide-trash-2" class="size-4" />
-                        </button>
-                        <template #content>
-                          <div class="w-56 p-3">
-                            <p class="text-sm font-medium text-highlighted">删除这条测评记录？</p>
-                            <p class="mt-1 text-xs leading-5 text-muted">删除后这条复盘记录不会再展示。</p>
-                            <div class="mt-3 flex justify-end gap-2">
-                              <UButton
-                                type="button"
-                                color="neutral"
-                                variant="ghost"
-                                size="sm"
-                                :disabled="deletingRoundActionId === round.id"
-                                @click="deletingRoundId = null"
-                              >
-                                取消
-                              </UButton>
-                              <UButton
-                                type="button"
-                                color="error"
-                                size="sm"
-                                icon="i-lucide-trash-2"
-                                :loading="deletingRoundActionId === round.id"
-                                :disabled="deletingRoundActionId === round.id"
-                                @click="emit('confirmDeleteRound', round.id)"
-                              >
-                                删除
-                              </UButton>
-                            </div>
-                          </div>
-                        </template>
-                      </UPopover>
-                    </div>
-                  </div>
-                  <p v-if="round.note" class="mt-3 whitespace-pre-line text-xs leading-5 text-muted">
-                    {{ round.note }}
-                  </p>
-                </article>
-                <div
-                  v-if="opportunity.interviewRounds.length === 0"
-                  class="app-panel-muted border-dashed p-8 text-center text-xs leading-5 text-muted"
-                >
-                  暂无面试复盘。建议在每轮面试后补充题目、表现和卡点，后续 AI 会基于这些内容做复盘。
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-      </div>
-    </Transition>
-
-    <Transition name="project-edit-drawer">
-      <div
-        v-if="isRoundEditDrawerOpen"
-        class="fixed inset-0 z-50 flex justify-end bg-black/35 backdrop-blur-[2px]"
-        role="dialog"
-        aria-modal="true"
-        aria-label="编辑测评记录"
-        @click.self="emit('closeRoundEditDrawer')"
-      >
-        <section class="app-drawer flex h-full w-full max-w-xl flex-col border-l border-default shadow-2xl">
-          <div class="flex items-center justify-between border-b border-default px-5 py-4">
-            <div>
-              <h2 class="text-base font-semibold text-highlighted">编辑测评记录</h2>
-              <p class="mt-1 text-xs text-muted">调整类型、名称、日期和复盘内容。</p>
-            </div>
-            <UButton
-              type="button"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              aria-label="关闭编辑抽屉"
-              :disabled="isSavingRoundEdit"
-              @click="emit('closeRoundEditDrawer')"
-            />
-          </div>
-
-          <div class="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-            <UFormField label="轮次类型">
-              <USelect
-                v-model="roundEditForm.type"
-                class="w-full"
-                :items="availableInterviewRoundTypeOptions"
-                value-key="value"
-                :content="drawerSelectContent"
-              />
-            </UFormField>
-
-            <UFormField label="轮次名称">
-              <UInput v-model="roundEditForm.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
-            </UFormField>
-
-            <UFormField label="日期">
-              <UPopover v-model:open="editRoundDatePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
-                <UButton
-                  type="button"
-                  color="neutral"
-                  variant="outline"
-                  class="w-full justify-between"
-                  trailing-icon="i-lucide-calendar-days"
-                >
-                  {{ roundEditForm.date || '请输入日期' }}
-                </UButton>
-                <template #content>
-                  <div class="p-2">
-                    <UCalendar
-                      v-model="editRoundCalendarDate"
-                      @update:model-value="emit('handleEditRoundDateSelect', $event)"
-                    />
-                  </div>
-                </template>
-              </UPopover>
-            </UFormField>
-
-            <UFormField label="复盘备注">
-              <UTextarea
-                v-model="roundEditForm.note"
-                class="w-full"
-                :rows="8"
-                placeholder="记录真实面试复盘，后续可以作为 AI 分析输入。"
-              />
-            </UFormField>
-          </div>
-
-          <div class="flex justify-end gap-2 border-t border-default px-5 py-4">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="outline"
-              :disabled="isSavingRoundEdit"
-              @click="emit('closeRoundEditDrawer')"
-              >取消</UButton
-            >
-            <UButton
-              type="button"
-              icon="i-lucide-save"
-              :loading="isSavingRoundEdit"
-              :disabled="!roundEditForm.title.trim() || !hasRoundEditChanged || isSavingRoundEdit"
-              @click="emit('saveRoundEdit')"
-            >
-              保存修改
-            </UButton>
-          </div>
-        </section>
-      </div>
-    </Transition>
+    <RoundEditDrawer
+      v-model:form="roundEditForm"
+      v-model:date-popover-open="editRoundDatePopoverOpen"
+      v-model:calendar-date="editRoundCalendarDate"
+      :open="isRoundEditDrawerOpen"
+      :saving="isSavingRoundEdit"
+      :changed="hasRoundEditChanged"
+      :round-type-options="availableInterviewRoundTypeOptions"
+      @close="emit('closeRoundEditDrawer')"
+      @save="emit('saveRoundEdit')"
+      @select-date="emit('handleEditRoundDateSelect', $event)"
+    />
   </section>
 </template>
 
 <style scoped>
 :deep(.city-picker-trigger) {
-  height: 33px !important;
-  min-height: 33px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  border-color: var(--ui-border-accented);
+  border-radius: calc(var(--ui-radius) * 1.5);
 }
 </style>

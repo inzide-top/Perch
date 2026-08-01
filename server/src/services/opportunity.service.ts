@@ -5,6 +5,7 @@ import type {
   OpportunityStatusChange,
   OpportunityTermination,
   WrittenTestReview,
+  JobAnalysisListSummary,
 } from '@/types/opportunity'
 import {
   opportunityRepository,
@@ -19,8 +20,13 @@ import {
   updateJobOpportunityInputSchema,
   updateJobOpportunityStatusInputSchema,
   updateWrittenTestReviewInputSchema,
+  type JobOpportunityListFilters,
 } from '../schemas/opportunity.schema'
+import { getOpportunityRegions } from '@/shared/opportunity/geography'
 import { getCurrentUserId } from './resume.service'
+import { cancelJobAnalysisForOpportunity, getJobAnalysisListSummaries } from './job-analysis.service'
+import { jobAnalysisRepository } from '../repositories/job-analysis.repository'
+import { createOpportunityFingerprint } from './opportunity-fingerprint'
 
 export class OpportunityNotFoundError extends Error {
   constructor(opportunityId: string) {
@@ -47,12 +53,33 @@ class OpportunityStatusConflictError extends Error {
   }
 }
 
+export type DuplicateJobOpportunityDetails = {
+  existingOpportunity: Pick<JobOpportunity, 'id' | 'company' | 'jobTitle' | 'address'> & {
+    analysisStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
+  }
+}
+
+export class DuplicateJobOpportunityError extends Error {
+  statusCode = 409
+  code = 'duplicate_opportunity'
+
+  constructor(readonly details: DuplicateJobOpportunityDetails) {
+    super('检测到历史已有相同 JD')
+    this.name = 'DuplicateJobOpportunityError'
+  }
+}
+
 export type JobOpportunityListItem = Pick<
   JobOpportunity,
   'id' | 'company' | 'jobTitle' | 'address' | 'status' | 'intentionLevel' | 'industry' | 'createdAt' | 'updatedAt'
->
+> & {
+  analysis: JobAnalysisListSummary | null
+}
 
-function toJobOpportunityListItem(opportunity: JobOpportunityRecord): JobOpportunityListItem {
+function toJobOpportunityListItem(
+  opportunity: JobOpportunityRecord,
+  analysis: JobAnalysisListSummary | null,
+): JobOpportunityListItem {
   return {
     id: opportunity.id,
     company: opportunity.company,
@@ -63,6 +90,7 @@ function toJobOpportunityListItem(opportunity: JobOpportunityRecord): JobOpportu
     industry: opportunity.industry,
     createdAt: opportunity.createdAt,
     updatedAt: opportunity.updatedAt,
+    analysis,
   }
 }
 
@@ -123,17 +151,53 @@ async function getOpportunityDetailOrThrow(opportunityId: string): Promise<JobOp
   return detail
 }
 
+async function findExactDuplicateOpportunity(userId: string, dedupeFingerprint: string) {
+  const indexedOpportunity = await opportunityRepository.findOpportunityByDedupeFingerprint(userId, dedupeFingerprint)
+  if (indexedOpportunity) return indexedOpportunity
+
+  // dedupe_fingerprint 是新增字段；兼容上线前已存在的历史记录。
+  const legacyOpportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
+  return legacyOpportunities.find((opportunity) => {
+    return createOpportunityFingerprint(opportunity) === dedupeFingerprint
+  })
+}
+
+async function createDuplicateOpportunityError(existingOpportunity: JobOpportunityRecord) {
+  const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(existingOpportunity.id)
+
+  return new DuplicateJobOpportunityError({
+    existingOpportunity: {
+      id: existingOpportunity.id,
+      company: existingOpportunity.company,
+      jobTitle: existingOpportunity.jobTitle,
+      address: existingOpportunity.address,
+      analysisStatus: analysis?.status ?? null,
+    },
+  })
+}
+
+function isUniqueViolation(error: unknown) {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === '23505'
+  )
+}
+
 export async function createJobOpportunity(input: unknown): Promise<JobOpportunityDetail> {
   const parsedInput = createJobOpportunityInputSchema.parse(input)
   const userId = await getCurrentUserId()
   const now = new Date().toISOString()
   const opportunityId = crypto.randomUUID()
+  const dedupeFingerprint = createOpportunityFingerprint(parsedInput)
+  const exactDuplicate = await findExactDuplicateOpportunity(userId, dedupeFingerprint)
+
+  if (exactDuplicate) throw await createDuplicateOpportunityError(exactDuplicate)
 
   const opportunity: JobOpportunityRecord = {
     id: opportunityId,
     userId,
     company: parsedInput.company,
     jobTitle: parsedInput.jobTitle,
+    dedupeFingerprint,
     address: parsedInput.address,
     introduction: parsedInput.introduction,
     description: parsedInput.description,
@@ -151,10 +215,19 @@ export async function createJobOpportunity(input: unknown): Promise<JobOpportuni
 
   const initialStatusHistory = createStatusHistoryItem(opportunityId, 'pending_apply', null, now, '创建机会')
 
-  await opportunityRepository.createOpportunityWithInitialStatus({
-    opportunity,
-    initialStatusHistory,
-  })
+  try {
+    await opportunityRepository.createOpportunityWithInitialStatus({
+      opportunity,
+      initialStatusHistory,
+    })
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      const duplicate = await opportunityRepository.findOpportunityByDedupeFingerprint(userId, dedupeFingerprint)
+      if (duplicate) throw await createDuplicateOpportunityError(duplicate)
+    }
+
+    throw error
+  }
 
   const detail = await opportunityRepository.findOpportunityDetailById(opportunityId)
   if (!detail) throw new OpportunityNotFoundError(opportunityId)
@@ -162,17 +235,56 @@ export async function createJobOpportunity(input: unknown): Promise<JobOpportuni
   return detail
 }
 
-export async function getJobOpportunities(): Promise<JobOpportunityListItem[]> {
+export async function getJobOpportunities(filters: JobOpportunityListFilters): Promise<JobOpportunityListItem[]> {
   const userId = await getCurrentUserId()
   const opportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
+  const opportunityIds = opportunities.map((opportunity) => opportunity.id)
+  const analysisSummaries = await getJobAnalysisListSummaries(opportunityIds)
 
-  return opportunities.map(toJobOpportunityListItem)
+  return opportunities
+    .map((opportunity) => toJobOpportunityListItem(opportunity, analysisSummaries.get(opportunity.id) ?? null))
+    .filter((opportunity) => {
+      if (filters.statuses.length > 0 && !filters.statuses.includes(opportunity.status)) return false
+      if (filters.intentionLevels.length > 0 && !filters.intentionLevels.includes(opportunity.intentionLevel))
+        return false
+      if (
+        filters.recommendations.length > 0 &&
+        (!opportunity.analysis?.recommendation ||
+          !filters.recommendations.includes(opportunity.analysis.recommendation))
+      ) {
+        return false
+      }
+
+      if (
+        filters.regions.length > 0 &&
+        !getOpportunityRegions(opportunity.address).some((region) => filters.regions.includes(region))
+      ) {
+        return false
+      }
+
+      return true
+    })
 }
 
 export async function getJobOpportunityById(opportunityId: string) {
   await getOpportunityForCurrentUser(opportunityId)
 
   return getOpportunityDetailOrThrow(opportunityId)
+}
+
+export async function deleteJobOpportunity(opportunityId: string): Promise<{ id: string }> {
+  const userId = await getCurrentUserId()
+  await getOpportunityForCurrentUser(opportunityId)
+  const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(opportunityId)
+  cancelJobAnalysisForOpportunity(opportunityId)
+  if (analysis && !analysis.sourceAnalysisId && (analysis.status === 'pending' || analysis.status === 'processing')) {
+    await jobAnalysisRepository.markFollowersFailedForDeletedSource(analysis.id, new Date().toISOString())
+  }
+  const deletedOpportunityId = await opportunityRepository.deleteOpportunityForUser(opportunityId, userId)
+
+  if (!deletedOpportunityId) throw new OpportunityNotFoundError(opportunityId)
+
+  return { id: deletedOpportunityId }
 }
 
 export async function updateJobOpportunity(opportunityId: string, input: unknown): Promise<JobOpportunityDetail> {
@@ -192,6 +304,15 @@ export async function updateJobOpportunity(opportunityId: string, input: unknown
     industry: parsedInput.industry ?? opportunity.industry,
     note: parsedInput.note ?? opportunity.note,
     updatedAt: now,
+  }
+  updatedOpportunity.dedupeFingerprint = createOpportunityFingerprint(updatedOpportunity)
+
+  const exactDuplicate = await opportunityRepository.findOpportunityByDedupeFingerprint(
+    opportunity.userId,
+    updatedOpportunity.dedupeFingerprint,
+  )
+  if (exactDuplicate && exactDuplicate.id !== opportunity.id) {
+    throw await createDuplicateOpportunityError(exactDuplicate)
   }
 
   const shouldRevertWrittenTestStatus =

@@ -1,0 +1,1 @@
+ALTER TABLE "job_analyses" ADD COLUMN "model_name" text;
