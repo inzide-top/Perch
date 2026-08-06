@@ -1,7 +1,23 @@
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { agentRuns, jobAnalyses, jobOpportunities } from '../db/schema'
+import { agentRuns, jobAnalyses } from '../db/schema'
 import type { AgentRunError, AgentTokenUsage, JobAnalysisResult } from '@/types/opportunity'
+import { measureDb } from '../utils/request-metrics'
+
+const analysisProgressSelection = {
+  id: jobAnalyses.id,
+  opportunityId: jobAnalyses.opportunityId,
+  status: jobAnalyses.status,
+  sourceAnalysisId: jobAnalyses.sourceAnalysisId,
+  currentAttempt: jobAnalyses.currentAttempt,
+  modelName: jobAnalyses.modelName,
+  /** 只读取结果中的两个列表/分布字段，不把完整 result JSON 带入轻量接口。 */
+  matchScore: sql<string | null>`(${jobAnalyses.result}->>'matchScore')`,
+  recommendation: sql<string | null>`(${jobAnalyses.result}->>'recommendation')`,
+  createdAt: jobAnalyses.createdAt,
+  updatedAt: jobAnalyses.updatedAt,
+  completedAt: jobAnalyses.completedAt,
+}
 
 export type CreateAnalysisWithInitialRunRecord = {
   analysis: typeof jobAnalyses.$inferInsert
@@ -75,42 +91,6 @@ export type LinkAnalysisToSourceRecord = {
 }
 
 export class DrizzleJobAnalysisRepository {
-  async findAgentRunDebugList(limit: number) {
-    return db
-      .select({
-        run: agentRuns,
-        analysisId: jobAnalyses.id,
-        sourceAnalysisId: jobAnalyses.sourceAnalysisId,
-        opportunityId: jobAnalyses.opportunityId,
-        company: jobOpportunities.company,
-        jobTitle: jobOpportunities.jobTitle,
-      })
-      .from(agentRuns)
-      .innerJoin(jobAnalyses, eq(agentRuns.analysisId, jobAnalyses.id))
-      .innerJoin(jobOpportunities, eq(jobAnalyses.opportunityId, jobOpportunities.id))
-      .orderBy(desc(agentRuns.startedAt), desc(agentRuns.attemptNumber))
-      .limit(limit)
-  }
-
-  async findAgentRunDebugById(runId: string) {
-    const [entry] = await db
-      .select({
-        run: agentRuns,
-        analysisId: jobAnalyses.id,
-        sourceAnalysisId: jobAnalyses.sourceAnalysisId,
-        opportunityId: jobAnalyses.opportunityId,
-        company: jobOpportunities.company,
-        jobTitle: jobOpportunities.jobTitle,
-      })
-      .from(agentRuns)
-      .innerJoin(jobAnalyses, eq(agentRuns.analysisId, jobAnalyses.id))
-      .innerJoin(jobOpportunities, eq(jobAnalyses.opportunityId, jobOpportunities.id))
-      .where(eq(agentRuns.id, runId))
-      .limit(1)
-
-    return entry ?? null
-  }
-
   async createAnalysisWithInitialRun(record: CreateAnalysisWithInitialRunRecord) {
     return db.transaction(async (tx) => {
       const [analysis] = await tx.insert(jobAnalyses).values(record.analysis).returning()
@@ -131,10 +111,7 @@ export class DrizzleJobAnalysisRepository {
       .update(jobAnalyses)
       .set({ status: 'failed', updatedAt: failedAt })
       .where(
-        and(
-          eq(jobAnalyses.sourceAnalysisId, sourceAnalysisId),
-          inArray(jobAnalyses.status, ['pending', 'processing']),
-        ),
+        and(eq(jobAnalyses.sourceAnalysisId, sourceAnalysisId), inArray(jobAnalyses.status, ['pending', 'processing'])),
       )
   }
 
@@ -259,10 +236,27 @@ export class DrizzleJobAnalysisRepository {
     return db.select().from(jobAnalyses).where(inArray(jobAnalyses.opportunityId, opportunityIds))
   }
 
+  /** 轮询和机会列表只读取状态元数据，绝不读取 result JSON。 */
+  async findAnalysisProgressByOpportunityIds(opportunityIds: string[]) {
+    if (opportunityIds.length === 0) return []
+
+    return measureDb(() =>
+      db.select(analysisProgressSelection).from(jobAnalyses).where(inArray(jobAnalyses.opportunityId, opportunityIds)),
+    )
+  }
+
   async findAnalysesByIds(analysisIds: string[]) {
     if (analysisIds.length === 0) return []
 
     return db.select().from(jobAnalyses).where(inArray(jobAnalyses.id, analysisIds))
+  }
+
+  async findAnalysisProgressByIds(analysisIds: string[]) {
+    if (analysisIds.length === 0) return []
+
+    return measureDb(() =>
+      db.select(analysisProgressSelection).from(jobAnalyses).where(inArray(jobAnalyses.id, analysisIds)),
+    )
   }
 
   async findRunsByAnalysisIds(analysisIds: string[]) {
@@ -273,6 +267,28 @@ export class DrizzleJobAnalysisRepository {
       .from(agentRuns)
       .where(inArray(agentRuns.analysisId, analysisIds))
       .orderBy(desc(agentRuns.attemptNumber))
+  }
+
+  /** 当前状态查询只需要最新尝试的状态和错误，不读取模型输入/输出。 */
+  async findRunSummariesByAnalysisIds(analysisIds: string[]) {
+    if (analysisIds.length === 0) return []
+
+    return measureDb(() =>
+      db
+        .select({
+          id: agentRuns.id,
+          analysisId: agentRuns.analysisId,
+          attemptNumber: agentRuns.attemptNumber,
+          status: agentRuns.status,
+          error: agentRuns.error,
+          startedAt: agentRuns.startedAt,
+          finishedAt: agentRuns.finishedAt,
+          durationMs: agentRuns.durationMs,
+        })
+        .from(agentRuns)
+        .where(inArray(agentRuns.analysisId, analysisIds))
+        .orderBy(desc(agentRuns.attemptNumber)),
+    )
   }
 
   async queueExistingAnalysisWithRun(record: QueueExistingAnalysisWithRunRecord) {

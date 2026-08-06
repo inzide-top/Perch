@@ -14,6 +14,8 @@ import {
 } from '../repositories/opportunity.repository'
 import {
   addInterviewRoundInputSchema,
+  cancelInterviewRoundInputSchema,
+  completeInterviewRoundInputSchema,
   createJobOpportunityInputSchema,
   terminateOpportunityInputSchema,
   updateInterviewRoundInputSchema,
@@ -23,10 +25,67 @@ import {
   type JobOpportunityListFilters,
 } from '../schemas/opportunity.schema'
 import { getOpportunityRegions } from '@/shared/opportunity/geography'
-import { getCurrentUserId } from './resume.service'
+import { getCurrentUserId } from '../context/current-user'
 import { cancelJobAnalysisForOpportunity, getJobAnalysisListSummaries } from './job-analysis.service'
 import { jobAnalysisRepository } from '../repositories/job-analysis.repository'
 import { createOpportunityFingerprint } from './opportunity-fingerprint'
+import { interviewRepository } from '../repositories/interview.repository'
+import { reviewDocumentRepository } from '../repositories/review-document.repository'
+import { queueReviewDocumentExtraction } from './review/review-document.service'
+import type { ModelConnection } from '../schemas/model.schema'
+
+type ReviewDocumentSyncInput = {
+  opportunityId: string
+  sourceType: 'written_test' | 'interview'
+  interviewRoundId?: string
+  rawText: string
+  modelConnection?: ModelConnection
+}
+
+/**
+ * 复盘原文已经由机会事务保存；提取只是后台副作用，不能让模型请求失败回滚用户的原文。
+ * 清空原文时同步删除旧的结构化文档，避免详情页继续展示过期结果。
+ */
+async function syncReviewDocument(input: ReviewDocumentSyncInput) {
+  const rawText = input.rawText.trim()
+
+  if (!rawText) {
+    try {
+      await reviewDocumentRepository.deleteBySource(input.opportunityId, input.sourceType, input.interviewRoundId)
+    } catch (error) {
+      console.error('Failed to clear review document', error)
+    }
+    return
+  }
+
+  if (!input.modelConnection) {
+    try {
+      await reviewDocumentRepository.upsertPending({
+        id: crypto.randomUUID(),
+        opportunityId: input.opportunityId,
+        sourceType: input.sourceType,
+        interviewRoundId: input.interviewRoundId ?? null,
+        rawText,
+        updatedAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      console.error('Failed to invalidate review document', error)
+    }
+    return
+  }
+
+  try {
+    await queueReviewDocumentExtraction({
+      opportunityId: input.opportunityId,
+      sourceType: input.sourceType,
+      interviewRoundId: input.interviewRoundId ?? null,
+      rawText,
+      modelConnection: input.modelConnection,
+    })
+  } catch (error) {
+    console.error('Failed to queue review document extraction', error)
+  }
+}
 
 export class OpportunityNotFoundError extends Error {
   constructor(opportunityId: string) {
@@ -50,6 +109,42 @@ class OpportunityStatusConflictError extends Error {
   constructor() {
     super('Opportunity status has changed. Please refresh and try again.')
     this.name = 'OpportunityStatusConflictError'
+  }
+}
+
+class OpportunityInterviewHistoryConflictError extends Error {
+  statusCode = 409
+
+  constructor() {
+    super('该机会存在模拟面试历史，当前不能直接删除')
+    this.name = 'OpportunityInterviewHistoryConflictError'
+  }
+}
+
+class OpportunityInterviewRoundConflictError extends Error {
+  statusCode = 409
+
+  constructor(message = '面试轮次状态已变化，请刷新后重试') {
+    super(message)
+    this.name = 'OpportunityInterviewRoundConflictError'
+  }
+}
+
+function assertInterviewRoundState(round: Pick<InterviewRound, 'status' | 'result' | 'reviewNote' | 'keyTakeaways'>) {
+  if (round.status === 'planned' && round.result !== 'pending') {
+    throw new OpportunityInputError('待进行的面试结果必须为 pending')
+  }
+
+  if (round.status === 'planned' && (round.reviewNote.trim() || round.keyTakeaways.length > 0)) {
+    throw new OpportunityInputError('待进行的面试不能填写复盘内容，请先将面试标记为已完成')
+  }
+
+  if (round.status === 'completed' && round.result === 'pending') {
+    throw new OpportunityInputError('已完成的面试结果不能为 pending')
+  }
+
+  if (round.status === 'canceled' && round.result !== 'unknown') {
+    throw new OpportunityInputError('已取消的面试结果必须为 unknown')
   }
 }
 
@@ -275,6 +370,9 @@ export async function getJobOpportunityById(opportunityId: string) {
 export async function deleteJobOpportunity(opportunityId: string): Promise<{ id: string }> {
   const userId = await getCurrentUserId()
   await getOpportunityForCurrentUser(opportunityId)
+  if (await interviewRepository.hasSessionsByOpportunityId(opportunityId)) {
+    throw new OpportunityInterviewHistoryConflictError()
+  }
   const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(opportunityId)
   cancelJobAnalysisForOpportunity(opportunityId)
   if (analysis && !analysis.sourceAnalysisId && (analysis.status === 'pending' || analysis.status === 'processing')) {
@@ -397,6 +495,15 @@ export async function updateWrittenTestReview(opportunityId: string, input: unkn
 
   await opportunityRepository.updateOpportunity(updatedOpportunity)
 
+  if (parsedInput.reviewNote !== undefined) {
+    await syncReviewDocument({
+      opportunityId,
+      sourceType: 'written_test',
+      rawText: updatedOpportunity.writtenTestReviewNote ?? '',
+      modelConnection: parsedInput.modelConnection,
+    })
+  }
+
   return {
     scheduledAt: updatedOpportunity.writtenTestScheduledAt ?? '',
     reviewNote: updatedOpportunity.writtenTestReviewNote ?? '',
@@ -409,6 +516,9 @@ export async function addInterviewRound(opportunityId: string, input: unknown): 
   const parsedInput = addInterviewRoundInputSchema.parse(input)
   const now = new Date().toISOString()
   const sequence = await opportunityRepository.findNextInterviewRoundSequence(opportunityId)
+  // 兼容旧前端：携带复盘正文但没有显式状态时，按已完成轮次处理。
+  const status = parsedInput.status ?? (parsedInput.reviewNote?.trim() ? 'completed' : 'planned')
+  const result = parsedInput.result ?? (status === 'planned' ? 'pending' : 'unknown')
   const round: InterviewRound & { opportunityId: string } = {
     id: crypto.randomUUID(),
     opportunityId,
@@ -416,20 +526,31 @@ export async function addInterviewRound(opportunityId: string, input: unknown): 
     sequence,
     title: parsedInput.title || `第 ${sequence} 轮`,
     scheduledAt: parsedInput.scheduledAt ?? '',
-    status: parsedInput.status ?? 'planned',
-    result: parsedInput.result ?? 'pending',
+    status,
+    result,
     note: parsedInput.note ?? '',
     reviewNote: parsedInput.reviewNote ?? '',
     keyTakeaways: parsedInput.keyTakeaways ?? [],
     createdAt: now,
     updatedAt: now,
   }
+  assertInterviewRoundState(round)
   const updatedOpportunity = {
     ...opportunity,
     updatedAt: now,
   }
 
   await opportunityRepository.createInterviewRound(round, updatedOpportunity)
+
+  if (round.status === 'completed' && parsedInput.reviewNote !== undefined) {
+    await syncReviewDocument({
+      opportunityId,
+      sourceType: 'interview',
+      interviewRoundId: round.id,
+      rawText: round.reviewNote,
+      modelConnection: parsedInput.modelConnection,
+    })
+  }
 
   return round
 }
@@ -453,19 +574,112 @@ export async function updateInterviewRound(
     type: parsedInput.type ?? existingRound.type,
     title: parsedInput.title ?? existingRound.title,
     scheduledAt: parsedInput.scheduledAt ?? existingRound.scheduledAt,
-    status: parsedInput.status ?? existingRound.status,
+    status: existingRound.status,
     result: parsedInput.result ?? existingRound.result,
     note: parsedInput.note ?? existingRound.note,
     reviewNote: parsedInput.reviewNote ?? existingRound.reviewNote,
     keyTakeaways: parsedInput.keyTakeaways ?? existingRound.keyTakeaways,
     updatedAt: now,
   }
+  assertInterviewRoundState(updatedRound)
   const updatedOpportunity = {
     ...opportunity,
     updatedAt: now,
   }
 
   await opportunityRepository.updateInterviewRound(updatedRound, updatedOpportunity)
+
+  if (updatedRound.status === 'completed' && parsedInput.reviewNote !== undefined) {
+    await syncReviewDocument({
+      opportunityId,
+      sourceType: 'interview',
+      interviewRoundId: updatedRound.id,
+      rawText: updatedRound.reviewNote,
+      modelConnection: parsedInput.modelConnection,
+    })
+  }
+
+  return updatedRound
+}
+
+export async function completeInterviewRound(
+  opportunityId: string,
+  roundId: string,
+  input: unknown,
+): Promise<InterviewRound> {
+  const [opportunity, existingRound] = await Promise.all([
+    getOpportunityForCurrentUser(opportunityId),
+    opportunityRepository.findInterviewRoundById(opportunityId, roundId),
+  ])
+  if (!existingRound) throw new OpportunityNotFoundError(opportunityId)
+
+  const parsedInput = completeInterviewRoundInputSchema.parse(input)
+  if (existingRound.status === 'completed') return existingRound
+  if (existingRound.status !== 'planned') {
+    throw new OpportunityInterviewRoundConflictError('只有待进行的面试可以标记为已完成')
+  }
+
+  const now = new Date().toISOString()
+  const updatedRound: InterviewRound & { opportunityId: string } = {
+    ...existingRound,
+    opportunityId,
+    status: 'completed',
+    result: parsedInput.result ?? 'unknown',
+    updatedAt: now,
+  }
+  const updatedOpportunity = { ...opportunity, updatedAt: now }
+  const isUpdated = await opportunityRepository.updateInterviewRoundIfCurrentStatus(
+    updatedRound,
+    'planned',
+    updatedOpportunity,
+  )
+
+  if (!isUpdated) {
+    const currentRound = await opportunityRepository.findInterviewRoundById(opportunityId, roundId)
+    if (currentRound?.status === 'completed') return currentRound
+    throw new OpportunityInterviewRoundConflictError()
+  }
+
+  return updatedRound
+}
+
+export async function cancelInterviewRound(
+  opportunityId: string,
+  roundId: string,
+  input: unknown,
+): Promise<InterviewRound> {
+  const [opportunity, existingRound] = await Promise.all([
+    getOpportunityForCurrentUser(opportunityId),
+    opportunityRepository.findInterviewRoundById(opportunityId, roundId),
+  ])
+  if (!existingRound) throw new OpportunityNotFoundError(opportunityId)
+
+  cancelInterviewRoundInputSchema.parse(input)
+  if (existingRound.status === 'canceled') return existingRound
+  if (existingRound.status !== 'planned') {
+    throw new OpportunityInterviewRoundConflictError('只有待进行的面试可以取消')
+  }
+
+  const now = new Date().toISOString()
+  const updatedRound: InterviewRound & { opportunityId: string } = {
+    ...existingRound,
+    opportunityId,
+    status: 'canceled',
+    result: 'unknown',
+    updatedAt: now,
+  }
+  const updatedOpportunity = { ...opportunity, updatedAt: now }
+  const isUpdated = await opportunityRepository.updateInterviewRoundIfCurrentStatus(
+    updatedRound,
+    'planned',
+    updatedOpportunity,
+  )
+
+  if (!isUpdated) {
+    const currentRound = await opportunityRepository.findInterviewRoundById(opportunityId, roundId)
+    if (currentRound?.status === 'canceled') return currentRound
+    throw new OpportunityInterviewRoundConflictError()
+  }
 
   return updatedRound
 }

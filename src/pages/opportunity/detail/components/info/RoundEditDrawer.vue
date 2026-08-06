@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import type { InterviewRoundType } from '@/types/opportunity'
+import type { InterviewRound, InterviewRoundResult, InterviewRoundType } from '@/types/opportunity'
+import { formatDateOnly } from '@/shared/formatDate'
 import type { InterviewRoundForm } from '../../types'
 
-defineProps<{
+const props = defineProps<{
   open: boolean
   saving: boolean
   changed: boolean
+  round: InterviewRound | null
   roundTypeOptions: { label: string; value: InterviewRoundType }[]
 }>()
 
@@ -22,25 +24,42 @@ const calendarDate = defineModel<unknown>('calendarDate', { required: true })
 const selectContent = {
   align: 'start' as const,
   sideOffset: 8,
-  class: 'z-[80]',
+  class: '!z-[180]',
 }
+const resultOptions: { label: string; value: Exclude<InterviewRoundResult, 'pending'> }[] = [
+  { label: '结果未知', value: 'unknown' },
+  { label: '已通过', value: 'passed' },
+  { label: '未通过', value: 'failed' },
+]
 </script>
 
 <template>
-  <Transition name="project-edit-drawer">
-    <div
-      v-if="open"
-      class="fixed inset-0 z-50 flex justify-end bg-black/35 backdrop-blur-[2px]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="编辑测评记录"
-      @click.self="emit('close')"
-    >
-      <section class="app-drawer flex h-full w-full max-w-xl flex-col border-l border-default shadow-2xl">
+  <UDrawer
+    :open="open"
+    direction="right"
+    :handle="false"
+    :close="false"
+    :dismissible="!saving"
+    :ui="{
+      overlay: '!z-[170] bg-black/35 backdrop-blur-[2px]',
+      content: '!z-[171] app-drawer h-full w-full max-w-xl border-l border-default shadow-2xl',
+    }"
+    @update:open="(nextOpen: boolean) => !nextOpen && emit('close')"
+  >
+    <template #content>
+      <section class="flex h-full min-h-0 w-full flex-col">
         <div class="flex items-center justify-between border-b border-default px-5 py-4">
           <div>
-            <h2 class="text-base font-semibold text-highlighted">编辑测评记录</h2>
-            <p class="mt-1 text-xs text-muted">调整类型、名称、日期和复盘内容。</p>
+            <h2 class="text-base font-semibold text-highlighted">
+              {{ props.round?.status === 'planned' ? '编辑面试安排' : '编辑面试复盘' }}
+            </h2>
+            <p class="mt-1 text-xs text-muted">
+              {{
+                props.round?.status === 'planned'
+                  ? '调整面试类型、名称、时间和准备备注。'
+                  : '补充本轮结果与真实复盘，保存后会异步提取能力证据。'
+              }}
+            </p>
           </div>
           <UButton
             type="button"
@@ -66,8 +85,8 @@ const selectContent = {
           <UFormField label="轮次名称">
             <UInput v-model="form.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
           </UFormField>
-          <UFormField label="日期">
-            <UPopover v-model:open="datePopoverOpen" :portal="true" :ui="{ content: 'z-[100]' }">
+          <UFormField :label="props.round?.status === 'planned' ? '面试时间' : '面试日期'">
+            <UPopover v-model:open="datePopoverOpen" :portal="true" :ui="{ content: '!z-[180]' }">
               <UButton
                 type="button"
                 color="neutral"
@@ -75,7 +94,7 @@ const selectContent = {
                 class="w-full justify-between"
                 trailing-icon="i-lucide-calendar-days"
               >
-                {{ form.date || '请输入日期' }}
+                {{ formatDateOnly(form.date) || '请输入日期' }}
               </UButton>
               <template #content>
                 <div class="p-2">
@@ -84,14 +103,34 @@ const selectContent = {
               </template>
             </UPopover>
           </UFormField>
-          <UFormField label="复盘备注">
+
+          <UFormField v-if="props.round?.status === 'planned'" label="安排备注">
             <UTextarea
               v-model="form.note"
               class="w-full"
-              :rows="8"
-              placeholder="记录真实面试复盘，后续可以作为 AI 分析输入。"
+              :rows="6"
+              placeholder="例如：线上面试、提前准备项目架构说明"
             />
           </UFormField>
+          <template v-else>
+            <UFormField label="面试结果">
+              <USelect
+                v-model="form.result"
+                class="w-full"
+                :items="resultOptions"
+                value-key="value"
+                :content="selectContent"
+              />
+            </UFormField>
+            <UFormField label="复盘内容">
+              <UTextarea
+                v-model="form.reviewNote"
+                class="w-full"
+                :rows="10"
+                placeholder="记录真实面试问题、回答、反馈与需要补强的地方。"
+              />
+            </UFormField>
+          </template>
         </div>
 
         <div class="flex justify-end gap-2 border-t border-default px-5 py-4">
@@ -109,6 +148,6 @@ const selectContent = {
           </UButton>
         </div>
       </section>
-    </div>
-  </Transition>
+    </template>
+  </UDrawer>
 </template>

@@ -10,30 +10,39 @@ import type {
   OpportunityIntentionLevel,
   OpportunityTerminationReasonCode,
 } from '@/types/opportunity'
-import { useOpportunityStore } from '@/stores'
+import type { ReviewDocumentSummary } from '@/types/review'
+import { useOpportunityStore, useSettingsStore } from '@/stores'
 import { ApiRequestError } from '@/services/http'
 import { getRecommendationClass, getRecommendationLabel } from '@/shared/opportunity/analysisPresentation'
+import { formatDateOnly } from '@/shared/formatDate'
 import ChatSection from './components/ChatSection.vue'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
-import MockInterviewSection from './components/MockInterviewSection.vue'
 import OpportunityDetailSkeleton from './components/OpportunityDetailSkeleton.vue'
+import InterviewWorkspaceSection from './interview/components/InterviewWorkspaceSection.vue'
 import type {
+  InterviewManagementTab,
   InterviewRoundForm,
   ChatItem,
   DetailNavItem,
   DetailNavKey,
-  MockInterviewMessage,
   OpportunityInfoForm,
-  OverallInterviewScore,
   WrittenTestReviewForm,
 } from './types'
 
 const route = useRoute()
 const router = useRouter()
 const opportunityStore = useOpportunityStore()
+const settingsStore = useSettingsStore()
 const toast = useToast()
-const { opportunities, analyses, loadError } = storeToRefs(opportunityStore)
+const { opportunities, analyses, loadError, reviewDocumentsByOpportunity } = storeToRefs(opportunityStore)
+
+function getConfiguredReviewModelConnection() {
+  const connection = settingsStore.llm
+  if (!connection.baseUrl.trim() || !connection.modelName.trim() || !connection.apiKey.trim()) return undefined
+
+  return connection
+}
 
 const baseStatusFlow: { label: string; value: JobOpportunityStatus }[] = [
   { label: '待投递', value: 'pending_apply' },
@@ -76,7 +85,7 @@ const fixedNavItems: DetailNavItem[] = [
     key: 'info',
     label: '信息管理',
     icon: 'i-lucide-clipboard-list',
-    description: 'JD 与测评记录',
+    description: 'JD 与面试管理',
   },
   {
     key: 'mock-interview',
@@ -90,7 +99,7 @@ const chatItems = ref<ChatItem[]>([
   { id: 1, title: 'JD 追问准备', preview: '围绕 AI Workflow 和 RAG 继续追问' },
   { id: 2, title: '简历优化讨论', preview: '把智能工牌项目改写得更贴合岗位' },
 ])
-const activeNavKey = ref<DetailNavKey>('dashboard')
+const activeNavKey = ref<DetailNavKey>(route.query.section === 'mock-interview' ? 'mock-interview' : 'dashboard')
 const isOpportunityInfoEditing = ref(false)
 const statusMotionKey = ref(0)
 const isTerminatePopoverOpen = ref(false)
@@ -99,6 +108,7 @@ const roundCalendarDate = ref<unknown>()
 const editingRoundId = ref<string | null>(null)
 const deletingRoundId = ref<string | null>(null)
 const isInterviewReviewDrawerOpen = ref(false)
+const interviewManagementTab = ref<InterviewManagementTab>('schedule')
 const isWrittenTestReviewDrawerOpen = ref(false)
 const isRoundEditDrawerOpen = ref(false)
 const editRoundDatePopoverOpen = ref(false)
@@ -113,14 +123,18 @@ const terminationNewRoundType = ref<InterviewRoundType>('technical_basic')
 const terminationNewRoundTitle = ref('')
 const terminationReasonNote = ref('')
 const isDetailLoading = ref(false)
+const isDetailBootstrapping = ref(true)
 const isSavingOpportunityInfo = ref(false)
 const isSavingOpportunityMeta = ref(false)
 const isStatusTransitioning = ref(false)
 const isTogglingWrittenTestFlow = ref(false)
 const isTerminatingOpportunity = ref(false)
 const isAddingInterviewRound = ref(false)
+const completingInterviewRoundId = ref<string | null>(null)
+const cancelingInterviewRoundId = ref<string | null>(null)
 const isSavingWrittenTestReview = ref(false)
 const isSavingRoundEdit = ref(false)
+const retryingReviewDocumentId = ref<string | null>(null)
 const deletingRoundActionId = ref<string | null>(null)
 const isUnsavedPreferenceLeaveDialogOpen = ref(false)
 let pendingInternalLeaveAction: (() => void) | null = null
@@ -129,10 +143,13 @@ let pendingRouteLeaveResolver: ((shouldLeave: boolean) => void) | null = null
 const opportunityId = computed(() => String(route.params.id ?? ''))
 const opportunity = computed(() => opportunities.value.find((item) => item.id === opportunityId.value) ?? null)
 const analysis = computed(() => analyses.value.find((item) => item.opportunityId === opportunityId.value) ?? null)
+const reviewDocuments = computed(() => reviewDocumentsByOpportunity.value[opportunityId.value] ?? [])
 const hasLoadedOpportunityDetail = computed(() => {
   return Boolean(opportunityId.value) && opportunityStore.hasOpportunityDetail(opportunityId.value)
 })
-const shouldShowDetailSkeleton = computed(() => isDetailLoading.value && !hasLoadedOpportunityDetail.value)
+const shouldShowDetailSkeleton = computed(
+  () => !hasLoadedOpportunityDetail.value && (isDetailBootstrapping.value || isDetailLoading.value),
+)
 const analysisModelName = computed(() => {
   const task = opportunityStore.analysisTasks.find((item) => item.opportunityId === opportunityId.value)
 
@@ -162,13 +179,17 @@ const roundForm = reactive<InterviewRoundForm>({
   type: 'technical_basic' as InterviewRoundType,
   title: '',
   date: '',
+  result: 'unknown',
   note: '',
+  reviewNote: '',
 })
 const roundEditForm = reactive<InterviewRoundForm>({
   type: 'technical_basic' as InterviewRoundType,
   title: '',
   date: '',
+  result: 'unknown',
   note: '',
+  reviewNote: '',
 })
 const writtenTestReviewForm = reactive<WrittenTestReviewForm>({
   scheduledAt: '',
@@ -227,6 +248,7 @@ const canOpenWrittenTestReview = computed(() => {
 const canOpenInterviewReview = computed(() => {
   return hasCurrentStageReached('interviewing')
 })
+const canCreateInterviewSchedule = computed(() => opportunity.value?.status === 'interviewing')
 const nextStatus = computed(() => {
   if (opportunity.value?.status === 'closed') return null
   if (currentStatusIndex.value < 0) return statusFlow.value[0]
@@ -254,7 +276,9 @@ const hasRoundEditChanged = computed(() => {
     roundEditForm.type !== editingRoundInitialValue.value.type ||
     roundEditForm.title !== editingRoundInitialValue.value.title ||
     roundEditForm.date !== editingRoundInitialValue.value.date ||
-    roundEditForm.note !== editingRoundInitialValue.value.note
+    roundEditForm.result !== editingRoundInitialValue.value.result ||
+    roundEditForm.note !== editingRoundInitialValue.value.note ||
+    roundEditForm.reviewNote !== editingRoundInitialValue.value.reviewNote
   )
 })
 const canChangeWrittenTestFlow = computed(() => {
@@ -263,12 +287,15 @@ const canChangeWrittenTestFlow = computed(() => {
   return status !== 'interviewing' && status !== 'oc' && status !== 'offered' && status !== 'closed'
 })
 const interviewRoundDateLabel = computed(() => {
-  return roundForm.date || '请输入日期'
+  return formatDateOnly(roundForm.date) || '请输入日期'
 })
 const writtenTestDateLabel = computed(() => {
-  return writtenTestReviewForm.scheduledAt || '请输入笔试时间'
+  return formatDateOnly(writtenTestReviewForm.scheduledAt) || '请输入笔试时间'
 })
 const interviewRounds = computed(() => opportunity.value?.interviewRounds ?? [])
+const editingInterviewRound = computed(
+  () => interviewRounds.value.find((round) => round.id === editingRoundId.value) ?? null,
+)
 const availableInterviewRoundTypeOptions = computed(() => {
   return interviewRoundTypeOptions
 })
@@ -282,35 +309,6 @@ const terminationRoundOptions = computed(() => {
     { label: '不绑定具体轮次', value: 'none' },
   ]
 })
-
-const mockInterviewMessages: MockInterviewMessage[] = [
-  {
-    role: 'interviewer',
-    content: '这个岗位提到 AI Workflow。请你结合自己的项目，说一下你会如何拆分一个 JD 分析 Agent 的流程？',
-  },
-  {
-    role: 'candidate',
-    content:
-      '我会先把简历结构化，再把 JD 结构化，最后做匹配分析。每一步都用结构化输出，这样方便调试，也方便后续模拟面试继续复用。',
-    score: 82,
-    feedback: '回答抓住了拆分和结构化输出，但可以继续补充工具调用失败、上下文压缩和人工确认节点。',
-  },
-  {
-    role: 'interviewer',
-    content: '如果要做知识库，你会怎么设计文档切分和召回效果评估？',
-  },
-]
-
-const overallInterviewScore: OverallInterviewScore = {
-  score: 78,
-  summary: '当前回答能覆盖 AI Workflow 的基本拆分思路，但 RAG、召回评估、工具调用失败处理仍需要补充更工程化的细节。',
-  dimensions: [
-    { label: '技术准确性', score: 82 },
-    { label: '业务贴合度', score: 76 },
-    { label: '表达结构', score: 80 },
-    { label: '深度追问承接', score: 72 },
-  ],
-}
 
 function syncInfoForm() {
   if (!opportunity.value) return
@@ -342,16 +340,30 @@ function shouldConfirmUnsavedPreferenceLeave() {
   return activeNavKey.value === 'info' && hasOpportunityMetaChanged.value && !isSavingOpportunityMeta.value
 }
 
+function syncDetailSectionQuery(navKey: DetailNavKey) {
+  const query = { ...route.query }
+
+  if (navKey === 'mock-interview') {
+    query.section = 'mock-interview'
+  } else {
+    delete query.section
+  }
+
+  void router.replace({ query })
+}
+
 function navigateDetailSection(navKey: DetailNavKey) {
   if (navKey === activeNavKey.value) return
 
   if (!shouldConfirmUnsavedPreferenceLeave()) {
     activeNavKey.value = navKey
+    syncDetailSectionQuery(navKey)
     return
   }
 
   pendingInternalLeaveAction = () => {
     activeNavKey.value = navKey
+    syncDetailSectionQuery(navKey)
   }
   isUnsavedPreferenceLeaveDialogOpen.value = true
 }
@@ -406,6 +418,16 @@ async function loadOpportunityDetail(force = false) {
     await opportunityStore.loadOpportunityDetail(opportunityId.value, { force })
   } finally {
     if (shouldShowLoading) isDetailLoading.value = false
+  }
+}
+
+async function loadReviewDocuments() {
+  if (!opportunityId.value) return
+
+  try {
+    await opportunityStore.loadReviewDocuments(opportunityId.value)
+  } catch (error) {
+    showRequestError('加载复盘提取状态失败', error)
   }
 }
 
@@ -513,7 +535,6 @@ async function closeOpportunity() {
         status: 'completed',
         result: 'failed',
         note: terminationReasonNote.value,
-        reviewNote: terminationReasonNote.value,
       })
       finalRelatedRoundId = round?.id
     }
@@ -575,8 +596,9 @@ async function toggleIncludeWrittenTest() {
   }
 }
 
-async function addInterviewRound() {
+async function addInterviewRound(mode: InterviewManagementTab) {
   if (!opportunity.value || !roundForm.title.trim() || isAddingInterviewRound.value) return
+  if (mode === 'schedule' && !canCreateInterviewSchedule.value) return
 
   isAddingInterviewRound.value = true
   try {
@@ -584,15 +606,68 @@ async function addInterviewRound() {
       type: roundForm.type,
       title: roundForm.title,
       scheduledAt: roundForm.date,
-      note: roundForm.note,
+      status: mode === 'schedule' ? 'planned' : 'completed',
+      result: mode === 'schedule' ? 'pending' : roundForm.result,
+      note: mode === 'schedule' ? roundForm.note : '',
+      reviewNote: mode === 'review' ? roundForm.reviewNote : '',
+      modelConnection: mode === 'review' ? getConfiguredReviewModelConnection() : undefined,
     })
-    Object.assign(roundForm, { type: getDefaultRoundType(), title: '', date: '', note: '' })
+    if (mode === 'review') await loadReviewDocuments()
+    Object.assign(roundForm, {
+      type: getDefaultRoundType(),
+      title: '',
+      date: '',
+      result: 'unknown',
+      note: '',
+      reviewNote: '',
+    })
     roundCalendarDate.value = undefined
-    toast.add({ title: '测评记录已添加', color: 'success', icon: 'i-lucide-circle-check' })
+    toast.add({
+      title: mode === 'schedule' ? '面试安排已创建' : '面试复盘已添加',
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+    })
   } catch (error) {
-    showRequestError('添加测评记录失败', error)
+    showRequestError(mode === 'schedule' ? '创建面试安排失败' : '添加面试复盘失败', error)
   } finally {
     isAddingInterviewRound.value = false
+  }
+}
+
+async function completeInterviewRound(round: InterviewRound) {
+  if (!opportunity.value || completingInterviewRoundId.value || cancelingInterviewRoundId.value) return
+
+  completingInterviewRoundId.value = round.id
+  try {
+    const completedRound = await opportunityStore.completeInterviewRound(opportunity.value.id, round.id)
+    if (!completedRound) return
+
+    interviewManagementTab.value = 'review'
+    openRoundEditDrawer(completedRound)
+    toast.add({
+      title: '面试已完成',
+      description: '可以继续补充本轮复盘。',
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+    })
+  } catch (error) {
+    showRequestError('更新面试安排失败', error)
+  } finally {
+    completingInterviewRoundId.value = null
+  }
+}
+
+async function cancelInterviewRound(round: InterviewRound) {
+  if (!opportunity.value || completingInterviewRoundId.value || cancelingInterviewRoundId.value) return
+
+  cancelingInterviewRoundId.value = round.id
+  try {
+    await opportunityStore.cancelInterviewRound(opportunity.value.id, round.id)
+    toast.add({ title: '面试安排已取消', color: 'success', icon: 'i-lucide-calendar-x' })
+  } catch (error) {
+    showRequestError('取消面试安排失败', error)
+  } finally {
+    cancelingInterviewRoundId.value = null
   }
 }
 
@@ -641,12 +716,13 @@ function unlockRoundDrawerScroll() {
 function openInterviewReviewDrawer() {
   if (!canOpenInterviewReview.value) return
 
+  interviewManagementTab.value = canCreateInterviewSchedule.value ? 'schedule' : 'review'
   isInterviewReviewDrawerOpen.value = true
   lockRoundDrawerScroll()
 }
 
 function closeInterviewReviewDrawer() {
-  if (isAddingInterviewRound.value) return
+  if (isAddingInterviewRound.value || completingInterviewRoundId.value || cancelingInterviewRoundId.value) return
 
   isInterviewReviewDrawerOpen.value = false
   unlockRoundDrawerScroll()
@@ -674,7 +750,9 @@ async function saveWrittenTestReview() {
     await opportunityStore.updateWrittenTestReview(opportunity.value.id, {
       scheduledAt: writtenTestReviewForm.scheduledAt,
       reviewNote: writtenTestReviewForm.reviewNote,
+      modelConnection: getConfiguredReviewModelConnection(),
     })
+    await loadReviewDocuments()
     closeWrittenTestReviewDrawer(true)
     toast.add({ title: '笔试复盘已保存', color: 'success', icon: 'i-lucide-circle-check' })
   } catch (error) {
@@ -690,7 +768,9 @@ function openRoundEditDrawer(round: InterviewRound) {
     type: round.type,
     title: round.title,
     date: round.scheduledAt,
+    result: round.result,
     note: round.note,
+    reviewNote: round.reviewNote,
   })
   editingRoundInitialValue.value = { ...roundEditForm }
   editRoundCalendarDate.value = undefined
@@ -720,16 +800,31 @@ async function saveRoundEdit() {
 
   isSavingRoundEdit.value = true
   try {
+    const currentRound = interviewRounds.value.find((round) => round.id === editingRoundId.value)
+    if (!currentRound) return
+
+    const reviewNoteChanged = roundEditForm.reviewNote !== editingRoundInitialValue.value?.reviewNote
     await opportunityStore.updateInterviewRound(opportunity.value.id, editingRoundId.value, {
       type: roundEditForm.type,
       title: roundEditForm.title,
       scheduledAt: roundEditForm.date,
-      note: roundEditForm.note,
+      ...(currentRound.status === 'planned'
+        ? { note: roundEditForm.note }
+        : {
+            result: roundEditForm.result,
+            ...(reviewNoteChanged
+              ? {
+                  reviewNote: roundEditForm.reviewNote,
+                  modelConnection: getConfiguredReviewModelConnection(),
+                }
+              : {}),
+          }),
     })
+    if (reviewNoteChanged) await loadReviewDocuments()
     closeRoundEditDrawer(true)
-    toast.add({ title: '测评记录已保存', color: 'success', icon: 'i-lucide-circle-check' })
+    toast.add({ title: '面试记录已保存', color: 'success', icon: 'i-lucide-circle-check' })
   } catch (error) {
-    showRequestError('保存测评记录失败', error)
+    showRequestError('保存面试记录失败', error)
   } finally {
     isSavingRoundEdit.value = false
   }
@@ -741,12 +836,33 @@ async function confirmDeleteRound(roundId: string) {
   deletingRoundActionId.value = roundId
   try {
     await opportunityStore.deleteInterviewRound(opportunity.value.id, roundId)
+    await loadReviewDocuments()
     deletingRoundId.value = null
-    toast.add({ title: '测评记录已删除', color: 'success', icon: 'i-lucide-circle-check' })
+    toast.add({ title: '面试记录已删除', color: 'success', icon: 'i-lucide-circle-check' })
   } catch (error) {
-    showRequestError('删除测评记录失败', error)
+    showRequestError('删除面试记录失败', error)
   } finally {
     deletingRoundActionId.value = null
+  }
+}
+
+async function retryReviewDocument(document: ReviewDocumentSummary) {
+  if (!opportunity.value || retryingReviewDocumentId.value || document.status !== 'failed') return
+
+  const modelConnection = getConfiguredReviewModelConnection()
+  if (!modelConnection) {
+    toast.add({ title: '请先配置模型', description: '复盘提取需要可用的模型配置。', color: 'warning' })
+    return
+  }
+
+  retryingReviewDocumentId.value = document.id
+  try {
+    await opportunityStore.retryReviewDocument(opportunity.value.id, document.id, modelConnection)
+    toast.add({ title: '已重新开始复盘提取', color: 'success', icon: 'i-lucide-refresh-cw' })
+  } catch (error) {
+    showRequestError('重新提取复盘失败', error)
+  } finally {
+    retryingReviewDocumentId.value = null
   }
 }
 
@@ -850,7 +966,10 @@ watch(isTerminatePopoverOpen, (isOpen) => {
 
 onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
-  void loadOpportunityDetail()
+  void loadOpportunityDetail().finally(() => {
+    isDetailBootstrapping.value = false
+  })
+  void loadReviewDocuments()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
@@ -992,6 +1111,7 @@ onBeforeUnmount(() => {
           v-model:written-test-date-popover-open="writtenTestDatePopoverOpen"
           v-model:written-test-calendar-date="writtenTestCalendarDate"
           v-model:is-interview-review-drawer-open="isInterviewReviewDrawerOpen"
+          v-model:interview-management-tab="interviewManagementTab"
           v-model:round-form="roundForm"
           v-model:round-date-popover-open="roundDatePopoverOpen"
           v-model:round-calendar-date="roundCalendarDate"
@@ -1018,15 +1138,21 @@ onBeforeUnmount(() => {
           :can-change-written-test-flow="canChangeWrittenTestFlow"
           :is-terminating-opportunity="isTerminatingOpportunity"
           :is-adding-interview-round="isAddingInterviewRound"
+          :completing-interview-round-id="completingInterviewRoundId"
+          :canceling-interview-round-id="cancelingInterviewRoundId"
           :is-saving-written-test-review="isSavingWrittenTestReview"
           :is-saving-round-edit="isSavingRoundEdit"
           :deleting-round-action-id="deletingRoundActionId"
           :can-open-written-test-review="canOpenWrittenTestReview"
           :can-open-interview-review="canOpenInterviewReview"
+          :can-create-interview-schedule="canCreateInterviewSchedule"
           :termination-round-options="terminationRoundOptions"
           :available-interview-round-type-options="availableInterviewRoundTypeOptions"
           :interview-round-date-label="interviewRoundDateLabel"
           :written-test-date-label="writtenTestDateLabel"
+          :review-documents="reviewDocuments"
+          :retrying-review-document-id="retryingReviewDocumentId"
+          :editing-interview-round="editingInterviewRound"
           @go-to-previous-status="goToPreviousStatus"
           @advance-opportunity-status="advanceOpportunityStatus"
           @close-opportunity="closeOpportunity"
@@ -1040,6 +1166,8 @@ onBeforeUnmount(() => {
           @open-interview-review-drawer="openInterviewReviewDrawer"
           @close-interview-review-drawer="closeInterviewReviewDrawer"
           @add-interview-round="addInterviewRound"
+          @complete-interview-round="completeInterviewRound"
+          @cancel-interview-round="cancelInterviewRound"
           @handle-round-date-select="handleRoundDateSelect"
           @open-round-edit-drawer="openRoundEditDrawer"
           @confirm-delete-round="confirmDeleteRound"
@@ -1047,12 +1175,13 @@ onBeforeUnmount(() => {
           @handle-edit-round-date-select="handleEditRoundDateSelect"
           @handle-written-test-date-select="handleWrittenTestDateSelect"
           @save-round-edit="saveRoundEdit"
+          @retry-review-document="retryReviewDocument"
         />
 
-        <MockInterviewSection
+        <InterviewWorkspaceSection
           v-else-if="activeNavKey === 'mock-interview'"
-          :messages="mockInterviewMessages"
-          :overall-score="overallInterviewScore"
+          :opportunity-id="opportunityId"
+          :analysis="analysis"
         />
 
         <ChatSection v-else-if="isChatPage" :active-chat="activeChat" />

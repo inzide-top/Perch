@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import type { JobAnalysis, JobAnalysisListSummary, JobAnalysisResult, JobOpportunity } from '@/types/opportunity'
+import type { ReviewDocumentSummary } from '@/types/review'
+import type { LlmConnectionSettings } from '@/types/settings'
 import { jobAnalysisApi, type StartJobAnalysisPayload } from '@/services/job-analyses'
+import { useBackgroundTaskStore, type BackgroundTaskEntry } from './background-tasks'
 import {
   opportunityApi,
   type AddInterviewRoundPayload,
@@ -39,6 +42,7 @@ type OpportunityState = {
   opportunitiesLoadedAt: number | null
   opportunityListFilterKey: string
   loadError: string | null
+  reviewDocumentsByOpportunity: Record<string, ReviewDocumentSummary[]>
 }
 
 type OpportunitySelectionState = Pick<
@@ -183,50 +187,16 @@ function toDisplayAnalysis(task: JobAnalysisTaskState): JobAnalysis | null {
   }
 }
 
-let analysisPollingPromise: Promise<void> | null = null
-let activePollDelayResolver: ((reason: 'timeout' | 'visibility') => void) | null = null
-const maxAnalysisPollingAttempts = 192
 const opportunityListCacheTtlMs = 60_000
 const opportunityDetailCacheMaxAgeMs = 30 * 60 * 1_000
 const maxOpportunityDetailCacheEntries = 20
 const opportunityDetailRequests = new Map<string, Promise<JobOpportunity>>()
 let opportunitiesLoadRequest: { filterKey: string; promise: Promise<void> } | null = null
+let opportunitiesLoadAbortController: AbortController | null = null
 let opportunityListLoadSequence = 0
 
-function isDocumentHidden() {
-  return typeof document !== 'undefined' && document.hidden
-}
-
-function getActiveAnalysisPollDelay(tasks: JobAnalysisTaskState[]) {
-  if (isDocumentHidden()) return 30_000
-
-  const earliestCreatedAt = tasks.reduce<number>((earliest, task) => {
-    const createdAt = Date.parse(task.createdAt)
-    return Number.isFinite(createdAt) ? Math.min(earliest, createdAt) : earliest
-  }, Date.now())
-  const elapsedMs = Math.max(0, Date.now() - earliestCreatedAt)
-
-  if (elapsedMs < 45_000) return 15_000
-  if (elapsedMs < 75_000) return 10_000
-  return 5_000
-}
-
-function waitForAnalysisPoll(milliseconds: number) {
-  return new Promise<'timeout' | 'visibility'>((resolve) => {
-    const finish = (reason: 'timeout' | 'visibility') => {
-      window.clearTimeout(timer)
-      if (activePollDelayResolver === finish) activePollDelayResolver = null
-      resolve(reason)
-    }
-    const timer = window.setTimeout(() => finish('timeout'), milliseconds)
-    activePollDelayResolver = finish
-  })
-}
-
-if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', () => {
-    activePollDelayResolver?.('visibility')
-  })
+function isRequestAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
 }
 
 function isDetailCacheFresh(
@@ -285,6 +255,7 @@ export const useOpportunityStore = defineStore('opportunity', {
     opportunitiesLoadedAt: null,
     opportunityListFilterKey: '',
     loadError: null,
+    reviewDocumentsByOpportunity: {},
   }),
 
   getters: {
@@ -308,11 +279,15 @@ export const useOpportunityStore = defineStore('opportunity', {
       )
     },
 
-    isOpportunityListCached: (state) => {
-      return Boolean(
-        state.opportunitiesLoadedAt && Date.now() - state.opportunitiesLoadedAt < opportunityListCacheTtlMs,
-      )
-    },
+    isOpportunityListFresh:
+      (state) =>
+      (filters: OpportunityListFilters = {}) => {
+        return Boolean(
+          state.opportunitiesLoadedAt &&
+          state.opportunityListFilterKey === createOpportunityListFilterKey(filters) &&
+          Date.now() - state.opportunitiesLoadedAt < opportunityListCacheTtlMs,
+        )
+      },
   },
 
   actions: {
@@ -354,9 +329,12 @@ export const useOpportunityStore = defineStore('opportunity', {
     async loadOpportunities(options: { force?: boolean; filters?: OpportunityListFilters } = {}) {
       const filters = options.filters ?? {}
       const filterKey = createOpportunityListFilterKey(filters)
-      const hasMatchingCache = this.opportunityListFilterKey === filterKey
-      if (!options.force && hasMatchingCache && this.isOpportunityListCached) return
+      if (!options.force && this.isOpportunityListFresh(filters)) return
       if (opportunitiesLoadRequest?.filterKey === filterKey) return opportunitiesLoadRequest.promise
+
+      opportunitiesLoadAbortController?.abort()
+      const abortController = new AbortController()
+      opportunitiesLoadAbortController = abortController
 
       const isInitialLoad = this.opportunities.length === 0
       if (isInitialLoad) this.isInitialLoading = true
@@ -365,7 +343,7 @@ export const useOpportunityStore = defineStore('opportunity', {
 
       const requestSequence = ++opportunityListLoadSequence
       const request = (async () => {
-        const opportunities = await opportunityApi.getOpportunities(filters)
+        const opportunities = await opportunityApi.getOpportunities(filters, { signal: abortController.signal })
         if (requestSequence !== opportunityListLoadSequence) return
         const normalizedOpportunities = opportunities.map((opportunity) =>
           mergeOpportunitySummary(
@@ -400,11 +378,16 @@ export const useOpportunityStore = defineStore('opportunity', {
       try {
         await request
       } catch (error) {
-        this.loadError = error instanceof Error ? error.message : 'load opportunities failed'
+        if (!isRequestAbortError(error) && requestSequence === opportunityListLoadSequence) {
+          this.loadError = error instanceof Error ? error.message : 'load opportunities failed'
+        }
       } finally {
-        this.isInitialLoading = false
-        this.isRefreshing = false
+        if (requestSequence === opportunityListLoadSequence) {
+          this.isInitialLoading = false
+          this.isRefreshing = false
+        }
         if (opportunitiesLoadRequest?.promise === request) opportunitiesLoadRequest = null
+        if (opportunitiesLoadAbortController === abortController) opportunitiesLoadAbortController = null
       }
     },
 
@@ -460,6 +443,7 @@ export const useOpportunityStore = defineStore('opportunity', {
     async deleteOpportunity(opportunityId: string) {
       const result = await opportunityApi.deleteOpportunity(opportunityId)
 
+      useBackgroundTaskStore().unregister({ type: 'job_analysis', opportunityId: result.id })
       this.opportunities = this.opportunities.filter((opportunity) => opportunity.id !== result.id)
       this.analysisTasks = this.analysisTasks.filter((task) => task.opportunityId !== result.id)
       this.analyses = this.analyses.filter((analysis) => analysis.opportunityId !== result.id)
@@ -492,11 +476,28 @@ export const useOpportunityStore = defineStore('opportunity', {
       if (options.select !== false) this.currentAnalysisId = analysis?.id ?? this.currentAnalysisId
       this.persistToStorage()
 
+      if (task.status === 'pending' || task.status === 'processing') {
+        const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+        useBackgroundTaskStore().register(
+          { type: 'job_analysis', opportunityId },
+          opportunity ? { primary: `${opportunity.company} · ${opportunity.jobTitle}` } : undefined,
+        )
+      }
+
       return task
     },
 
     async startJobAnalysis(opportunityId: string, payload: StartJobAnalysisPayload) {
       const progress = await jobAnalysisApi.startJobAnalysis(opportunityId, payload)
+      if (progress.status === 'pending' || progress.status === 'processing') {
+        const backgroundTaskStore = useBackgroundTaskStore()
+        const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+        backgroundTaskStore.reset({ type: 'job_analysis', opportunityId })
+        backgroundTaskStore.register(
+          { type: 'job_analysis', opportunityId },
+          opportunity ? { primary: `${opportunity.company} · ${opportunity.jobTitle}` } : undefined,
+        )
+      }
       return { ...progress, opportunityId }
     },
 
@@ -510,7 +511,7 @@ export const useOpportunityStore = defineStore('opportunity', {
       this.opportunitiesLoadedAt = Date.now()
       this.persistToStorage()
 
-      void this.pollJobAnalyses()
+      useBackgroundTaskStore().register({ type: 'job_analysis', opportunityId })
 
       return task
     },
@@ -525,50 +526,39 @@ export const useOpportunityStore = defineStore('opportunity', {
       this.opportunitiesLoadedAt = Date.now()
       this.persistToStorage()
 
-      void this.pollJobAnalyses()
+      useBackgroundTaskStore().register(
+        { type: 'job_analysis', opportunityId: opportunity.id },
+        { primary: `${opportunity.company} · ${opportunity.jobTitle}` },
+      )
+    },
+
+    applyBackgroundAnalysisTask(task: BackgroundTaskEntry) {
+      if (task.type !== 'job_analysis') return
+
+      if (task.status === 'missing') {
+        this.analysisTasks = this.analysisTasks.filter((item) => item.opportunityId !== task.opportunityId)
+        return
+      }
+
+      const taskState: JobAnalysisTaskState = {
+        opportunityId: task.opportunityId,
+        ...(task.analysis as JobAnalysisListSummary),
+        result: task.analysis?.result ?? null,
+      }
+      upsertAnalysisTask(this.analysisTasks, taskState)
+      const analysis = toDisplayAnalysis(taskState)
+      if (analysis) upsertOpportunityAnalysis(this.analyses, analysis)
+      else removeOpportunityAnalysis(this.analyses, task.opportunityId)
+      delete this.opportunityDetailCache[task.opportunityId]
+      this.persistToStorage()
     },
 
     async pollJobAnalyses() {
-      if (analysisPollingPromise) return analysisPollingPromise
-
-      analysisPollingPromise = (async () => {
-        for (let attempt = 0; attempt < maxAnalysisPollingAttempts; attempt += 1) {
-          const activeTasks = this.analysisTasks.filter(
-            (task) => task.status === 'pending' || task.status === 'processing',
-          )
-          const activeOpportunityIds = activeTasks.map((task) => task.opportunityId)
-          if (activeOpportunityIds.length === 0) return
-
-          const wakeReason = await waitForAnalysisPoll(getActiveAnalysisPollDelay(activeTasks))
-          if (wakeReason === 'visibility' && isDocumentHidden()) continue
-
-          const pendingOpportunityIds = this.analysisTasks
-            .filter((task) => task.status === 'pending' || task.status === 'processing')
-            .map((task) => task.opportunityId)
-          if (pendingOpportunityIds.length === 0) return
-
-          let progressItems
-          try {
-            progressItems = await jobAnalysisApi.getJobAnalyses(pendingOpportunityIds)
-          } catch (error) {
-            this.loadError = error instanceof Error ? error.message : 'load job analysis failed'
-            continue
-          }
-          const existingOpportunityIds = new Set(this.opportunities.map((opportunity) => opportunity.id))
-
-          for (const { opportunityId, analysis } of progressItems) {
-            if (!analysis || !existingOpportunityIds.has(opportunityId)) continue
-
-            upsertAnalysisTask(this.analysisTasks, { ...analysis, opportunityId, result: null })
-          }
-
-          this.persistToStorage()
-        }
-      })().finally(() => {
-        analysisPollingPromise = null
-      })
-
-      return analysisPollingPromise
+      useBackgroundTaskStore().registerMany(
+        this.analysisTasks
+          .filter((task) => task.status === 'pending' || task.status === 'processing')
+          .map((task) => ({ type: 'job_analysis' as const, opportunityId: task.opportunityId })),
+      )
     },
 
     async updateWrittenTestReview(opportunityId: string, payload: UpdateWrittenTestReviewPayload) {
@@ -587,6 +577,24 @@ export const useOpportunityStore = defineStore('opportunity', {
       this.persistToStorage()
 
       return opportunity.writtenTestReview
+    },
+
+    async loadReviewDocuments(opportunityId: string) {
+      const documents = await opportunityApi.getReviewDocuments(opportunityId)
+      this.reviewDocumentsByOpportunity[opportunityId] = documents
+      return documents
+    },
+
+    async retryReviewDocument(opportunityId: string, documentId: string, modelConnection: LlmConnectionSettings) {
+      const document = await opportunityApi.retryReviewDocument(opportunityId, documentId, modelConnection)
+      const documents = this.reviewDocumentsByOpportunity[opportunityId] ?? []
+      const index = documents.findIndex((item) => item.id === document.id)
+
+      if (index === -1) documents.push(document)
+      else documents.splice(index, 1, document)
+
+      this.reviewDocumentsByOpportunity[opportunityId] = documents
+      return document
     },
 
     async updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {
@@ -651,6 +659,48 @@ export const useOpportunityStore = defineStore('opportunity', {
       } else {
         opportunity.interviewRounds.splice(roundIndex, 1, round)
       }
+      opportunity.updatedAt = round.updatedAt
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
+      this.persistToStorage()
+
+      return round
+    },
+
+    async completeInterviewRound(opportunityId: string, roundId: string) {
+      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+      if (!opportunity) return null
+
+      const round = await opportunityApi.completeInterviewRound(opportunityId, roundId)
+      const roundIndex = opportunity.interviewRounds.findIndex((item) => item.id === round.id)
+
+      if (roundIndex === -1) opportunity.interviewRounds.push(round)
+      else opportunity.interviewRounds.splice(roundIndex, 1, round)
+
+      opportunity.updatedAt = round.updatedAt
+      cacheOpportunityDetail(
+        this.opportunityDetailCache,
+        opportunity,
+        this.analysisTasks.find((task) => task.opportunityId === opportunityId),
+      )
+      this.persistToStorage()
+
+      return round
+    },
+
+    async cancelInterviewRound(opportunityId: string, roundId: string) {
+      const opportunity = this.opportunities.find((item) => item.id === opportunityId)
+      if (!opportunity) return null
+
+      const round = await opportunityApi.cancelInterviewRound(opportunityId, roundId)
+      const roundIndex = opportunity.interviewRounds.findIndex((item) => item.id === round.id)
+
+      if (roundIndex === -1) opportunity.interviewRounds.push(round)
+      else opportunity.interviewRounds.splice(roundIndex, 1, round)
+
       opportunity.updatedAt = round.updatedAt
       cacheOpportunityDetail(
         this.opportunityDetailCache,

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type {
   InterviewRound,
   JobOpportunity,
@@ -7,7 +7,14 @@ import type {
   WrittenTestReview,
 } from '@/types/opportunity'
 import { db } from '../db/client'
-import { interviewRounds, jobOpportunities, opportunityStatusHistory, opportunityTerminations } from '../db/schema'
+import { measureDb } from '../utils/request-metrics'
+import {
+  interviewRounds,
+  jobOpportunities,
+  opportunityStatusHistory,
+  opportunityTerminations,
+  reviewDocuments,
+} from '../db/schema'
 
 type JobOpportunityRow = typeof jobOpportunities.$inferSelect
 
@@ -230,6 +237,14 @@ export class DrizzleOpportunityRepository {
         reasonNote: termination.reasonNote,
         createdAt: termination.createdAt,
       })
+      await tx
+        .update(interviewRounds)
+        .set({
+          status: 'canceled',
+          result: 'unknown',
+          updatedAt: opportunity.updatedAt,
+        })
+        .where(and(eq(interviewRounds.opportunityId, opportunity.id), eq(interviewRounds.status, 'planned')))
     })
   }
 
@@ -247,6 +262,32 @@ export class DrizzleOpportunityRepository {
     const [row] = await db.select().from(jobOpportunities).where(eq(jobOpportunities.id, opportunityId)).limit(1)
 
     return row ? toJobOpportunityRecord(row) : null
+  }
+
+  /** 权限校验只需要归属关系，不读取 JD 正文、备注和复盘字段。 */
+  async findOpportunityOwnership(opportunityId: string): Promise<{ id: string; userId: string } | null> {
+    const [row] = await measureDb(() =>
+      db
+        .select({ id: jobOpportunities.id, userId: jobOpportunities.userId })
+        .from(jobOpportunities)
+        .where(eq(jobOpportunities.id, opportunityId))
+        .limit(1),
+    )
+
+    return row ?? null
+  }
+
+  async findOwnedOpportunityIds(opportunityIds: string[], userId: string): Promise<string[]> {
+    if (opportunityIds.length === 0) return []
+
+    const rows = await measureDb(() =>
+      db
+        .select({ id: jobOpportunities.id })
+        .from(jobOpportunities)
+        .where(and(eq(jobOpportunities.userId, userId), inArray(jobOpportunities.id, opportunityIds))),
+    )
+
+    return rows.map((row) => row.id)
   }
 
   async findOpportunityByDedupeFingerprint(
@@ -281,6 +322,37 @@ export class DrizzleOpportunityRepository {
       .limit(1)
 
     return row ? toInterviewRound(row) : null
+  }
+
+  /** 读取真实笔试复盘和面试轮次复盘，供模拟面试计划生成使用。 */
+  async findInterviewHistoryByOpportunityId(opportunityId: string, existingOpportunity?: JobOpportunityRecord) {
+    const [opportunity, roundRows, reviewDocumentRows] = await Promise.all([
+      existingOpportunity ? Promise.resolve(existingOpportunity) : this.findOpportunityById(opportunityId),
+      db
+        .select()
+        .from(interviewRounds)
+        .where(eq(interviewRounds.opportunityId, opportunityId))
+        .orderBy(desc(interviewRounds.updatedAt), desc(interviewRounds.sequence)),
+      db
+        .select({
+          sourceType: reviewDocuments.sourceType,
+          interviewRoundId: reviewDocuments.interviewRoundId,
+          status: reviewDocuments.status,
+          result: reviewDocuments.result,
+          updatedAt: reviewDocuments.updatedAt,
+        })
+        .from(reviewDocuments)
+        .where(eq(reviewDocuments.opportunityId, opportunityId))
+        .orderBy(desc(reviewDocuments.updatedAt)),
+    ])
+
+    if (!opportunity) return null
+
+    return {
+      writtenTestReview: toWrittenTestReview(opportunity),
+      interviewRounds: roundRows.map(toInterviewRound),
+      reviewDocuments: reviewDocumentRows,
+    }
   }
 
   async createInterviewRound(round: InterviewRoundRecord, opportunity: JobOpportunityRecord) {
@@ -327,6 +399,45 @@ export class DrizzleOpportunityRepository {
         .update(jobOpportunities)
         .set(toJobOpportunityUpdateValues(opportunity))
         .where(eq(jobOpportunities.id, opportunity.id))
+    })
+  }
+
+  async updateInterviewRoundIfCurrentStatus(
+    round: InterviewRoundRecord,
+    expectedStatus: InterviewRound['status'],
+    opportunity: JobOpportunityRecord,
+  ) {
+    return db.transaction(async (tx) => {
+      const updatedRows = await tx
+        .update(interviewRounds)
+        .set({
+          type: round.type,
+          title: round.title,
+          scheduledAt: round.scheduledAt || null,
+          status: round.status,
+          result: round.result,
+          note: round.note,
+          reviewNote: round.reviewNote,
+          keyTakeaways: round.keyTakeaways,
+          updatedAt: round.updatedAt,
+        })
+        .where(
+          and(
+            eq(interviewRounds.opportunityId, round.opportunityId),
+            eq(interviewRounds.id, round.id),
+            eq(interviewRounds.status, expectedStatus),
+          ),
+        )
+        .returning({ id: interviewRounds.id })
+
+      if (updatedRows.length === 0) return false
+
+      await tx
+        .update(jobOpportunities)
+        .set(toJobOpportunityUpdateValues(opportunity))
+        .where(eq(jobOpportunities.id, opportunity.id))
+
+      return true
     })
   }
 

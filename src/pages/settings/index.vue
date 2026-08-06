@@ -2,7 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useSettingsStore } from '@/stores'
-import type { ThemeMode } from '@/types/settings'
+import { interviewApi } from '@/services/interviews'
+import { isSameModelIdentity } from '@/services/interview-runtime'
+import type { LlmConnectionSettings, ThemeMode } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
 const toast = useToast()
@@ -19,6 +21,11 @@ const llmDraft = reactive({
   apiKey: settingsStore.llm.apiKey,
 })
 const apiKeyVisible = ref(false)
+const isCheckingModelUsage = ref(false)
+const isModelWarningOpen = ref(false)
+const affectedInterviewCount = ref(0)
+const affectedModelName = ref('')
+let pendingModelAction: (() => void) | null = null
 
 const isLlmDirty = computed(() => {
   return (
@@ -56,15 +63,63 @@ function clearApiKey() {
   llmDraft.apiKey = ''
 }
 
-function saveLlmSettings() {
+async function runWithModelUsageWarning(
+  identity: Pick<LlmConnectionSettings, 'baseUrl' | 'modelName'>,
+  action: () => void,
+) {
+  isCheckingModelUsage.value = true
+  try {
+    const usages = await interviewApi.listActiveModelUsage()
+    const affected = usages.filter((usage) => isSameModelIdentity(usage.modelSnapshot, identity))
+    if (!affected.length) {
+      action()
+      return
+    }
+
+    affectedInterviewCount.value = affected.length
+    affectedModelName.value = identity.modelName
+    pendingModelAction = action
+    isModelWarningOpen.value = true
+  } catch (error) {
+    toast.add({
+      title: '暂时无法检查进行中的面试',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+    })
+  } finally {
+    isCheckingModelUsage.value = false
+  }
+}
+
+function confirmPendingModelAction() {
+  const action = pendingModelAction
+  pendingModelAction = null
+  isModelWarningOpen.value = false
+  action?.()
+}
+
+function cancelPendingModelAction() {
+  pendingModelAction = null
+  isModelWarningOpen.value = false
+}
+
+async function saveLlmSettings() {
   if (!canSaveLlm.value) return
 
-  settingsStore.updateLlmSettings({
-    baseUrl: llmDraft.baseUrl,
-    modelName: llmDraft.modelName,
-    apiKey: llmDraft.apiKey,
-  })
-  toast.add({ title: '模型配置已保存', color: 'success' })
+  const save = () => {
+    settingsStore.updateLlmSettings({
+      baseUrl: llmDraft.baseUrl,
+      modelName: llmDraft.modelName,
+      apiKey: llmDraft.apiKey,
+    })
+    toast.add({ title: '模型配置已保存', color: 'success' })
+  }
+  const nextIdentity = { baseUrl: llmDraft.baseUrl, modelName: llmDraft.modelName }
+  if (isSameModelIdentity(settingsStore.llm, nextIdentity)) {
+    save()
+    return
+  }
+  await runWithModelUsageWarning(settingsStore.llm, save)
 }
 
 function saveCurrentLlmAsReusable() {
@@ -82,26 +137,29 @@ function saveCurrentLlmAsReusable() {
   })
 }
 
-function selectSavedLlmConnection(connectionId: string) {
+async function selectSavedLlmConnection(connectionId: string) {
   if (connectionId === activeSavedLlmConnectionId.value) return
 
-  const connection = settingsStore.useSavedLlmConnection(connectionId)
-  if (!connection) return
-
-  toast.add({
-    title: `已切换至 ${connection.modelName}`,
-    color: 'success',
+  await runWithModelUsageWarning(settingsStore.llm, () => {
+    const connection = settingsStore.useSavedLlmConnection(connectionId)
+    if (!connection) return
+    toast.add({ title: `已切换至 ${connection.modelName}`, color: 'success' })
   })
 }
 
-function deleteSavedLlmConnection(connectionId: string) {
+async function deleteSavedLlmConnection(connectionId: string) {
   const connection = settingsStore.savedLlmConnections.find((item) => item.id === connectionId)
-  if (!connection || !settingsStore.deleteSavedLlmConnection(connectionId)) return
+  if (!connection) return
 
-  toast.add({
-    title: `已删除 ${connection.modelName} 配置`,
-    color: 'success',
-  })
+  const remove = () => {
+    if (!settingsStore.deleteSavedLlmConnection(connectionId)) return
+    toast.add({ title: `已删除 ${connection.modelName} 配置`, color: 'success' })
+  }
+  if (isSameModelIdentity(connection, settingsStore.llm)) {
+    remove()
+    return
+  }
+  await runWithModelUsageWarning(connection, remove)
 }
 
 watch(
@@ -112,7 +170,6 @@ watch(
     llmDraft.apiKey = llm.apiKey
   },
 )
-
 </script>
 
 <template>
@@ -122,13 +179,7 @@ watch(
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">系统设置</h1>
         <p class="mt-1 text-sm text-muted">配置工作台外观和后续 AI 调用所需的模型连接。</p>
       </div>
-      <UButton
-        to="/developer/agent-runs"
-        target="_blank"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-bug-play"
-      >
+      <UButton to="/developer/agent-runs" target="_blank" color="neutral" variant="outline" icon="i-lucide-bug-play">
         打开 Agent 调试台
       </UButton>
     </div>
@@ -184,15 +235,18 @@ watch(
         <div
           v-for="connection in settingsStore.savedLlmConnections"
           :key="connection.id"
-          class="flex overflow-hidden rounded-full border border-default bg-elevated"
+          class="model-config-tag-group flex overflow-hidden rounded-full border border-[var(--app-border)]"
+          :class="{ 'is-active': connection.id === activeSavedLlmConnectionId }"
           :title="connection.baseUrl"
         >
           <UButton
             type="button"
             size="xs"
-            :color="connection.id === activeSavedLlmConnectionId ? 'primary' : 'neutral'"
-            variant="subtle"
-            class="rounded-r-none"
+            color="neutral"
+            variant="ghost"
+            class="model-config-tag rounded-r-none shadow-none"
+            :class="{ 'is-active': connection.id === activeSavedLlmConnectionId }"
+            :disabled="isCheckingModelUsage"
             @click="selectSavedLlmConnection(connection.id)"
           >
             {{ connection.modelName }}
@@ -202,9 +256,10 @@ watch(
             size="xs"
             color="neutral"
             variant="ghost"
-            class="rounded-l-none border-l border-default"
+            class="model-config-tag-remove rounded-l-none border-l border-default shadow-none"
             icon="i-lucide-x"
             :aria-label="`删除 ${connection.modelName} 配置`"
+            :disabled="isCheckingModelUsage"
             @click="deleteSavedLlmConnection(connection.id)"
           />
         </div>
@@ -249,7 +304,12 @@ watch(
         <UButton type="button" color="neutral" variant="ghost" :disabled="!isLlmDirty" @click="fillDeepSeekPreset">
           恢复示例
         </UButton>
-        <UButton type="button" icon="i-lucide-save" :disabled="!canSaveLlm" @click="saveLlmSettings"
+        <UButton
+          type="button"
+          icon="i-lucide-save"
+          :loading="isCheckingModelUsage"
+          :disabled="!canSaveLlm || isCheckingModelUsage"
+          @click="saveLlmSettings"
           >保存模型配置</UButton
         >
         <UButton
@@ -264,5 +324,34 @@ watch(
         </UButton>
       </div>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="isModelWarningOpen"
+        class="fixed inset-0 z-[150] flex items-center justify-center bg-black/55 px-4"
+        role="dialog"
+        aria-modal="true"
+      >
+        <section class="app-panel w-full max-w-md p-5 shadow-2xl">
+          <div class="flex items-start gap-3">
+            <span class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
+              <UIcon name="i-lucide-triangle-alert" class="size-4" />
+            </span>
+            <div>
+              <h2 class="text-base font-semibold text-highlighted">有进行中的模拟面试</h2>
+              <p class="mt-2 text-sm leading-6 text-muted">
+                当前有 {{ affectedInterviewCount }} 场未完成面试绑定
+                {{ affectedModelName }}。这次操作不会静默篡改历史任务；
+                已在执行的任务仍会使用原模型完成。回到对应面试后，需要明确确认是否让后续问题改用当前模型。
+              </p>
+            </div>
+          </div>
+          <div class="mt-6 flex justify-end gap-2">
+            <UButton type="button" color="neutral" variant="ghost" @click="cancelPendingModelAction">取消</UButton>
+            <UButton type="button" color="warning" @click="confirmPendingModelAction">仍然继续</UButton>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>

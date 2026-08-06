@@ -12,7 +12,9 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AppHeader: typeof import('./src/components/layout/AppHeader.vue')['default']
+    AppMobileNavigation: typeof import('./src/components/layout/AppMobileNavigation.vue')['default']
     AppSidebar: typeof import('./src/components/layout/AppSidebar.vue')['default']
+    BackgroundTaskToastHost: typeof import('./src/components/layout/BackgroundTaskToastHost.vue')['default']
     CityPicker: typeof import('./src/components/CityPicker.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
@@ -21,10 +23,12 @@ declare module 'vue' {
     UButton: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Button.vue')['default']
     UCalendar: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Calendar.vue')['default']
     UCard: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Card.vue')['default']
+    UDrawer: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Drawer.vue')['default']
     UDropdownMenu: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/DropdownMenu.vue')['default']
     UFormField: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/FormField.vue')['default']
     UIcon: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/vue/components/Icon.vue')['default']
     UInput: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Input.vue')['default']
+    UModal: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Modal.vue')['default']
     UPopover: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Popover.vue')['default']
     USelect: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Select.vue')['default']
     USkeleton: typeof import('./node_modules/.pnpm/@nuxt+ui@4.10.0_7lrawlpuhkg5ilnnjfv4pxj7nu/node_modules/@nuxt/ui/dist/runtime/components/Skeleton.vue')['default']

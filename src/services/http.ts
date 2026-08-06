@@ -4,7 +4,7 @@ export function toApiUrl(path: string) {
   return `${apiBaseUrl}${path}`
 }
 
-type RequestOptions = Omit<RequestInit, 'body' | 'method'>
+export type RequestOptions = Omit<RequestInit, 'body' | 'method'>
 
 export class ApiRequestError extends Error {
   readonly status: number
@@ -51,7 +51,7 @@ function withJsonBody(method: 'POST' | 'PATCH' | 'PUT', payload: unknown, option
 /** 统一 REST 请求入口：默认把普通对象作为 JSON 请求体发送。 */
 export const request = {
   get<T>(path: string, options: RequestOptions = {}) {
-    return coreRequest<T>(path, { ...options, method: 'GET' })
+    return coreRequest<T>(path, { cache: 'no-store', ...options, method: 'GET' })
   },
 
   post<T>(path: string, payload?: unknown, options: RequestOptions = {}) {

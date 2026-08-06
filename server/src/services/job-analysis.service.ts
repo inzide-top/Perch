@@ -15,7 +15,7 @@ import {
   startJobAnalysisInputSchema,
   type StartJobAnalysisInput,
 } from '../schemas/job-analysis.schema'
-import { getCurrentUserId } from './resume.service'
+import { getCurrentUserId } from '../context/current-user'
 import { getRecommendationFromScore, getScoreDimensionLabel } from '@/shared/opportunity/analysisPresentation'
 import {
   cancelJobAnalysisForOpportunity,
@@ -26,7 +26,7 @@ import {
   normalizeBaseUrl,
   requestModelCompletion,
   type ModelConnection,
-} from './job-analysis/model-client'
+} from './ai/model-client'
 import {
   buildInitialUserPrompt,
   buildRepairUserPrompt,
@@ -37,6 +37,7 @@ import {
   toValidationError,
   type ValidationRepairContext,
 } from './job-analysis/prompt'
+import { withBackgroundTaskCapacity } from './background-task.service'
 
 const maxAnalysisAttempts = 3
 const retryDelaysMs = [0, 2_000, 5_000]
@@ -61,6 +62,27 @@ class JobAnalysisConflictError extends Error {
   statusCode = 409
 }
 
+type AnalysisProgressSource = {
+  id: string
+  opportunityId: string
+  status: JobAnalysisProgress['status']
+  sourceAnalysisId: string | null
+  currentAttempt: number
+  modelName: string | null
+  result: JobAnalysisResult | null
+  matchScore?: number | null
+  recommendation?: JobAnalysisResult['recommendation'] | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+type AnalysisProgressRow = Omit<AnalysisProgressSource, 'result' | 'matchScore' | 'recommendation'> & {
+  result?: never
+  matchScore: string | null
+  recommendation: string | null
+}
+
 export class JobAnalysisNotFoundError extends Error {
   statusCode = 404
 }
@@ -75,12 +97,20 @@ function toJobAnalysisProgress(
     updatedAt: string
     modelName: string | null
     result: JobAnalysisResult | null
+    matchScore?: number | null
+    recommendation?: JobAnalysisResult['recommendation'] | null
   },
   currentRun: {
     attemptNumber: number
     error: AgentRunError | null
   } | null,
 ): JobAnalysisProgress {
+  const matchScore = analysis.result?.matchScore ?? analysis.matchScore ?? null
+  const recommendation =
+    analysis.result?.recommendation ??
+    analysis.recommendation ??
+    (matchScore === null ? null : getRecommendationFromScore(matchScore))
+
   return {
     status: analysis.status,
     currentAttempt: analysis.currentAttempt,
@@ -88,8 +118,8 @@ function toJobAnalysisProgress(
     createdAt: analysis.createdAt,
     updatedAt: analysis.updatedAt,
     modelName: analysis.status === 'completed' ? analysis.modelName : null,
-    matchScore: analysis.result?.matchScore ?? null,
-    recommendation: analysis.result?.recommendation ?? null,
+    matchScore,
+    recommendation,
     result: analysis.result,
     error:
       analysis.status === 'failed' && currentRun?.error
@@ -101,17 +131,38 @@ function toJobAnalysisProgress(
   }
 }
 
+function toAnalysisProgressSource(row: AnalysisProgressRow): AnalysisProgressSource {
+  const parsedMatchScore = row.matchScore === null ? null : Number(row.matchScore)
+  const matchScore = parsedMatchScore !== null && Number.isFinite(parsedMatchScore) ? parsedMatchScore : null
+  const validRecommendations = ['strong_match', 'worth_trying', 'risky', 'not_recommended'] as const
+  const recommendation = validRecommendations.includes(row.recommendation as (typeof validRecommendations)[number])
+    ? (row.recommendation as JobAnalysisResult['recommendation'])
+    : null
+
+  return {
+    ...row,
+    result: null,
+    matchScore,
+    recommendation,
+  }
+}
+
 export async function getJobAnalysisListSummaries(
   opportunityIds: string[],
 ): Promise<Map<string, JobAnalysisListSummary>> {
-  const analyses = await jobAnalysisRepository.findAnalysesByOpportunityIds(opportunityIds)
-  const effectiveAnalyses = await resolveEffectiveAnalyses(analyses)
-  const runs = await jobAnalysisRepository.findRunsByAnalysisIds([
+  const analyses = (await jobAnalysisRepository.findAnalysisProgressByOpportunityIds(opportunityIds)).map(
+    toAnalysisProgressSource,
+  )
+  const effectiveAnalyses = await resolveEffectiveAnalyses(analyses, (ids) =>
+    jobAnalysisRepository.findAnalysisProgressByIds(ids).then((items) => items.map(toAnalysisProgressSource)),
+  )
+  const runs = await jobAnalysisRepository.findRunSummariesByAnalysisIds([
     ...new Set(effectiveAnalyses.map((analysis) => analysis.id)),
   ])
   const currentRunByAnalysisId = new Map<string, (typeof runs)[number]>()
 
   for (const run of runs) {
+    if (!run.analysisId) continue
     if (!currentRunByAnalysisId.has(run.analysisId)) currentRunByAnalysisId.set(run.analysisId, run)
   }
 
@@ -129,11 +180,14 @@ export async function getJobAnalysisListSummaries(
 }
 
 /** follower 分析没有自己的模型 Run，读取时统一解析为它依附的源分析。 */
-async function resolveEffectiveAnalyses<T extends { id: string; sourceAnalysisId: string | null }>(analyses: T[]) {
+async function resolveEffectiveAnalyses<T extends { id: string; sourceAnalysisId: string | null }>(
+  analyses: T[],
+  loadSources: (ids: string[]) => Promise<T[]> = (ids) => jobAnalysisRepository.findAnalysesByIds(ids) as Promise<T[]>,
+) {
   const sourceIds = [
     ...new Set(analyses.flatMap((analysis) => (analysis.sourceAnalysisId ? [analysis.sourceAnalysisId] : []))),
   ]
-  const sources = await jobAnalysisRepository.findAnalysesByIds(sourceIds)
+  const sources = await loadSources(sourceIds)
   const sourceById = new Map(sources.map((analysis) => [analysis.id, analysis]))
 
   return analyses.map((analysis) =>
@@ -195,7 +249,9 @@ function createAgentRun(input: {
 }) {
   return {
     id: input.id,
+    workflowType: 'job_analysis' as const,
     analysisId: input.analysisId,
+    operationKey: `job_analysis:${input.analysisId}`,
     attemptNumber: input.attemptNumber,
     status: 'pending' as const,
     modelName: input.modelName,
@@ -492,33 +548,35 @@ export async function startJobAnalysis(opportunityId: string, input: unknown): P
 
   let queued: Awaited<ReturnType<typeof jobAnalysisRepository.createAnalysisWithInitialRun>>
   try {
-    queued = existingAnalysis
-      ? await jobAnalysisRepository.queueExistingAnalysisWithRun({
-          analysisId,
-          resumeId: resume.id,
-          resumeVersionId: resumeVersion.id,
-          inputFingerprint,
-          queuedAt: now,
-          run,
-        })
-      : await jobAnalysisRepository.createAnalysisWithInitialRun({
-          analysis: {
-            id: analysisId,
-            opportunityId,
+    queued = await withBackgroundTaskCapacity('job_analysis', async () =>
+      existingAnalysis
+        ? jobAnalysisRepository.queueExistingAnalysisWithRun({
+            analysisId,
             resumeId: resume.id,
             resumeVersionId: resumeVersion.id,
-            sourceAnalysisId: null,
-            status: 'pending',
-            currentAttempt: 1,
             inputFingerprint,
-            modelName: null,
-            result: null,
-            createdAt: now,
-            updatedAt: now,
-            completedAt: null,
-          },
-          run,
-        })
+            queuedAt: now,
+            run,
+          })
+        : jobAnalysisRepository.createAnalysisWithInitialRun({
+            analysis: {
+              id: analysisId,
+              opportunityId,
+              resumeId: resume.id,
+              resumeVersionId: resumeVersion.id,
+              sourceAnalysisId: null,
+              status: 'pending',
+              currentAttempt: 1,
+              inputFingerprint,
+              modelName: null,
+              result: null,
+              createdAt: now,
+              updatedAt: now,
+              completedAt: null,
+            },
+            run,
+          }),
+    )
   } catch (error) {
     // 两个完全相同的请求同时抵达时，数据库唯一约束只允许一个源任务入队；另一个改为 follower。
     if (isUniqueViolation(error)) {
@@ -584,22 +642,35 @@ export async function getJobAnalyses(
   options: { includeResult?: boolean } = {},
 ): Promise<Array<{ opportunityId: string; analysis: JobAnalysisProgress | null }>> {
   const userId = await getCurrentUserId()
-  const opportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
-  const ownedOpportunityIds = new Set(opportunities.map((opportunity) => opportunity.id))
+  const ownedOpportunityIds = new Set(await opportunityRepository.findOwnedOpportunityIds(opportunityIds, userId))
 
   if (opportunityIds.some((opportunityId) => !ownedOpportunityIds.has(opportunityId))) {
     throw new JobAnalysisNotFoundError('岗位机会不存在')
   }
 
-  const analyses = await jobAnalysisRepository.findAnalysesByOpportunityIds(opportunityIds)
-  const effectiveAnalyses = await resolveEffectiveAnalyses(analyses)
-  const runs = await jobAnalysisRepository.findRunsByAnalysisIds([
-    ...new Set(effectiveAnalyses.map((analysis) => analysis.id)),
-  ])
+  const includeResult = options.includeResult === true
+  const analyses = (
+    includeResult
+      ? await jobAnalysisRepository.findAnalysesByOpportunityIds(opportunityIds)
+      : (await jobAnalysisRepository.findAnalysisProgressByOpportunityIds(opportunityIds)).map(toAnalysisProgressSource)
+  ) as AnalysisProgressSource[]
+  const effectiveAnalyses = await resolveEffectiveAnalyses(
+    analyses,
+    includeResult
+      ? undefined
+      : (ids) =>
+          jobAnalysisRepository.findAnalysisProgressByIds(ids).then((items) => items.map(toAnalysisProgressSource)),
+  )
+  const runs = includeResult
+    ? await jobAnalysisRepository.findRunsByAnalysisIds([...new Set(effectiveAnalyses.map((analysis) => analysis.id))])
+    : await jobAnalysisRepository.findRunSummariesByAnalysisIds([
+        ...new Set(effectiveAnalyses.map((analysis) => analysis.id)),
+      ])
   const currentRunByAnalysisId = new Map<string, (typeof runs)[number]>()
   const analysisByOpportunityId = new Map(analyses.map((analysis) => [analysis.opportunityId, analysis]))
 
   for (const run of runs) {
+    if (!run.analysisId) continue
     if (!currentRunByAnalysisId.has(run.analysisId)) currentRunByAnalysisId.set(run.analysisId, run)
   }
 
@@ -635,10 +706,7 @@ export async function getJobAnalyses(
     const progress = recovered
       ? toJobAnalysisProgress(recovered.analysis, recovered.run)
       : toJobAnalysisProgress(effectiveAnalysis, currentRun)
-    progressByOpportunityId.set(
-      analysis.opportunityId,
-      options.includeResult ? progress : { ...progress, result: null },
-    )
+    progressByOpportunityId.set(analysis.opportunityId, includeResult ? progress : { ...progress, result: null })
   }
 
   return opportunityIds.map((opportunityId) => ({

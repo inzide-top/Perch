@@ -13,4 +13,3 @@ try {
   console.error('PostgreSQL connection failed', error)
   process.exitCode = 1
 }
-

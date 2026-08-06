@@ -12,7 +12,9 @@ import type {
 } from '@/types/opportunity'
 import type { AnalysisRecommendation } from '@/shared/opportunity/analysisPresentation'
 import type { OpportunityRegion } from '@/shared/opportunity/geography'
-import { ApiRequestError, request } from './http'
+import type { LlmConnectionSettings } from '@/types/settings'
+import type { ReviewDocumentSummary } from '@/types/review'
+import { ApiRequestError, request, type RequestOptions } from './http'
 
 export type JobOpportunityListItem = Pick<
   JobOpportunity,
@@ -75,7 +77,9 @@ export type UpdateOpportunityStatusPayload = {
   note?: string
 }
 
-export type UpdateWrittenTestReviewPayload = Partial<Pick<WrittenTestReview, 'scheduledAt' | 'reviewNote'>>
+export type UpdateWrittenTestReviewPayload = Partial<Pick<WrittenTestReview, 'scheduledAt' | 'reviewNote'>> & {
+  modelConnection?: LlmConnectionSettings
+}
 
 export type AddInterviewRoundPayload = {
   type: InterviewRoundType
@@ -86,9 +90,14 @@ export type AddInterviewRoundPayload = {
   note?: string
   reviewNote?: string
   keyTakeaways?: string[]
+  modelConnection?: LlmConnectionSettings
 }
 
 export type UpdateInterviewRoundPayload = Partial<AddInterviewRoundPayload>
+
+export type CompleteInterviewRoundPayload = {
+  result?: Exclude<InterviewRoundResult, 'pending'>
+}
 
 export type TerminateOpportunityPayload = {
   relatedInterviewRoundId?: string
@@ -97,7 +106,7 @@ export type TerminateOpportunityPayload = {
 }
 
 export const opportunityApi = {
-  getOpportunities(filters: OpportunityListFilters = {}) {
+  getOpportunities(filters: OpportunityListFilters = {}, options: RequestOptions = {}) {
     const query = new URLSearchParams()
     if (filters.statuses?.length) query.set('statuses', filters.statuses.join(','))
     if (filters.intentionLevels?.length) query.set('intentionLevels', filters.intentionLevels.join(','))
@@ -105,7 +114,7 @@ export const opportunityApi = {
     if (filters.regions?.length) query.set('regions', filters.regions.join(','))
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
 
-    return request.get<JobOpportunityListItem[]>(`/opportunities${suffix}`)
+    return request.get<JobOpportunityListItem[]>(`/opportunities${suffix}`, options)
   },
 
   getOpportunityById(opportunityId: string) {
@@ -149,6 +158,31 @@ export const opportunityApi = {
     return request.patch<InterviewRound>(
       `/opportunities/${encodeURIComponent(opportunityId)}/interview-rounds/${encodeURIComponent(roundId)}`,
       payload,
+    )
+  },
+
+  completeInterviewRound(opportunityId: string, roundId: string, payload: CompleteInterviewRoundPayload = {}) {
+    return request.post<InterviewRound>(
+      `/opportunities/${encodeURIComponent(opportunityId)}/interview-rounds/${encodeURIComponent(roundId)}/complete`,
+      payload,
+    )
+  },
+
+  cancelInterviewRound(opportunityId: string, roundId: string) {
+    return request.post<InterviewRound>(
+      `/opportunities/${encodeURIComponent(opportunityId)}/interview-rounds/${encodeURIComponent(roundId)}/cancel`,
+      {},
+    )
+  },
+
+  getReviewDocuments(opportunityId: string) {
+    return request.get<ReviewDocumentSummary[]>(`/opportunities/${encodeURIComponent(opportunityId)}/review-documents`)
+  },
+
+  retryReviewDocument(opportunityId: string, documentId: string, modelConnection: LlmConnectionSettings) {
+    return request.post<ReviewDocumentSummary>(
+      `/opportunities/${encodeURIComponent(opportunityId)}/review-documents/${encodeURIComponent(documentId)}/retry`,
+      { modelConnection },
     )
   },
 

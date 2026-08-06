@@ -23,5 +23,6 @@ test('结构化校验失败时保留字段路径和原始值，供修复 Prompt 
 
   const repairContext = createValidationRepairContext('{"matchScore":"82"}', result.error)
   assert.deepEqual(repairContext.validationIssues?.[0]?.path, ['matchScore'])
+  assert.equal(repairContext.validationIssues?.[0]?.receivedValue, '82')
   assert.match(repairContext.invalidFieldValues, /82/)
 })
