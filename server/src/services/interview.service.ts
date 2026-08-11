@@ -127,16 +127,23 @@ function createInitialEvaluation(): InterviewSessionEvaluation {
 }
 
 async function assertOwnedOpportunity(opportunityId: string) {
-  const [userId, opportunity] = await Promise.all([
-    getCurrentUserId(),
-    opportunityRepository.findOpportunityOwnership(opportunityId),
-  ])
+  const userId = await getCurrentUserId()
+  await assertOpportunityOwnedByUser(opportunityId, userId)
+}
+
+async function assertOpportunityOwnedByUser(opportunityId: string, userId: string) {
+  const opportunity = await opportunityRepository.findOpportunityOwnership(opportunityId)
 
   if (!opportunity || opportunity.userId !== userId) throw new InterviewNotFoundError('岗位机会不存在')
 }
 
 async function requireOwnedOpportunity(opportunityId: string) {
-  await assertOwnedOpportunity(opportunityId)
+  const userId = await getCurrentUserId()
+  return requireOpportunityOwnedByUser(opportunityId, userId)
+}
+
+async function requireOpportunityOwnedByUser(opportunityId: string, userId: string) {
+  await assertOpportunityOwnedByUser(opportunityId, userId)
   const opportunity = await opportunityRepository.findOpportunityById(opportunityId)
   if (!opportunity) throw new InterviewNotFoundError('岗位机会不存在')
   return opportunity
@@ -267,11 +274,26 @@ function toPublicDetail(
   }
 }
 
-export async function createInterviewSession(opportunityId: string, input: unknown) {
-  const parsedInput = createInterviewSessionInputSchema.parse(input)
-  const opportunity = await requireOwnedOpportunity(opportunityId)
+export type CreateInterviewSessionForUserRecord = {
+  sessionId: string
+  opportunityId: string
+  userId: string
+  input: unknown
+}
 
-  const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(opportunityId)
+async function createInterviewSessionRecord(record: CreateInterviewSessionForUserRecord) {
+  const parsedInput = createInterviewSessionInputSchema.parse(record.input)
+  const opportunity = await requireOpportunityOwnedByUser(record.opportunityId, record.userId)
+
+  const existingSession = await interviewRepository.findSessionById(record.sessionId)
+  if (existingSession) {
+    if (existingSession.opportunityId !== record.opportunityId) {
+      throw new InterviewConflictError('模拟面试创建标识已被其他机会占用')
+    }
+    return { session: toSessionSummary(existingSession), alreadyApplied: true }
+  }
+
+  const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(record.opportunityId)
   if (!analysis || analysis.status !== 'completed' || !analysis.result) {
     throw new InterviewConflictError('JD 分析尚未完成，不能开始模拟面试')
   }
@@ -285,8 +307,8 @@ export async function createInterviewSession(opportunityId: string, input: unkno
   }
 
   const [historicalSessionEvaluations, interviewHistory] = await Promise.all([
-    interviewRepository.findHistoricalSessionEvaluationsByOpportunityId(opportunityId),
-    opportunityRepository.findInterviewHistoryByOpportunityId(opportunityId, opportunity),
+    interviewRepository.findHistoricalSessionEvaluationsByOpportunityId(record.opportunityId),
+    opportunityRepository.findInterviewHistoryByOpportunityId(record.opportunityId, opportunity),
   ])
   const historicalWeaknesses = collectHistoricalWeaknesses(historicalSessionEvaluations)
   const historicalReviews = collectHistoricalReviews(
@@ -308,13 +330,12 @@ export async function createInterviewSession(opportunityId: string, input: unkno
 
   const [latestRun] = await jobAnalysisRepository.findRunsByAnalysisId(analysis.id)
   const now = new Date().toISOString()
-  const sessionId = crypto.randomUUID()
   const evaluation = createInitialEvaluation()
 
   const result = await interviewRepository.createSessionWithInitialEvaluation({
     session: {
-      id: sessionId,
-      opportunityId,
+      id: record.sessionId,
+      opportunityId: record.opportunityId,
       jobAnalysisId: analysis.id,
       jobAnalysisRunId: latestRun?.id ?? null,
       resumeVersionId: analysis.resumeVersionId,
@@ -340,7 +361,7 @@ export async function createInterviewSession(opportunityId: string, input: unkno
     },
     evaluation: {
       id: crypto.randomUUID(),
-      sessionId,
+      sessionId: record.sessionId,
       result: evaluation,
       evaluatedThroughTurnId: null,
       revision: 1,
@@ -349,22 +370,43 @@ export async function createInterviewSession(opportunityId: string, input: unkno
     },
   })
 
-  const operationKey = `interview_plan:${result.session.id}`
-  void executeInterviewPlan({
-    sessionId: result.session.id,
-    expectedStateVersion: result.session.stateVersion,
-    input: planInput,
-    modelConnection: parsedInput.modelConnection,
-  })
-    .catch((error: unknown) => {
-      console.error('Interview plan background execution crashed', {
-        sessionId: result.session.id,
-        message: error instanceof Error ? error.message : 'unknown error',
-      })
-    })
-    .finally(() => clearModelRequestCancellation(operationKey))
+  if (result.session.opportunityId !== record.opportunityId) {
+    throw new InterviewConflictError('模拟面试创建标识已被其他机会占用')
+  }
 
-  return toSessionSummary(result.session)
+  if (!result.alreadyApplied) {
+    const operationKey = `interview_plan:${result.session.id}`
+    void executeInterviewPlan({
+      sessionId: result.session.id,
+      expectedStateVersion: result.session.stateVersion,
+      input: planInput,
+      modelConnection: parsedInput.modelConnection,
+    })
+      .catch((error: unknown) => {
+        console.error('Interview plan background execution crashed', {
+          sessionId: result.session.id,
+          message: error instanceof Error ? error.message : 'unknown error',
+        })
+      })
+      .finally(() => clearModelRequestCancellation(operationKey))
+  }
+
+  return { session: toSessionSummary(result.session), alreadyApplied: result.alreadyApplied }
+}
+
+export async function createInterviewSession(opportunityId: string, input: unknown) {
+  const userId = await getCurrentUserId()
+  const result = await createInterviewSessionRecord({
+    sessionId: crypto.randomUUID(),
+    opportunityId,
+    userId,
+    input,
+  })
+  return result.session
+}
+
+export async function createInterviewSessionForUser(record: CreateInterviewSessionForUserRecord) {
+  return createInterviewSessionRecord(record)
 }
 
 export async function getInterviewSessions(opportunityId: string) {

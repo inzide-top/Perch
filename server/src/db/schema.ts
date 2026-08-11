@@ -9,6 +9,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
@@ -52,6 +53,26 @@ import type {
   InterviewTurnStatus,
   InterviewAssessmentPlan,
 } from '@/shared/interview/schemas'
+import type {
+  ChatArtifactStatus,
+  ChatArtifactType,
+  ChatCommandStatus,
+  ChatCommandType,
+  ChatConversationScopeType,
+  ChatJsonObject,
+  ChatMessagePart,
+  ChatMessageReference,
+  ChatMessageRole,
+  ChatMessageStatus,
+  ChatModelSnapshot,
+  ChatRunBudget,
+  ChatRunEventType,
+  ChatRunPhase,
+  ChatRunStatus,
+  ChatToolActionStatus,
+  ChatToolUserDecision,
+} from '@/shared/chat/schemas'
+import { RETRIEVAL_EMBEDDING_DIMENSIONS } from '../../../src/shared/retrieval/constants'
 
 export const resumes = pgTable('resumes', {
   id: uuid('id').primaryKey(),
@@ -284,6 +305,249 @@ export const actionStrategySnapshots = pgTable(
   ],
 )
 
+/** 全局或机会内的一组 AI 对话；Scope 只决定上下文边界，不复制机会正文。 */
+export const chatConversations = pgTable(
+  'chat_conversations',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    title: text('title').notNull(),
+    scopeType: text('scope_type').$type<ChatConversationScopeType>().notNull(),
+    opportunityId: uuid('opportunity_id').references(() => jobOpportunities.id, { onDelete: 'cascade' }),
+    archivedAt: timestamp('archived_at', { withTimezone: true, mode: 'string' }),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    check(
+      'chat_conversations_scope_relation_check',
+      sql`("scope_type" = 'global' AND "opportunity_id" IS NULL) OR ("scope_type" = 'opportunity' AND "opportunity_id" IS NOT NULL)`,
+    ),
+    index('chat_conversations_user_id_updated_at_index').on(table.userId, table.updatedAt),
+    index('chat_conversations_opportunity_id_index').on(table.opportunityId),
+  ],
+)
+
+/** 对话展示消息只保存有界 Parts；工具输入和执行结果分别保存在 chat_tool_actions。 */
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: uuid('id').primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    chatRunId: uuid('chat_run_id').references((): AnyPgColumn => chatRuns.id, { onDelete: 'set null' }),
+    role: text('role').$type<ChatMessageRole>().notNull(),
+    status: text('status').$type<ChatMessageStatus>().notNull(),
+    sequenceNumber: integer('sequence_number').notNull(),
+    replacesMessageId: uuid('replaces_message_id').references((): AnyPgColumn => chatMessages.id, {
+      onDelete: 'set null',
+    }),
+    parts: jsonb('parts').$type<ChatMessagePart[]>().notNull(),
+    references: jsonb('references').$type<ChatMessageReference[]>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('chat_messages_conversation_id_sequence_unique').on(table.conversationId, table.sequenceNumber),
+    index('chat_messages_chat_run_id_index').on(table.chatRunId),
+    index('chat_messages_replaces_message_id_index').on(table.replacesMessageId),
+  ],
+)
+
+/** 一次用户请求触发的完整 Agent 工作流；内部每次模型调用仍单独写入 agent_runs。 */
+export const chatRuns = pgTable(
+  'chat_runs',
+  {
+    id: uuid('id').primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    inputMessageId: uuid('input_message_id')
+      .notNull()
+      .references((): AnyPgColumn => chatMessages.id, { onDelete: 'cascade' }),
+    outputMessageId: uuid('output_message_id').references((): AnyPgColumn => chatMessages.id, { onDelete: 'set null' }),
+    status: text('status').$type<ChatRunStatus>().notNull(),
+    phase: text('phase').$type<ChatRunPhase>(),
+    revision: integer('revision').notNull().default(1),
+    modelSnapshot: jsonb('model_snapshot').$type<ChatModelSnapshot>().notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    budget: jsonb('budget').$type<ChatRunBudget>().notNull(),
+    tokenUsage: jsonb('token_usage').$type<AgentTokenUsage>(),
+    input: jsonb('input').$type<ChatJsonObject>().notNull(),
+    runtimeState: jsonb('runtime_state').$type<ChatJsonObject>(),
+    error: jsonb('error').$type<AgentRunError>(),
+    retryOfRunId: uuid('retry_of_run_id').references((): AnyPgColumn => chatRuns.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'string' }),
+    finishedAt: timestamp('finished_at', { withTimezone: true, mode: 'string' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('chat_runs_active_input_message_unique')
+      .on(table.inputMessageId)
+      .where(sql`"status" IN ('queued', 'running', 'waiting_input', 'waiting_confirmation', 'cancelling')`),
+    uniqueIndex('chat_runs_active_conversation_unique')
+      .on(table.conversationId)
+      .where(sql`"status" IN ('queued', 'running', 'waiting_input', 'waiting_confirmation', 'cancelling')`),
+    check(
+      'chat_runs_status_phase_check',
+      sql`("status" = 'running' AND "phase" IS NOT NULL) OR ("status" <> 'running' AND "phase" IS NULL)`,
+    ),
+    index('chat_runs_conversation_id_updated_at_index').on(table.conversationId, table.updatedAt),
+    index('chat_runs_created_at_id_index').on(table.createdAt, table.id),
+    index('chat_runs_status_index').on(table.status),
+    index('chat_runs_input_message_id_index').on(table.inputMessageId),
+    index('chat_runs_retry_of_run_id_index').on(table.retryOfRunId),
+  ],
+)
+
+/** 可断点续接的产品事件；sequence 是单个 ChatRun 内唯一的事件顺序。 */
+export const chatRunEvents = pgTable(
+  'chat_run_events',
+  {
+    id: uuid('id').primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => chatRuns.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    eventType: text('event_type').$type<ChatRunEventType>().notNull(),
+    stateRevision: integer('state_revision').notNull(),
+    payload: jsonb('payload').$type<ChatJsonObject>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('chat_run_events_run_id_sequence_unique').on(table.runId, table.sequence),
+    index('chat_run_events_run_id_index').on(table.runId),
+  ],
+)
+
+/** 每一次工具调用及其确认/幂等信息；工具结果不混入消息正文。 */
+export const chatToolActions = pgTable(
+  'chat_tool_actions',
+  {
+    id: uuid('id').primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => chatRuns.id, { onDelete: 'cascade' }),
+    toolName: text('tool_name').notNull(),
+    toolVersion: text('tool_version').notNull(),
+    input: jsonb('input').$type<ChatJsonObject>().notNull(),
+    status: text('status').$type<ChatToolActionStatus>().notNull(),
+    missingArguments: jsonb('missing_arguments').$type<string[]>(),
+    requiresConfirmation: boolean('requires_confirmation').notNull().default(false),
+    userDecision: text('user_decision').$type<ChatToolUserDecision>(),
+    output: jsonb('output').$type<ChatJsonObject>(),
+    error: jsonb('error').$type<AgentRunError>(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'string' }),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('chat_tool_actions_run_id_idempotency_unique').on(table.runId, table.idempotencyKey),
+    index('chat_tool_actions_run_id_status_index').on(table.runId, table.status),
+  ],
+)
+
+/** 前端 Command 的幂等收据；expectedRevision 防止旧页面覆盖当前 Agent 状态。 */
+export const chatCommands = pgTable(
+  'chat_commands',
+  {
+    id: uuid('id').primaryKey(),
+    commandId: uuid('command_id').notNull(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id').references(() => chatRuns.id, { onDelete: 'set null' }),
+    type: text('type').$type<ChatCommandType>().notNull(),
+    expectedRevision: integer('expected_revision'),
+    payloadHash: text('payload_hash').notNull(),
+    payload: jsonb('payload').$type<ChatJsonObject>().notNull(),
+    status: text('status').$type<ChatCommandStatus>().notNull(),
+    result: jsonb('result').$type<ChatJsonObject>(),
+    rejectionCode: text('rejection_code'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    handledAt: timestamp('handled_at', { withTimezone: true, mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('chat_commands_command_id_unique').on(table.commandId),
+    index('chat_commands_conversation_id_created_at_index').on(table.conversationId, table.createdAt),
+    index('chat_commands_run_id_index').on(table.runId),
+  ],
+)
+
+/** 对话中可下载或继续编辑的 Markdown 产物；第一版不做二进制附件。 */
+export const chatArtifacts = pgTable(
+  'chat_artifacts',
+  {
+    id: uuid('id').primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => chatRuns.id, { onDelete: 'cascade' }),
+    messageId: uuid('message_id').references((): AnyPgColumn => chatMessages.id, { onDelete: 'set null' }),
+    type: text('type').$type<ChatArtifactType>().notNull(),
+    title: text('title').notNull(),
+    fileName: text('file_name').notNull(),
+    status: text('status').$type<ChatArtifactStatus>().notNull(),
+    content: text('content'),
+    error: jsonb('error').$type<AgentRunError>(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
+  },
+  (table) => [
+    index('chat_artifacts_conversation_id_index').on(table.conversationId),
+    index('chat_artifacts_run_id_index').on(table.runId),
+    index('chat_artifacts_message_id_index').on(table.messageId),
+  ],
+)
+
+/**
+ * 已完成 ChatRun 的可检索文本分块。只保存完整 Embedding，避免留下无法参与检索的半成品记录。
+ * conversation/run 级联删除，确保用户删除会话时不会残留向量记忆。
+ */
+export const chatMemoryDocuments = pgTable(
+  'chat_memory_documents',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => chatRuns.id, { onDelete: 'cascade' }),
+    chunkIndex: integer('chunk_index').notNull(),
+    scopeType: text('scope_type').$type<'global' | 'opportunity'>().notNull(),
+    opportunityIds: jsonb('opportunity_ids').$type<string[]>().notNull(),
+    content: text('content').notNull(),
+    contentHash: text('content_hash').notNull(),
+    embeddingModel: text('embedding_model').notNull(),
+    embedding: vector('embedding', { dimensions: RETRIEVAL_EMBEDDING_DIMENSIONS }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    check('chat_memory_documents_chunk_index_check', sql`"chunk_index" >= 0`),
+    check(
+      'chat_memory_documents_scope_check',
+      sql`("scope_type" = 'global' AND jsonb_array_length("opportunity_ids") = 0) OR ("scope_type" = 'opportunity' AND jsonb_array_length("opportunity_ids") > 0)`,
+    ),
+    uniqueIndex('chat_memory_documents_run_id_chunk_index_unique').on(table.runId, table.chunkIndex),
+    index('chat_memory_documents_user_model_index').on(table.userId, table.embeddingModel),
+    index('chat_memory_documents_conversation_id_index').on(table.conversationId),
+    index('chat_memory_documents_opportunity_ids_index').using('gin', table.opportunityIds),
+    index('chat_memory_documents_embedding_hnsw_index').using('hnsw', table.embedding.op('vector_cosine_ops')),
+  ],
+)
+
 export const agentRuns = pgTable(
   'agent_runs',
   {
@@ -296,6 +560,7 @@ export const agentRuns = pgTable(
     interviewTurnId: uuid('interview_turn_id').references((): AnyPgColumn => interviewTurns.id, {
       onDelete: 'set null',
     }),
+    chatRunId: uuid('chat_run_id').references(() => chatRuns.id, { onDelete: 'cascade' }),
     reviewDocumentId: uuid('review_document_id').references(() => reviewDocuments.id, { onDelete: 'set null' }),
     actionStrategySnapshotId: uuid('action_strategy_snapshot_id').references(() => actionStrategySnapshots.id, {
       onDelete: 'set null',
@@ -319,6 +584,8 @@ export const agentRuns = pgTable(
     index('agent_runs_analysis_id_index').on(table.analysisId),
     index('agent_runs_interview_session_id_index').on(table.interviewSessionId),
     index('agent_runs_interview_turn_id_index').on(table.interviewTurnId),
+    index('agent_runs_chat_run_id_index').on(table.chatRunId),
+    index('agent_runs_chat_run_id_started_at_index').on(table.chatRunId, table.startedAt),
     index('agent_runs_review_document_id_index').on(table.reviewDocumentId),
     index('agent_runs_action_strategy_snapshot_id_index').on(table.actionStrategySnapshotId),
   ],

@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
   interviewRoundParamsSchema,
+  importJobOpportunitiesFromUrlsInputSchema,
+  importJobOpportunityFromTextInputSchema,
+  importJobOpportunityFromUrlInputSchema,
   jobAnalysisProgressQuerySchema,
   jobOpportunityListQuerySchema,
   opportunityIdParamsSchema,
@@ -27,6 +30,11 @@ import {
   getReviewDocumentSummaries,
   retryReviewDocumentForOpportunity,
 } from '../services/review/review-document.service'
+import {
+  importJobOpportunitiesFromUrls,
+  importJobOpportunityFromText,
+  importJobOpportunityFromUrl,
+} from '../services/opportunity-import.service'
 
 function parseOpportunityId(params: unknown) {
   return opportunityIdParamsSchema.parse(params).opportunityId
@@ -37,6 +45,27 @@ function parseInterviewRoundParams(params: unknown) {
 }
 
 export const opportunityRoute: FastifyPluginAsync = async (app) => {
+  app.post('/opportunities/import-url', async (request, reply) => {
+    const input = importJobOpportunityFromUrlInputSchema.parse(request.body)
+    const result = await importJobOpportunityFromUrl(input)
+
+    return reply.status(200).send(result)
+  })
+
+  app.post('/opportunities/import-urls', async (request, reply) => {
+    const input = importJobOpportunitiesFromUrlsInputSchema.parse(request.body)
+    const result = await importJobOpportunitiesFromUrls(input)
+
+    return reply.status(200).send(result)
+  })
+
+  app.post('/opportunities/import-text', async (request, reply) => {
+    const input = importJobOpportunityFromTextInputSchema.parse(request.body)
+    const result = await importJobOpportunityFromText(input)
+
+    return reply.status(200).send(result)
+  })
+
   app.post('/opportunities', async (request, reply) => {
     const result = await createJobOpportunity(request.body)
 

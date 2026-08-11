@@ -7,7 +7,11 @@ import type {
 import type { JobOpportunityStatus, JobAnalysisListSummary } from '@/types/opportunity'
 import type { InterviewSessionEvaluation } from '@/shared/interview/schemas'
 import { getRecommendationFromScore } from '@/shared/opportunity/analysisPresentation'
-import { dashboardRepository, type DashboardInterviewEvidenceRecord } from '../repositories/dashboard.repository'
+import {
+  dashboardRepository,
+  type DashboardInterviewEvidenceRecord,
+  type DashboardInterviewScheduleRecord,
+} from '../repositories/dashboard.repository'
 import { opportunityRepository, type JobOpportunityRecord } from '../repositories/opportunity.repository'
 import { getJobAnalysisListSummaries } from './job-analysis.service'
 import { collectHistoricalWeaknesses } from './interview/history-context'
@@ -63,6 +67,7 @@ export type DashboardAggregationInput = {
     writtenTestReviews: number
     interviewReviews: number
   }
+  interviewSchedules?: DashboardInterviewScheduleRecord[]
   generatedAt?: string
 }
 
@@ -263,7 +268,30 @@ function createRecentActivities(input: DashboardAggregationInput) {
     .slice(0, 10)
 }
 
+function createInterviewCalendar(records: DashboardInterviewScheduleRecord[], generatedAt: string) {
+  const nowMs = Date.parse(generatedAt)
+  const events = records
+    .flatMap((record) => {
+      const scheduledAtMs = Date.parse(record.scheduledAt)
+      if (!Number.isFinite(scheduledAtMs)) return []
+      return [
+        {
+          ...record,
+          timing: scheduledAtMs < nowMs ? ('overdue' as const) : ('upcoming' as const),
+        },
+      ]
+    })
+    .sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt))
+
+  return {
+    events,
+    upcomingCount: events.filter((event) => event.timing === 'upcoming').length,
+    overdueCount: events.filter((event) => event.timing === 'overdue').length,
+  }
+}
+
 export function buildDashboardOverview(input: DashboardAggregationInput): DashboardOverview {
+  const generatedAt = input.generatedAt ?? new Date().toISOString()
   const abilityInsights = collectAbilityInsights(input.interviewEvidence)
   const historicalWeaknesses = collectHistoricalWeaknesses(input.interviewEvidence)
   const sourceCounts = {
@@ -276,7 +304,7 @@ export function buildDashboardOverview(input: DashboardAggregationInput): Dashbo
   const dataStatus = !hasEvidence ? 'empty' : input.interviewEvidence.length >= 2 ? 'sufficient' : 'partial'
 
   return {
-    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    generatedAt,
     ability: {
       dataStatus,
       strengths: abilityInsights.strengths,
@@ -286,6 +314,7 @@ export function buildDashboardOverview(input: DashboardAggregationInput): Dashbo
     },
     opportunityPipeline: createPipeline(input.opportunities),
     matchDistribution: createMatchDistribution(input.opportunities, input.analysisByOpportunityId),
+    interviewCalendar: createInterviewCalendar(input.interviewSchedules ?? [], generatedAt),
     recentActivities: createRecentActivities(input),
   }
 }
@@ -294,10 +323,11 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   const userId = await getCurrentUserId()
   const opportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
   const opportunityIds = opportunities.map((opportunity) => opportunity.id)
-  const [analysisByOpportunityId, interviewEvidence, reviewSourceCounts] = await Promise.all([
+  const [analysisByOpportunityId, interviewEvidence, reviewSourceCounts, interviewSchedules] = await Promise.all([
     getJobAnalysisListSummaries(opportunityIds),
     dashboardRepository.findInterviewEvidenceByUserId(userId),
     dashboardRepository.findReviewSourceCountsByUserId(userId),
+    dashboardRepository.findInterviewSchedulesByUserId(userId),
   ])
 
   return buildDashboardOverview({
@@ -305,5 +335,6 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
     analysisByOpportunityId,
     interviewEvidence,
     reviewSourceCounts,
+    interviewSchedules,
   })
 }

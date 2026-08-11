@@ -280,7 +280,15 @@ export class DrizzleJobAnalysisRepository {
           analysisId: agentRuns.analysisId,
           attemptNumber: agentRuns.attemptNumber,
           status: agentRuns.status,
-          error: agentRuns.error,
+          // 轮询只需要可展示的错误摘要，不能把 validationIssues/原始值等大 JSON 带出数据库。
+          error: sql<AgentRunError | null>`case
+            when ${agentRuns.error} is null then null
+            else jsonb_build_object(
+              'code', ${agentRuns.error}->>'code',
+              'message', ${agentRuns.error}->>'message',
+              'retryable', coalesce((${agentRuns.error}->>'retryable')::boolean, false)
+            )
+          end`,
           startedAt: agentRuns.startedAt,
           finishedAt: agentRuns.finishedAt,
           durationMs: agentRuns.durationMs,

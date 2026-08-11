@@ -174,14 +174,27 @@ watch(
 
 <template>
   <section class="mx-auto max-w-6xl space-y-5">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
+    <div class="flex min-w-0 flex-wrap items-end justify-between gap-4">
+      <div class="min-w-0 flex-1">
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">系统设置</h1>
-        <p class="mt-1 text-sm text-muted">配置工作台外观和后续 AI 调用所需的模型连接。</p>
+        <p class="mt-1 truncate text-sm text-muted" title="配置工作台外观和后续 AI 调用所需的模型连接。">
+          配置工作台外观和后续 AI 调用所需的模型连接。
+        </p>
       </div>
-      <UButton to="/developer/agent-runs" target="_blank" color="neutral" variant="outline" icon="i-lucide-bug-play">
-        打开 Agent 调试台
-      </UButton>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <UButton to="/developer/agent-runs" target="_blank" color="neutral" variant="outline" icon="i-lucide-bug-play">
+          Agent Run
+        </UButton>
+        <UButton
+          to="/developer/chat-runs"
+          target="_blank"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-message-square-more"
+        >
+          Chat Run
+        </UButton>
+      </div>
     </div>
 
     <section class="app-panel p-5">
@@ -193,7 +206,7 @@ watch(
         <UBadge color="neutral" variant="subtle" :label="currentThemeLabel" />
       </div>
 
-      <div class="mt-4 grid gap-3 md:grid-cols-3">
+      <div class="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr))]">
         <button
           v-for="option in themeOptions"
           :key="option.value"
@@ -211,9 +224,9 @@ watch(
           >
             <UIcon :name="option.icon" class="size-4" />
           </span>
-          <span class="min-w-0">
-            <span class="block text-sm font-medium text-highlighted">{{ option.label }}</span>
-            <span class="mt-1 block text-xs leading-5 text-muted">{{ option.description }}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-sm font-medium text-highlighted">{{ option.label }}</span>
+            <span class="mt-1 block break-words text-xs leading-5 text-muted">{{ option.description }}</span>
           </span>
         </button>
       </div>
@@ -235,7 +248,7 @@ watch(
         <div
           v-for="connection in settingsStore.savedLlmConnections"
           :key="connection.id"
-          class="model-config-tag-group flex overflow-hidden rounded-full border border-[var(--app-border)]"
+          class="model-config-tag-group flex max-w-full overflow-hidden rounded-full border border-[var(--app-border)]"
           :class="{ 'is-active': connection.id === activeSavedLlmConnectionId }"
           :title="connection.baseUrl"
         >
@@ -244,12 +257,12 @@ watch(
             size="xs"
             color="neutral"
             variant="ghost"
-            class="model-config-tag rounded-r-none shadow-none"
+            class="model-config-tag min-w-0 max-w-full rounded-r-none shadow-none"
             :class="{ 'is-active': connection.id === activeSavedLlmConnectionId }"
             :disabled="isCheckingModelUsage"
             @click="selectSavedLlmConnection(connection.id)"
           >
-            {{ connection.modelName }}
+            <span class="truncate">{{ connection.modelName }}</span>
           </UButton>
           <UButton
             type="button"
@@ -265,7 +278,7 @@ watch(
         </div>
       </div>
 
-      <div class="mt-5 grid gap-x-4 gap-y-3 md:grid-cols-2">
+      <div class="mt-5 grid gap-x-4 gap-y-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
         <UFormField label="Base URL" required>
           <UInput v-model="llmDraft.baseUrl" class="w-full" placeholder="https://api.deepseek.com" />
           <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
@@ -276,7 +289,7 @@ watch(
           <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
         </UFormField>
 
-        <UFormField label="API Key" class="md:col-span-2">
+        <UFormField label="API Key" class="col-span-full min-w-0">
           <div class="flex gap-2">
             <UInput
               v-model="llmDraft.apiKey"
@@ -294,33 +307,43 @@ watch(
             />
             <UButton type="button" color="neutral" variant="outline" icon="i-lucide-eraser" @click="clearApiKey" />
           </div>
-          <p class="mt-1 min-h-[14px] text-[11px] leading-[14px] text-muted">
+          <p class="mt-1 min-h-[14px] break-words text-[11px] leading-[14px] text-muted">
             仅保存到当前浏览器；发起分析时临时传给后端，不写入分析记录或数据库
           </p>
         </UFormField>
       </div>
 
-      <div class="mt-4 flex justify-end gap-2">
-        <UButton type="button" color="neutral" variant="ghost" :disabled="!isLlmDirty" @click="fillDeepSeekPreset">
-          恢复示例
+      <div class="mt-4 flex min-w-0 flex-wrap justify-end gap-2">
+        <UButton
+          type="button"
+          color="neutral"
+          variant="ghost"
+          class="min-w-0 max-w-full"
+          :disabled="!isLlmDirty"
+          @click="fillDeepSeekPreset"
+        >
+          <span class="truncate">恢复示例</span>
         </UButton>
         <UButton
           type="button"
           icon="i-lucide-save"
+          class="min-w-0 max-w-full"
           :loading="isCheckingModelUsage"
           :disabled="!canSaveLlm || isCheckingModelUsage"
           @click="saveLlmSettings"
-          >保存模型配置</UButton
         >
+          <span class="truncate">保存模型配置</span>
+        </UButton>
         <UButton
           type="button"
           color="neutral"
           variant="outline"
           icon="i-lucide-bookmark-plus"
+          class="min-w-0 max-w-full"
           :disabled="!canSaveReusableLlm"
           @click="saveCurrentLlmAsReusable"
         >
-          保存为可复用配置
+          <span class="truncate">保存为可复用配置</span>
         </UButton>
       </div>
     </section>

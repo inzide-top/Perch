@@ -29,6 +29,7 @@ import type {
   InterviewTurnStatus,
   AnswerDeepEvaluationResult,
 } from '@/shared/interview/schemas'
+import { getInterviewBudgetForScale } from '@/shared/interview/schemas'
 import { request, type RequestOptions } from './http'
 
 type InterviewSessionSummaryDto = {
@@ -159,14 +160,7 @@ export type SubmitInterviewAnswerPayload = {
 }
 
 export function getInterviewBudget(config: InterviewConfig): InterviewBudget {
-  const scaleMap = {
-    quick: { mainTopicBudget: 3, totalQuestionBudget: 5 },
-    standard: { mainTopicBudget: 5, totalQuestionBudget: 9 },
-    deep: { mainTopicBudget: 8, totalQuestionBudget: 14 },
-  } as const
-  const budget = scaleMap[config.scale]
-
-  return { ...budget, maxFollowUpsPerRoot: 3 }
+  return getInterviewBudgetForScale(config.scale)
 }
 
 function stripBudget(configuration: InterviewConfiguration): InterviewConfig {

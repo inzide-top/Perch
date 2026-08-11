@@ -97,6 +97,46 @@ export const createJobOpportunityInputSchema = z.object({
   description: requiredText,
 })
 
+const jobOpportunityImportUrlSchema = z
+  .string()
+  .trim()
+  .min(1, '请输入岗位页面网址')
+  .max(2048)
+  .url('请输入完整的 http 或 https 网址')
+
+export const importJobOpportunityFromUrlInputSchema = z
+  .object({
+    url: jobOpportunityImportUrlSchema,
+  })
+  .strict()
+
+export const importJobOpportunitiesFromUrlsInputSchema = z
+  .object({
+    urls: z.array(jobOpportunityImportUrlSchema).min(1, '请至少输入一个岗位网址').max(5, '一次最多导入 5 个岗位网址'),
+  })
+  .strict()
+  .superRefine(({ urls }, context) => {
+    const seen = new Set<string>()
+    for (const [index, url] of urls.entries()) {
+      const normalized = url.replace(/\/$/, '')
+      if (seen.has(normalized)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['urls', index],
+          message: '岗位网址不能重复',
+        })
+      }
+      seen.add(normalized)
+    }
+  })
+
+export const importJobOpportunityFromTextInputSchema = z
+  .object({
+    text: z.string().trim().min(20, '岗位文本至少需要 20 个字符').max(20_000, '岗位文本不能超过 20000 个字符'),
+    modelConnection: modelConnectionSchema,
+  })
+  .strict()
+
 export const opportunityIdParamsSchema = z.object({
   opportunityId: z.string().uuid(),
 })

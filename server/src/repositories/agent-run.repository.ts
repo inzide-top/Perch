@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ne, or, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   agentRuns,
@@ -36,6 +36,25 @@ export type FailReviewExtractionRunRecord = {
   finishedAt: string
 }
 
+export type StartChatModelCallRunRecord = typeof agentRuns.$inferInsert
+
+export type CompleteChatModelCallRunRecord = {
+  operationKey: string
+  rawOutput: string
+  parsedOutput: Record<string, unknown>
+  tokenUsage: AgentRunRow['tokenUsage']
+  durationMs: number
+  finishedAt: string
+}
+
+export type FailChatModelCallRunRecord = {
+  operationKey: string
+  error: NonNullable<AgentRunRow['error']>
+  durationMs: number
+  finishedAt: string
+  cancelled: boolean
+}
+
 export class DrizzleAgentRunRepository {
   private debugRelations() {
     return {
@@ -60,6 +79,7 @@ export class DrizzleAgentRunRepository {
           analysisId: agentRuns.analysisId,
           interviewSessionId: agentRuns.interviewSessionId,
           interviewTurnId: agentRuns.interviewTurnId,
+          chatRunId: agentRuns.chatRunId,
           attemptNumber: agentRuns.attemptNumber,
           status: agentRuns.status,
           modelName: agentRuns.modelName,
@@ -110,8 +130,12 @@ export class DrizzleAgentRunRepository {
   async findDebugList(filters: AgentRunDebugListFilters) {
     return measureDb(async () => {
       const query = this.debugListQuery()
+      const workflowFilter = filters.workflowType
+        ? eq(agentRuns.workflowType, filters.workflowType)
+        : ne(agentRuns.workflowType, 'chat_turn')
 
-      return (filters.workflowType ? query.where(eq(agentRuns.workflowType, filters.workflowType)) : query)
+      return query
+        .where(workflowFilter)
         .orderBy(desc(agentRuns.startedAt), desc(agentRuns.attemptNumber))
         .limit(filters.limit)
     })
@@ -132,6 +156,73 @@ export class DrizzleAgentRunRepository {
       .limit(1)
 
     return run?.attemptNumber ?? 0
+  }
+
+  async startChatModelCall(run: StartChatModelCallRunRecord) {
+    if (!run.chatRunId || run.workflowType !== 'chat_turn') {
+      throw new TypeError('聊天模型 AgentRun 必须绑定 chatRunId，并使用 chat_turn workflowType')
+    }
+
+    const [created] = await db
+      .insert(agentRuns)
+      .values(run)
+      .onConflictDoNothing({ target: [agentRuns.operationKey, agentRuns.attemptNumber] })
+      .returning()
+    if (created) return created
+
+    const [existing] = await db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.operationKey, run.operationKey), eq(agentRuns.attemptNumber, run.attemptNumber)))
+      .limit(1)
+    return existing ?? null
+  }
+
+  async completeChatModelCall(record: CompleteChatModelCallRunRecord) {
+    const [run] = await db
+      .update(agentRuns)
+      .set({
+        status: 'completed',
+        rawOutput: record.rawOutput,
+        parsedOutput: record.parsedOutput,
+        tokenUsage: record.tokenUsage,
+        durationMs: record.durationMs,
+        error: null,
+        finishedAt: record.finishedAt,
+      })
+      .where(
+        and(
+          eq(agentRuns.operationKey, record.operationKey),
+          eq(agentRuns.attemptNumber, 1),
+          eq(agentRuns.workflowType, 'chat_turn'),
+          eq(agentRuns.status, 'processing'),
+        ),
+      )
+      .returning()
+
+    return run ?? null
+  }
+
+  async failChatModelCall(record: FailChatModelCallRunRecord) {
+    const [run] = await db
+      .update(agentRuns)
+      .set({
+        status: record.cancelled ? 'cancelled' : 'failed',
+        error: record.error,
+        durationMs: record.durationMs,
+        finishedAt: record.finishedAt,
+      })
+      .where(
+        and(
+          eq(agentRuns.operationKey, record.operationKey),
+          eq(agentRuns.attemptNumber, 1),
+          eq(agentRuns.workflowType, 'chat_turn'),
+          eq(agentRuns.status, 'processing'),
+        ),
+      )
+      .returning()
+
+    return run ?? null
   }
 
   async createReviewExtractionRun(run: typeof agentRuns.$inferInsert) {

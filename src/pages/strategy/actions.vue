@@ -36,6 +36,18 @@ const visibleActions = computed(() => {
   return isActionsExpanded.value ? actions : actions.slice(0, 5)
 })
 const hasMoreActions = computed(() => (overview.value?.actions.length ?? 0) > 5)
+const staleReasonText = computed(() => {
+  if (overview.value?.ai.freshness !== 'stale') return ''
+
+  const reasons: string[] = []
+  if (overview.value.ai.staleReasons.includes('source_changed')) {
+    reasons.push('机会进展、分析结果或能力证据已经变化')
+  }
+  if (overview.value.ai.staleReasons.includes('time_expired')) {
+    reasons.push('这份总结生成已超过 3 天')
+  }
+  return reasons.length > 0 ? reasons.join('；') : '策略依据可能已经变化'
+})
 
 function clearPoll() {
   if (pollTimer !== null) window.clearTimeout(pollTimer)
@@ -116,6 +128,12 @@ function actionDestination(action: StrategyAction) {
   return action.cta.to ?? '/opportunities'
 }
 
+function generateButtonLabel(freshness: ActionStrategyOverview['ai']['freshness']) {
+  if (freshness === 'fresh') return '更新 AI 建议'
+  if (freshness === 'stale') return '重新生成 AI 建议'
+  return '生成 AI 建议'
+}
+
 onMounted(() => void loadOverview())
 onActivated(() => {
   if (!overview.value) return
@@ -172,7 +190,7 @@ onBeforeUnmount(clearPoll)
               :disabled="!hasModelConfig || overview.ai.freshness === 'generating'"
               @click="generate"
             >
-              {{ overview.ai.freshness === 'fresh' ? '更新 AI 建议' : '生成 AI 建议' }}
+              {{ generateButtonLabel(overview.ai.freshness) }}
             </UButton>
           </div>
         </div>
@@ -194,6 +212,32 @@ onBeforeUnmount(clearPoll)
           <UButton size="xs" color="neutral" variant="outline" :disabled="!hasModelConfig" @click="generate"
             >重试</UButton
           >
+        </div>
+        <div
+          v-else-if="overview.ai.freshness === 'stale'"
+          class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#ffa235]/35 bg-[#ffa235]/10 px-3 py-2.5"
+          role="status"
+        >
+          <div class="flex min-w-0 items-start gap-2">
+            <UIcon name="i-lucide-clock-alert" class="mt-0.5 size-4 shrink-0 text-[#ffa235]" />
+            <div>
+              <p class="text-xs font-medium text-highlighted">这份 AI 策略可能已过期</p>
+              <p class="mt-0.5 text-xs leading-5 text-muted">
+                {{ staleReasonText }}。规则行动已按当前数据更新，建议重新生成 AI 总结。
+              </p>
+            </div>
+          </div>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            :loading="isGenerating"
+            :disabled="!hasModelConfig"
+            @click="generate"
+          >
+            重新生成
+          </UButton>
         </div>
         <div
           v-else-if="!hasModelConfig"
@@ -224,7 +268,9 @@ onBeforeUnmount(clearPoll)
               <UIcon name="i-lucide-sparkles" class="size-4" />
             </span>
             <div class="min-w-0">
-              <p class="text-xs font-medium text-primary">AI 当前总结</p>
+              <p class="text-xs font-medium text-primary">
+                {{ overview.ai.freshness === 'stale' ? 'AI 历史总结 · 可能过期' : 'AI 当前总结' }}
+              </p>
               <h2 class="mt-1 text-lg font-semibold text-highlighted">{{ overview.ai.summary.headline }}</h2>
               <p class="mt-2 text-sm leading-6 text-muted">{{ overview.ai.summary.summary }}</p>
             </div>

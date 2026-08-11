@@ -9,6 +9,7 @@ export type AgentRunDebugItem = {
   sourceAnalysisId: string | null
   interviewSessionId: string | null
   interviewTurnId: string | null
+  chatRunId: string | null
   reviewDocumentId: string | null
   reviewSourceType: 'written_test' | 'interview' | null
   reviewDocumentStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
@@ -36,7 +37,7 @@ export type AgentRunDebugDetail = AgentRunDebugItem & {
 
 export const agentRunApi = {
   getAgentRuns(options: { limit?: number; workflowType?: AgentWorkflowType } = {}) {
-    const searchParams = new URLSearchParams({ limit: String(options.limit ?? 50) })
+    const searchParams = new URLSearchParams({ limit: String(options.limit ?? 30) })
     if (options.workflowType) searchParams.set('workflowType', options.workflowType)
 
     return request.get<AgentRunDebugItem[]>(`/developer/agent-runs?${searchParams.toString()}`)

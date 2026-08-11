@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { backgroundTaskApi, type BackgroundTaskReference, type BackgroundTaskStatus } from '@/services/background-tasks'
 import type { AnswerDeepEvaluationResult } from '@/shared/interview/schemas'
 import type { AgentRunStatus, JobAnalysisProgress } from '@/types/opportunity'
+import { isSameBackgroundTaskVersion } from './background-task-version'
 
 export type BackgroundTaskEntry = BackgroundTaskReference & {
   key: string
@@ -340,11 +341,15 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
             }),
           )
 
+          let didUpdateTask = false
           completedStatuses.forEach((status) => {
             const key = taskKey(status)
             const previous = this.tasksByKey[key]
             const next = toEntry(status, previous)
+            if (previous && isSameBackgroundTaskVersion(previous, next)) return
+
             this.tasksByKey[next.key] = next
+            didUpdateTask = true
             const kind: BackgroundTaskUpdateKind =
               previous && isActive(previous.status) && next.status === 'completed'
                 ? 'completed'
@@ -354,7 +359,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
             notify(next, kind)
           })
           this.lastPolledAt = new Date().toISOString()
-          persist(this.$state)
+          if (didUpdateTask) persist(this.$state)
         } catch {
           // 后台任务轮询失败不应打断页面交互；下一次可见性或定时轮询会继续尝试。
         } finally {
