@@ -69,16 +69,33 @@ export type DashboardRecentActivity = {
   sessionId?: string
 }
 
+export type DashboardInterviewScheduleEvent = {
+  id: string
+  opportunityId: string
+  company: string
+  jobTitle: string
+  title: string
+  scheduledAt: string
+  timing: 'upcoming' | 'overdue'
+}
+
+export type DashboardInterviewCalendar = {
+  events: DashboardInterviewScheduleEvent[]
+  upcomingCount: number
+  overdueCount: number
+}
+
 export type DashboardOverview = {
   generatedAt: string
   ability: DashboardAbilitySummary
   opportunityPipeline: DashboardOpportunityPipeline
   matchDistribution: DashboardMatchDistribution
+  interviewCalendar: DashboardInterviewCalendar
   recentActivities: DashboardRecentActivity[]
 }
 
 export type DashboardWidgetKey =
-  'ability_insights' | 'opportunity_pipeline' | 'match_distribution' | 'recent_activities'
+  'ability_insights' | 'interview_calendar' | 'opportunity_pipeline' | 'match_distribution' | 'recent_activities'
 
 export type DashboardWidgetVisibility = Record<DashboardWidgetKey, boolean>
 

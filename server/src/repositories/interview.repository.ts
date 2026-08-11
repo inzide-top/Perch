@@ -264,10 +264,26 @@ export class InterviewRepositoryConflictError extends Error {
 export class DrizzleInterviewRepository {
   async createSessionWithInitialEvaluation(record: CreateInterviewSessionRecord) {
     return db.transaction(async (tx) => {
-      const [session] = await tx.insert(interviewSessions).values(record.session).returning()
+      const [session] = await tx
+        .insert(interviewSessions)
+        .values(record.session)
+        .onConflictDoNothing({ target: interviewSessions.id })
+        .returning()
+
+      if (!session) {
+        const [existingSession] = await tx
+          .select()
+          .from(interviewSessions)
+          .where(eq(interviewSessions.id, record.session.id))
+          .limit(1)
+
+        if (!existingSession) throw new InterviewRepositoryConflictError('模拟面试创建冲突')
+        return { session: existingSession, evaluation: null, alreadyApplied: true }
+      }
+
       const [evaluation] = await tx.insert(interviewSessionEvaluations).values(record.evaluation).returning()
 
-      return { session, evaluation }
+      return { session, evaluation, alreadyApplied: false }
     })
   }
 
@@ -501,7 +517,17 @@ export class DrizzleInterviewRepository {
   async findLatestFailedInterviewWorkflowRun(sessionId: string) {
     const [run] = await measureDb(() =>
       db
-        .select({ error: agentRuns.error })
+        .select({
+          // 状态轮询只展示错误摘要，不读取 validationIssues、invalidFieldValues 等大字段。
+          error: sql<AgentRunError | null>`case
+            when ${agentRuns.error} is null then null
+            else jsonb_build_object(
+              'code', ${agentRuns.error}->>'code',
+              'message', ${agentRuns.error}->>'message',
+              'retryable', coalesce((${agentRuns.error}->>'retryable')::boolean, false)
+            )
+          end`,
+        })
         .from(agentRuns)
         .where(
           and(

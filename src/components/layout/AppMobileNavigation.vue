@@ -21,7 +21,11 @@ function closeNavigation() {
     v-model:open="isOpen"
     side="left"
     :close="false"
-    :ui="{ content: 'w-72 max-w-[calc(100vw-2.5rem)] p-0', body: 'p-0' }"
+    :ui="{
+      overlay: 'app-overlay-layer',
+      content: 'app-drawer-layer w-72 max-w-[calc(100vw-2.5rem)] p-0',
+      body: 'p-0',
+    }"
   >
     <template #body>
       <aside class="flex min-h-full flex-col bg-[var(--app-surface)] px-3 py-4">

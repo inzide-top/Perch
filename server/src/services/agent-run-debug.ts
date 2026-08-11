@@ -7,6 +7,7 @@ type AgentRunDebugRun = Pick<
   | 'analysisId'
   | 'interviewSessionId'
   | 'interviewTurnId'
+  | 'chatRunId'
   | 'attemptNumber'
   | 'status'
   | 'modelName'
@@ -44,6 +45,7 @@ export function toAgentRunDebugItem(entry: AgentRunDebugEntry) {
     sourceAnalysisId: entry.sourceAnalysisId,
     interviewSessionId: entry.run.interviewSessionId,
     interviewTurnId: entry.run.interviewTurnId,
+    chatRunId: entry.run.chatRunId,
     opportunityId: entry.opportunityId,
     company: entry.company,
     jobTitle: entry.jobTitle,

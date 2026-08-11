@@ -44,8 +44,8 @@ function getStatusColor(status: ReviewDocumentSummary['status']) {
     :close="false"
     :dismissible="!saving"
     :ui="{
-      overlay: 'bg-black/35 backdrop-blur-[2px]',
-      content: 'app-drawer h-full w-full max-w-lg border-l border-default shadow-2xl',
+      overlay: 'app-overlay-layer bg-black/35 backdrop-blur-[2px]',
+      content: 'app-drawer-layer app-drawer h-full w-full max-w-lg border-l border-default shadow-2xl',
     }"
     @update:open="(nextOpen: boolean) => !nextOpen && emit('close')"
   >

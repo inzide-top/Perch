@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { InterviewRound, InterviewRoundResult, InterviewRoundType } from '@/types/opportunity'
-import { formatDateOnly } from '@/shared/formatDate'
 import type { InterviewRoundForm } from '../../types'
 
 const props = defineProps<{
@@ -14,12 +13,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   save: []
-  selectDate: [value: unknown]
 }>()
 
 const form = defineModel<InterviewRoundForm>('form', { required: true })
-const datePopoverOpen = defineModel<boolean>('datePopoverOpen', { required: true })
-const calendarDate = defineModel<unknown>('calendarDate', { required: true })
 
 const selectContent = {
   align: 'start' as const,
@@ -85,23 +81,13 @@ const resultOptions: { label: string; value: Exclude<InterviewRoundResult, 'pend
           <UFormField label="轮次名称">
             <UInput v-model="form.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
           </UFormField>
-          <UFormField :label="props.round?.status === 'planned' ? '面试时间' : '面试日期'">
-            <UPopover v-model:open="datePopoverOpen" :portal="true" :ui="{ content: '!z-[180]' }">
-              <UButton
-                type="button"
-                color="neutral"
-                variant="outline"
-                class="w-full justify-between"
-                trailing-icon="i-lucide-calendar-days"
-              >
-                {{ formatDateOnly(form.date) || '请输入日期' }}
-              </UButton>
-              <template #content>
-                <div class="p-2">
-                  <UCalendar v-model="calendarDate" @update:model-value="emit('selectDate', $event)" />
-                </div>
-              </template>
-            </UPopover>
+          <UFormField label="面试时间">
+            <UInput
+              v-model="form.scheduledAt"
+              type="datetime-local"
+              class="w-full min-w-0"
+              icon="i-lucide-calendar-clock"
+            />
           </UFormField>
 
           <UFormField v-if="props.round?.status === 'planned'" label="安排备注">

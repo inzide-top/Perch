@@ -14,8 +14,7 @@ import type { ReviewDocumentSummary } from '@/types/review'
 import { useOpportunityStore, useSettingsStore } from '@/stores'
 import { ApiRequestError } from '@/services/http'
 import { getRecommendationClass, getRecommendationLabel } from '@/shared/opportunity/analysisPresentation'
-import { formatDateOnly } from '@/shared/formatDate'
-import ChatSection from './components/ChatSection.vue'
+import { formatDateOnly, toDateTimeLocalInput, toIsoDateTime } from '@/shared/formatDate'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
 import OpportunityDetailSkeleton from './components/OpportunityDetailSkeleton.vue'
@@ -23,7 +22,6 @@ import InterviewWorkspaceSection from './interview/components/InterviewWorkspace
 import type {
   InterviewManagementTab,
   InterviewRoundForm,
-  ChatItem,
   DetailNavItem,
   DetailNavKey,
   OpportunityInfoForm,
@@ -95,24 +93,23 @@ const fixedNavItems: DetailNavItem[] = [
   },
 ]
 
-const chatItems = ref<ChatItem[]>([
-  { id: 1, title: 'JD 追问准备', preview: '围绕 AI Workflow 和 RAG 继续追问' },
-  { id: 2, title: '简历优化讨论', preview: '把智能工牌项目改写得更贴合岗位' },
-])
-const activeNavKey = ref<DetailNavKey>(route.query.section === 'mock-interview' ? 'mock-interview' : 'dashboard')
+function getDetailNavKey(section: unknown): DetailNavKey {
+  if (section === 'info') return 'info'
+  if (section === 'mock-interview') return 'mock-interview'
+
+  return 'dashboard'
+}
+
+const activeNavKey = ref<DetailNavKey>(getDetailNavKey(route.query.section))
 const isOpportunityInfoEditing = ref(false)
 const statusMotionKey = ref(0)
 const isTerminatePopoverOpen = ref(false)
-const roundDatePopoverOpen = ref(false)
-const roundCalendarDate = ref<unknown>()
 const editingRoundId = ref<string | null>(null)
 const deletingRoundId = ref<string | null>(null)
 const isInterviewReviewDrawerOpen = ref(false)
 const interviewManagementTab = ref<InterviewManagementTab>('schedule')
 const isWrittenTestReviewDrawerOpen = ref(false)
 const isRoundEditDrawerOpen = ref(false)
-const editRoundDatePopoverOpen = ref(false)
-const editRoundCalendarDate = ref<unknown>()
 const editingRoundInitialValue = ref<InterviewRoundForm | null>(null)
 const writtenTestDatePopoverOpen = ref(false)
 const writtenTestCalendarDate = ref<unknown>()
@@ -144,6 +141,11 @@ const opportunityId = computed(() => String(route.params.id ?? ''))
 const opportunity = computed(() => opportunities.value.find((item) => item.id === opportunityId.value) ?? null)
 const analysis = computed(() => analyses.value.find((item) => item.opportunityId === opportunityId.value) ?? null)
 const reviewDocuments = computed(() => reviewDocumentsByOpportunity.value[opportunityId.value] ?? [])
+const userVisibleLoadError = computed(() => {
+  if (!loadError.value) return ''
+  if (/not found|不存在|未找到/i.test(loadError.value)) return '未找到这个机会，它可能已被删除。'
+  return '机会详情加载失败，请稍后重试。'
+})
 const hasLoadedOpportunityDetail = computed(() => {
   return Boolean(opportunityId.value) && opportunityStore.hasOpportunityDetail(opportunityId.value)
 })
@@ -155,14 +157,6 @@ const analysisModelName = computed(() => {
 
   return task?.status === 'completed' ? task.modelName : null
 })
-const isChatPage = computed(() => String(activeNavKey.value).startsWith('chat-'))
-const activeChat = computed(() => {
-  if (!isChatPage.value) return null
-
-  const id = Number(String(activeNavKey.value).replace('chat-', ''))
-  return chatItems.value.find((chat) => chat.id === id) ?? null
-})
-
 const infoForm = reactive<OpportunityInfoForm>({
   company: '',
   jobTitle: '',
@@ -178,7 +172,7 @@ const infoForm = reactive<OpportunityInfoForm>({
 const roundForm = reactive<InterviewRoundForm>({
   type: 'technical_basic' as InterviewRoundType,
   title: '',
-  date: '',
+  scheduledAt: '',
   result: 'unknown',
   note: '',
   reviewNote: '',
@@ -186,7 +180,7 @@ const roundForm = reactive<InterviewRoundForm>({
 const roundEditForm = reactive<InterviewRoundForm>({
   type: 'technical_basic' as InterviewRoundType,
   title: '',
-  date: '',
+  scheduledAt: '',
   result: 'unknown',
   note: '',
   reviewNote: '',
@@ -275,7 +269,7 @@ const hasRoundEditChanged = computed(() => {
   return (
     roundEditForm.type !== editingRoundInitialValue.value.type ||
     roundEditForm.title !== editingRoundInitialValue.value.title ||
-    roundEditForm.date !== editingRoundInitialValue.value.date ||
+    roundEditForm.scheduledAt !== editingRoundInitialValue.value.scheduledAt ||
     roundEditForm.result !== editingRoundInitialValue.value.result ||
     roundEditForm.note !== editingRoundInitialValue.value.note ||
     roundEditForm.reviewNote !== editingRoundInitialValue.value.reviewNote
@@ -285,9 +279,6 @@ const canChangeWrittenTestFlow = computed(() => {
   const status = opportunity.value?.status
 
   return status !== 'interviewing' && status !== 'oc' && status !== 'offered' && status !== 'closed'
-})
-const interviewRoundDateLabel = computed(() => {
-  return formatDateOnly(roundForm.date) || '请输入日期'
 })
 const writtenTestDateLabel = computed(() => {
   return formatDateOnly(writtenTestReviewForm.scheduledAt) || '请输入笔试时间'
@@ -343,10 +334,10 @@ function shouldConfirmUnsavedPreferenceLeave() {
 function syncDetailSectionQuery(navKey: DetailNavKey) {
   const query = { ...route.query }
 
-  if (navKey === 'mock-interview') {
-    query.section = 'mock-interview'
-  } else {
+  if (navKey === 'dashboard') {
     delete query.section
+  } else {
+    query.section = navKey
   }
 
   void router.replace({ query })
@@ -409,13 +400,13 @@ function formatCityList(cities: string[] | string | undefined) {
 }
 
 async function loadOpportunityDetail(force = false) {
-  if (!opportunityId.value) return
+  if (!opportunityId.value) return null
 
   const shouldShowLoading = force || !opportunityStore.hasOpportunityDetail(opportunityId.value)
   if (shouldShowLoading) isDetailLoading.value = true
 
   try {
-    await opportunityStore.loadOpportunityDetail(opportunityId.value, { force })
+    return await opportunityStore.loadOpportunityDetail(opportunityId.value, { force })
   } finally {
     if (shouldShowLoading) isDetailLoading.value = false
   }
@@ -605,7 +596,7 @@ async function addInterviewRound(mode: InterviewManagementTab) {
     await opportunityStore.addInterviewRound(opportunity.value.id, {
       type: roundForm.type,
       title: roundForm.title,
-      scheduledAt: roundForm.date,
+      scheduledAt: toIsoDateTime(roundForm.scheduledAt),
       status: mode === 'schedule' ? 'planned' : 'completed',
       result: mode === 'schedule' ? 'pending' : roundForm.result,
       note: mode === 'schedule' ? roundForm.note : '',
@@ -616,12 +607,11 @@ async function addInterviewRound(mode: InterviewManagementTab) {
     Object.assign(roundForm, {
       type: getDefaultRoundType(),
       title: '',
-      date: '',
+      scheduledAt: '',
       result: 'unknown',
       note: '',
       reviewNote: '',
     })
-    roundCalendarDate.value = undefined
     toast.add({
       title: mode === 'schedule' ? '面试安排已创建' : '面试复盘已添加',
       color: 'success',
@@ -669,20 +659,6 @@ async function cancelInterviewRound(round: InterviewRound) {
   } finally {
     cancelingInterviewRoundId.value = null
   }
-}
-
-function handleRoundDateSelect(value: unknown) {
-  if (!value) return
-
-  roundForm.date = String(value)
-  roundDatePopoverOpen.value = false
-}
-
-function handleEditRoundDateSelect(value: unknown) {
-  if (!value) return
-
-  roundEditForm.date = String(value)
-  editRoundDatePopoverOpen.value = false
 }
 
 function handleWrittenTestDateSelect(value: unknown) {
@@ -767,13 +743,12 @@ function openRoundEditDrawer(round: InterviewRound) {
   Object.assign(roundEditForm, {
     type: round.type,
     title: round.title,
-    date: round.scheduledAt,
+    scheduledAt: toDateTimeLocalInput(round.scheduledAt),
     result: round.result,
     note: round.note,
     reviewNote: round.reviewNote,
   })
   editingRoundInitialValue.value = { ...roundEditForm }
-  editRoundCalendarDate.value = undefined
   isRoundEditDrawerOpen.value = true
   lockRoundDrawerScroll()
 }
@@ -807,7 +782,7 @@ async function saveRoundEdit() {
     await opportunityStore.updateInterviewRound(opportunity.value.id, editingRoundId.value, {
       type: roundEditForm.type,
       title: roundEditForm.title,
-      scheduledAt: roundEditForm.date,
+      scheduledAt: toIsoDateTime(roundEditForm.scheduledAt),
       ...(currentRound.status === 'planned'
         ? { note: roundEditForm.note }
         : {
@@ -916,27 +891,6 @@ function openReviewPanelFromStatus(status: JobOpportunityStatus) {
   openInterviewReviewDrawer()
 }
 
-function createChat() {
-  const create = () => {
-    const nextId = Math.max(0, ...chatItems.value.map((chat) => chat.id)) + 1
-
-    chatItems.value.unshift({
-      id: nextId,
-      title: `新对话 ${nextId}`,
-      preview: '围绕当前 JD 和简历继续提问',
-    })
-    activeNavKey.value = `chat-${nextId}`
-  }
-
-  if (!shouldConfirmUnsavedPreferenceLeave()) {
-    create()
-    return
-  }
-
-  pendingInternalLeaveAction = create
-  isUnsavedPreferenceLeaveDialogOpen.value = true
-}
-
 onBeforeRouteLeave(() => {
   if (!shouldConfirmUnsavedPreferenceLeave()) return true
 
@@ -966,10 +920,13 @@ watch(isTerminatePopoverOpen, (isOpen) => {
 
 onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
-  void loadOpportunityDetail().finally(() => {
-    isDetailBootstrapping.value = false
-  })
-  void loadReviewDocuments()
+  void loadOpportunityDetail()
+    .then((loadedOpportunity) => {
+      if (loadedOpportunity) return loadReviewDocuments()
+    })
+    .finally(() => {
+      isDetailBootstrapping.value = false
+    })
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
@@ -981,21 +938,30 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <OpportunityDetailSkeleton v-if="shouldShowDetailSkeleton" />
+  <OpportunityDetailSkeleton v-if="shouldShowDetailSkeleton" @back="goBack" />
 
-  <section v-else-if="loadError && !hasLoadedOpportunityDetail" class="app-empty-state p-10 text-center">
-    <p class="text-sm text-error">{{ loadError }}</p>
-    <UButton
-      class="mt-4"
-      color="neutral"
-      variant="outline"
-      icon="i-lucide-rotate-cw"
-      :loading="isDetailLoading"
-      :disabled="isDetailLoading"
-      @click="loadOpportunityDetail"
+  <section v-else-if="loadError && !hasLoadedOpportunityDetail" class="min-h-[calc(100vh-4rem)] bg-[var(--app-bg)]">
+    <div
+      class="mx-4 mt-4 rounded-[22px] border border-[var(--app-border)] bg-[color-mix(in_srgb,var(--app-surface)_96%,transparent)] px-5 py-4 shadow-[var(--app-shadow-panel)] backdrop-blur-xl lg:mx-6 lg:px-6"
     >
-      重新加载
-    </UButton>
+      <UButton type="button" color="neutral" variant="ghost" icon="i-lucide-arrow-left" class="-ml-2" @click="goBack">
+        返回机会管理
+      </UButton>
+    </div>
+    <div class="app-empty-state mx-4 mt-5 p-10 text-center lg:mx-6">
+      <p class="text-sm text-error">{{ userVisibleLoadError }}</p>
+      <UButton
+        class="mt-4"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-rotate-cw"
+        :loading="isDetailLoading"
+        :disabled="isDetailLoading"
+        @click="loadOpportunityDetail"
+      >
+        重新加载
+      </UButton>
+    </div>
   </section>
 
   <section v-else-if="opportunity" class="min-h-[calc(100vh-4rem)] bg-[var(--app-bg)]">
@@ -1037,69 +1003,33 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="grid min-h-[calc(100vh-6.5rem)] items-start gap-5 px-4 py-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:px-6">
-      <aside class="app-panel app-workspace-nav min-h-[calc(100vh-6.5rem)] p-3 backdrop-blur-xl lg:sticky lg:top-20">
-        <div class="space-y-1">
-          <button
-            v-for="item in fixedNavItems"
-            :key="item.key"
-            type="button"
-            class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
-            :class="
-              activeNavKey === item.key
-                ? 'bg-primary/10 text-highlighted shadow-[inset_3px_0_0_var(--app-accent)]'
-                : 'text-muted hover:bg-[color-mix(in_srgb,var(--app-accent)_8%,transparent)] hover:text-highlighted'
-            "
-            @click="navigateDetailSection(item.key)"
-          >
-            <UIcon :name="item.icon" class="size-4 shrink-0" />
-            <span class="min-w-0">
-              <span class="block text-sm font-medium">{{ item.label }}</span>
-              <span class="block truncate text-xs opacity-75">{{ item.description }}</span>
-            </span>
-          </button>
-        </div>
-
-        <div class="mt-4 border-t border-default pt-4">
-          <div class="mb-2 flex items-center justify-between gap-2 px-2">
-            <p class="text-xs font-medium text-muted">对话目录</p>
-            <button
-              type="button"
-              class="inline-flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-elevated hover:text-highlighted"
-              aria-label="新建对话"
-              title="新建对话"
-              @click="createChat"
-            >
-              <UIcon name="i-lucide-plus" class="size-4" />
-            </button>
-          </div>
-
-          <div class="space-y-1">
-            <button
-              v-for="chat in chatItems"
-              :key="chat.id"
-              type="button"
-              class="w-full rounded-xl px-3 py-2 text-left transition-colors"
-              :class="
-                activeNavKey === `chat-${chat.id}`
-                  ? 'bg-[color-mix(in_srgb,var(--app-accent)_10%,transparent)] text-highlighted'
-                  : 'text-muted hover:bg-elevated hover:text-highlighted'
-              "
-              @click="navigateDetailSection(`chat-${chat.id}`)"
-            >
-              <span class="block truncate text-sm font-medium">{{ chat.title }}</span>
-              <span class="mt-0.5 block truncate text-xs opacity-75">{{ chat.preview }}</span>
-            </button>
-          </div>
-        </div>
-      </aside>
+    <div class="px-4 py-5 lg:px-6">
+      <nav
+        class="app-panel mb-5 flex flex-wrap items-center gap-1.5 p-1.5 backdrop-blur-xl"
+        aria-label="机会详情二级导航"
+      >
+        <button
+          v-for="item in fixedNavItems"
+          :key="item.key"
+          type="button"
+          class="inline-flex min-w-32 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-left text-sm transition-colors"
+          :class="
+            activeNavKey === item.key
+              ? 'bg-primary/10 font-semibold text-highlighted shadow-sm'
+              : 'text-muted hover:bg-[color-mix(in_srgb,var(--app-accent)_8%,transparent)] hover:text-highlighted'
+          "
+          @click="navigateDetailSection(item.key)"
+        >
+          <UIcon :name="item.icon" class="size-4 shrink-0" />
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
 
       <main class="min-w-0">
         <DashboardSection v-if="activeNavKey === 'dashboard'" :analysis="analysis" />
 
         <InfoManagementSection
           v-else-if="activeNavKey === 'info'"
-          v-model:info-form="infoForm"
           v-model:is-opportunity-info-editing="isOpportunityInfoEditing"
           v-model:is-terminate-popover-open="isTerminatePopoverOpen"
           v-model:termination-target="terminationTarget"
@@ -1107,19 +1037,16 @@ onBeforeUnmount(() => {
           v-model:termination-new-round-title="terminationNewRoundTitle"
           v-model:termination-reason-note="terminationReasonNote"
           v-model:is-written-test-review-drawer-open="isWrittenTestReviewDrawerOpen"
-          v-model:written-test-review-form="writtenTestReviewForm"
           v-model:written-test-date-popover-open="writtenTestDatePopoverOpen"
           v-model:written-test-calendar-date="writtenTestCalendarDate"
           v-model:is-interview-review-drawer-open="isInterviewReviewDrawerOpen"
           v-model:interview-management-tab="interviewManagementTab"
-          v-model:round-form="roundForm"
-          v-model:round-date-popover-open="roundDatePopoverOpen"
-          v-model:round-calendar-date="roundCalendarDate"
           v-model:deleting-round-id="deletingRoundId"
           v-model:is-round-edit-drawer-open="isRoundEditDrawerOpen"
-          v-model:round-edit-form="roundEditForm"
-          v-model:edit-round-date-popover-open="editRoundDatePopoverOpen"
-          v-model:edit-round-calendar-date="editRoundCalendarDate"
+          :info-form="infoForm"
+          :written-test-review-form="writtenTestReviewForm"
+          :round-form="roundForm"
+          :round-edit-form="roundEditForm"
           :opportunity="opportunity"
           :analysis="analysis"
           :status-label-map="statusLabelMap"
@@ -1148,11 +1075,14 @@ onBeforeUnmount(() => {
           :can-create-interview-schedule="canCreateInterviewSchedule"
           :termination-round-options="terminationRoundOptions"
           :available-interview-round-type-options="availableInterviewRoundTypeOptions"
-          :interview-round-date-label="interviewRoundDateLabel"
           :written-test-date-label="writtenTestDateLabel"
           :review-documents="reviewDocuments"
           :retrying-review-document-id="retryingReviewDocumentId"
           :editing-interview-round="editingInterviewRound"
+          @update:info-form="Object.assign(infoForm, $event)"
+          @update:written-test-review-form="Object.assign(writtenTestReviewForm, $event)"
+          @update:round-form="Object.assign(roundForm, $event)"
+          @update:round-edit-form="Object.assign(roundEditForm, $event)"
           @go-to-previous-status="goToPreviousStatus"
           @advance-opportunity-status="advanceOpportunityStatus"
           @close-opportunity="closeOpportunity"
@@ -1168,11 +1098,9 @@ onBeforeUnmount(() => {
           @add-interview-round="addInterviewRound"
           @complete-interview-round="completeInterviewRound"
           @cancel-interview-round="cancelInterviewRound"
-          @handle-round-date-select="handleRoundDateSelect"
           @open-round-edit-drawer="openRoundEditDrawer"
           @confirm-delete-round="confirmDeleteRound"
           @close-round-edit-drawer="closeRoundEditDrawer"
-          @handle-edit-round-date-select="handleEditRoundDateSelect"
           @handle-written-test-date-select="handleWrittenTestDateSelect"
           @save-round-edit="saveRoundEdit"
           @retry-review-document="retryReviewDocument"
@@ -1183,8 +1111,6 @@ onBeforeUnmount(() => {
           :opportunity-id="opportunityId"
           :analysis="analysis"
         />
-
-        <ChatSection v-else-if="isChatPage" :active-chat="activeChat" />
       </main>
     </div>
   </section>

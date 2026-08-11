@@ -28,6 +28,7 @@ import {
   buildActionStrategyUserPrompt,
 } from './action-strategy/prompt'
 import { buildActionStrategy } from './action-strategy/engine'
+import { resolveActionStrategyFreshness } from './action-strategy/freshness'
 import { withBackgroundTaskCapacity } from './background-task.service'
 
 const maxAttempts = 3
@@ -60,8 +61,7 @@ function toAgentRunError(error: unknown): AgentRunError {
   return { code: 'unknown', message, retryable: false }
 }
 
-async function buildCurrentStrategy(now = new Date()) {
-  const userId = await getCurrentUserId()
+async function buildCurrentStrategy(userId: string, now = new Date()) {
   const opportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
   const opportunityIds = opportunities.map((opportunity) => opportunity.id)
 
@@ -134,10 +134,13 @@ function toOverview(
   build: ActionStrategyBuildResult,
   snapshot: ActionStrategySnapshotRecord | null,
 ): ActionStrategyOverview {
-  const isCurrent = snapshot?.inputFingerprint === build.currentFingerprint
-  const isActive = isCurrent && (snapshot?.status === 'pending' || snapshot?.status === 'processing')
-  const isCompleted = isCurrent && snapshot?.status === 'completed'
-  const isFailed = isCurrent && snapshot?.status === 'failed'
+  const freshness = resolveActionStrategyFreshness({
+    snapshotStatus: snapshot?.status ?? null,
+    snapshotFingerprint: snapshot?.inputFingerprint ?? null,
+    currentFingerprint: build.currentFingerprint,
+    completedAt: snapshot?.completedAt ?? null,
+    now: new Date(build.generatedAt),
+  })
 
   return {
     generatedAt: build.generatedAt,
@@ -146,29 +149,27 @@ function toOverview(
     actions: build.actions,
     capabilityActions: build.capabilityActions,
     ai: {
-      freshness: isActive
-        ? 'generating'
-        : isCompleted
-          ? 'fresh'
-          : isFailed
-            ? 'failed'
-            : snapshot?.status === 'completed'
-              ? 'stale'
-              : 'not_generated',
+      freshness: freshness.freshness,
       status: snapshot?.status ?? 'not_generated',
       snapshotId: snapshot?.id ?? null,
       modelName: snapshot?.modelName ?? null,
       generatedAt: snapshot?.completedAt ?? null,
+      expiresAt: freshness.expiresAt,
+      staleReasons: freshness.staleReasons,
       summary: snapshot?.result ?? null,
-      error: isFailed ? snapshotError(snapshot) : null,
+      error: freshness.freshness === 'failed' ? snapshotError(snapshot) : null,
     },
   }
 }
 
-export async function getActionStrategyOverview(): Promise<ActionStrategyOverview> {
-  const { build, userId } = await buildCurrentStrategy()
+export async function getActionStrategyOverviewForUser(userId: string): Promise<ActionStrategyOverview> {
+  const { build } = await buildCurrentStrategy(userId)
   const snapshot = await actionStrategyRepository.findLatestByUserId(userId)
   return toOverview(build, snapshot)
+}
+
+export async function getActionStrategyOverview(): Promise<ActionStrategyOverview> {
+  return getActionStrategyOverviewForUser(await getCurrentUserId())
 }
 
 export async function getActionStrategySnapshotStatus(snapshotId: string) {
@@ -309,7 +310,8 @@ async function executeActionStrategy(input: {
 
 export async function generateActionStrategy(input: unknown): Promise<ActionStrategyGenerateResult> {
   const parsed = modelConnectionSchema.parse((input as { modelConnection?: unknown } | null)?.modelConnection)
-  const { build, userId } = await buildCurrentStrategy()
+  const userId = await getCurrentUserId()
+  const { build } = await buildCurrentStrategy(userId)
   const normalizedBaseUrl = normalizeBaseUrl(parsed.baseUrl)
   const currentOverview = toOverview(build, await actionStrategyRepository.findLatestByUserId(userId))
   const activeSnapshot = await actionStrategyRepository.findActiveByUserId(userId)
@@ -324,7 +326,16 @@ export async function generateActionStrategy(input: unknown): Promise<ActionStra
     modelBaseUrl: normalizedBaseUrl,
     promptVersion: actionStrategyPromptVersion,
   })
-  if (cached) {
+  const cachedFreshness = cached
+    ? resolveActionStrategyFreshness({
+        snapshotStatus: cached.status,
+        snapshotFingerprint: cached.inputFingerprint,
+        currentFingerprint: build.currentFingerprint,
+        completedAt: cached.completedAt,
+        now: new Date(build.generatedAt),
+      })
+    : null
+  if (cached && cachedFreshness?.freshness === 'fresh') {
     return { status: 'cached', snapshotId: cached.id, overview: toOverview(build, cached) }
   }
 

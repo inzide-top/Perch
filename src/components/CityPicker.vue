@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { chinaCities } from '@/data/chinaCities'
 
 const props = withDefaults(
@@ -7,10 +7,12 @@ const props = withDefaults(
     modelValue: string[]
     max?: number
     panelHeightClass?: string
+    disabled?: boolean
   }>(),
   {
     max: 5,
     panelHeightClass: 'h-80',
+    disabled: false,
   },
 )
 
@@ -38,6 +40,8 @@ const filteredCities = computed(() => {
 const isMaxSelected = computed(() => selectedCities.value.length >= props.max)
 
 function toggleCity(city: string) {
+  if (props.disabled) return
+
   const nextCities = [...selectedCities.value]
   const cityIndex = nextCities.indexOf(city)
 
@@ -54,6 +58,8 @@ function toggleCity(city: string) {
 }
 
 function removeCity(city: string) {
+  if (props.disabled) return
+
   emit(
     'update:modelValue',
     selectedCities.value.filter((item) => item !== city),
@@ -61,6 +67,8 @@ function removeCity(city: string) {
 }
 
 function selectProvince(provinceName: string) {
+  if (props.disabled) return
+
   activeProvince.value = provinceName
   keyword.value = ''
 }
@@ -78,24 +86,34 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', closePickerWhenClickOutside)
 })
+
+watch(
+  () => props.disabled,
+  (disabled) => {
+    if (disabled) isOpen.value = false
+  },
+)
 </script>
 
 <template>
   <div ref="pickerRef" class="relative">
     <div
-      class="city-picker-trigger flex h-10 min-h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-default bg-[var(--app-surface)] px-3 py-0 text-left text-sm transition-colors hover:border-accented focus-within:border-primary"
+      class="city-picker-trigger flex h-10 min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-default bg-[var(--app-surface)] px-3 py-0 text-left text-sm transition-colors focus-within:border-primary"
+      :class="disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:border-accented'"
       role="button"
-      tabindex="0"
+      :tabindex="disabled ? -1 : 0"
       :aria-expanded="isOpen"
-      @click="isOpen = !isOpen"
-      @keydown.enter.prevent="isOpen = !isOpen"
-      @keydown.space.prevent="isOpen = !isOpen"
+      :aria-disabled="disabled"
+      @click="!disabled && (isOpen = !isOpen)"
+      @keydown.enter.prevent="!disabled && (isOpen = !isOpen)"
+      @keydown.space.prevent="!disabled && (isOpen = !isOpen)"
     >
       <div class="flex min-w-0 flex-1 flex-nowrap gap-1 overflow-hidden">
         <button
           v-for="city in selectedCities"
           :key="city"
           type="button"
+          :disabled="disabled"
           class="inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md border border-default bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] px-1.5 text-[11px] leading-none text-highlighted"
           @click.stop="removeCity(city)"
         >

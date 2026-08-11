@@ -1,0 +1,2 @@
+CREATE INDEX "agent_runs_chat_run_id_started_at_index" ON "agent_runs" USING btree ("chat_run_id","started_at");--> statement-breakpoint
+CREATE INDEX "chat_runs_created_at_id_index" ON "chat_runs" USING btree ("created_at","id");

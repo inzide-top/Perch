@@ -65,6 +65,8 @@ export type ActionStrategySnapshotStatus = 'pending' | 'processing' | 'completed
 
 export type ActionStrategyFreshness = 'not_generated' | 'fresh' | 'stale' | 'generating' | 'failed'
 
+export type ActionStrategyStaleReason = 'source_changed' | 'time_expired'
+
 export type ActionStrategySourceSummary = {
   opportunityCount: number
   upcomingEventCount: number
@@ -85,6 +87,8 @@ export type ActionStrategyOverview = {
     snapshotId: string | null
     modelName: string | null
     generatedAt: string | null
+    expiresAt: string | null
+    staleReasons: ActionStrategyStaleReason[]
     summary: ActionStrategyAiSummary | null
     error: Pick<AiTaskError, 'code' | 'message'> | null
   }
