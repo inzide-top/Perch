@@ -13,12 +13,17 @@ export type ActionStrategyFreshnessResult = {
 }
 
 export function resolveActionStrategyFreshness(input: {
+  hasSourceData: boolean
   snapshotStatus: ActionStrategySnapshotStatus | null
   snapshotFingerprint: string | null
   currentFingerprint: string
   completedAt: string | null
   now: Date
 }): ActionStrategyFreshnessResult {
+  if (!input.hasSourceData) {
+    return { freshness: 'not_generated', staleReasons: [], expiresAt: null }
+  }
+
   const isCurrent = input.snapshotFingerprint === input.currentFingerprint
   const completedAtMs = input.completedAt ? Date.parse(input.completedAt) : Number.NaN
   const expiresAtMs = Number.isFinite(completedAtMs) ? completedAtMs + actionStrategyMaxAgeMs : null

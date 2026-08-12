@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import * as echarts from 'echarts/core'
-import { TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import 'echarts-wordcloud'
 import cloudMaskUrl from '@/assets/cloud.svg'
+import { useNearViewport } from '@/composables/useNearViewport'
 import type { EChartsOption } from 'echarts'
+import type { EChartsType } from 'echarts/core'
 import type { DashboardAbilityInsight } from '@/types/dashboard'
-
-echarts.use([TooltipComponent, CanvasRenderer])
 
 const props = withDefaults(
   defineProps<{
@@ -21,9 +17,14 @@ const props = withDefaults(
 )
 
 const chartElement = ref<HTMLDivElement | null>(null)
-let chart: echarts.ECharts | null = null
+const visibilityTarget = ref<HTMLElement | null>(null)
+const { isNearViewport } = useNearViewport(visibilityTarget)
+const isChartRuntimeLoading = ref(false)
+const isChartReady = ref(false)
+let chart: EChartsType | null = null
 let maskImage: HTMLImageElement | null = null
 let resizeObserver: ResizeObserver | null = null
+let disposed = false
 
 const wordCloudColors = ['#5E83F5', '#79CCF6', '#E2726A', '#ffa235', '#8A5EED', '#fdd845'] as const
 
@@ -96,9 +97,22 @@ function renderChart() {
   }
 }
 
-function initChart() {
-  if (!chartElement.value || chart) return
-  chart = echarts.init(chartElement.value)
+async function initChart() {
+  if (!chartElement.value || chart || isChartRuntimeLoading.value || !isNearViewport.value) return
+
+  isChartRuntimeLoading.value = true
+  const [core, components, renderers] = await Promise.all([
+    import('echarts/core'),
+    import('echarts/components'),
+    import('echarts/renderers'),
+  ])
+  await import('echarts-wordcloud')
+  if (disposed || !chartElement.value) return
+
+  core.use([components.TooltipComponent, renderers.CanvasRenderer])
+  chart = core.init(chartElement.value)
+  isChartReady.value = true
+  isChartRuntimeLoading.value = false
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartElement.value)
 
@@ -121,10 +135,15 @@ watch(
 )
 
 onMounted(() => {
-  initChart()
+  if (isNearViewport.value) void initChart()
+})
+
+watch(isNearViewport, (isVisible) => {
+  if (isVisible) void initChart()
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   resizeObserver?.disconnect()
   resizeObserver = null
   chart?.dispose()
@@ -134,7 +153,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative h-full min-h-56 w-full overflow-hidden rounded-2xl bg-[var(--app-surface-muted)]">
+  <div
+    ref="visibilityTarget"
+    class="relative h-full min-h-56 w-full overflow-hidden rounded-2xl bg-[var(--app-surface-muted)]"
+  >
     <div
       ref="chartElement"
       class="h-full w-full transition-opacity"
@@ -142,6 +164,7 @@ onBeforeUnmount(() => {
       :aria-label="tone === 'strength' ? '优势证据词云' : '待补强证据词云'"
       role="img"
     />
+    <USkeleton v-if="items.length && !isChartReady" class="absolute inset-4 rounded-2xl" />
     <div v-if="!items.length" class="absolute inset-0 flex items-center justify-center text-xs text-muted">
       暂时没有可展示的证据
     </div>

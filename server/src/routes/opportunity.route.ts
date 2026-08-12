@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
   interviewRoundParamsSchema,
+  batchDeleteJobOpportunitiesInputSchema,
   importJobOpportunitiesFromUrlsInputSchema,
   importJobOpportunityFromTextInputSchema,
   importJobOpportunityFromUrlInputSchema,
@@ -12,10 +13,12 @@ import {
 } from '../schemas/opportunity.schema'
 import {
   addInterviewRound,
+  archiveInterviewsAndDeleteJobOpportunity,
   cancelInterviewRound,
   completeInterviewRound,
   createJobOpportunity,
   deleteJobOpportunity,
+  deleteJobOpportunities,
   deleteInterviewRound,
   getJobOpportunities,
   getJobOpportunityById,
@@ -95,6 +98,21 @@ export const opportunityRoute: FastifyPluginAsync = async (app) => {
 
     return reply.status(200).send(result)
   })
+
+  app.post('/opportunities/batch-delete', async (request, reply) => {
+    const { opportunityIds } = batchDeleteJobOpportunitiesInputSchema.parse(request.body)
+    const result = await deleteJobOpportunities(opportunityIds)
+    return reply.status(200).send(result)
+  })
+
+  app.post<{ Params: { opportunityId: string } }>(
+    '/opportunities/:opportunityId/archive-interviews-and-delete',
+    async (request, reply) => {
+      const opportunityId = parseOpportunityId(request.params)
+      const result = await archiveInterviewsAndDeleteJobOpportunity(opportunityId)
+      return reply.status(200).send(result)
+    },
+  )
 
   app.get<{ Params: { opportunityId: string } }>('/opportunities/:opportunityId', async (request, reply) => {
     const opportunityId = parseOpportunityId(request.params)

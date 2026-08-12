@@ -1,12 +1,8 @@
 <script setup lang="ts">
-import * as echarts from 'echarts/core'
-import { TooltipComponent } from 'echarts/components'
-import { PieChart } from 'echarts/charts'
-import { CanvasRenderer } from 'echarts/renderers'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useNearViewport } from '@/composables/useNearViewport'
 import type { EChartsOption } from 'echarts'
-
-echarts.use([TooltipComponent, PieChart, CanvasRenderer])
+import type { EChartsType } from 'echarts/core'
 
 type RingSegment = {
   key: string
@@ -30,8 +26,14 @@ const props = withDefaults(
 )
 
 const chartElement = ref<HTMLDivElement | null>(null)
-let chart: echarts.ECharts | null = null
+const visibilityTarget = ref<HTMLElement | null>(null)
+const { isNearViewport } = useNearViewport(visibilityTarget)
+const isChartRuntimeLoading = ref(false)
+const isChartReady = ref(false)
+let chart: EChartsType | null = null
+let echartsCore: typeof import('echarts/core') | null = null
 let resizeObserver: ResizeObserver | null = null
+let disposed = false
 
 const hasData = () => props.total > 0 && props.segments.some((segment) => segment.count > 0)
 
@@ -100,10 +102,24 @@ function renderChart() {
   chart.setOption(createOption(), true)
 }
 
-function initChart() {
-  if (!chartElement.value || chart) return
+async function initChart() {
+  if (!chartElement.value || chart || isChartRuntimeLoading.value || !isNearViewport.value) return
 
-  chart = echarts.init(chartElement.value)
+  isChartRuntimeLoading.value = true
+  const [core, components, charts, renderers] = await Promise.all([
+    import('echarts/core'),
+    import('echarts/components'),
+    import('echarts/charts'),
+    import('echarts/renderers'),
+  ])
+  if (disposed || !chartElement.value) return
+
+  core.use([components.TooltipComponent, charts.PieChart, renderers.CanvasRenderer])
+  echartsCore = core
+  chart = echartsCore.init(chartElement.value)
+  isChartReady.value = true
+  isChartRuntimeLoading.value = false
+
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartElement.value)
   renderChart()
@@ -119,10 +135,15 @@ watch(
 )
 
 onMounted(() => {
-  initChart()
+  if (isNearViewport.value) void initChart()
+})
+
+watch(isNearViewport, (isVisible) => {
+  if (isVisible) void initChart()
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   resizeObserver?.disconnect()
   resizeObserver = null
   chart?.dispose()
@@ -131,7 +152,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article class="app-card flex h-full min-w-0 flex-col p-5">
+  <article ref="visibilityTarget" class="app-card flex min-h-[244px] min-w-0 flex-col p-5">
     <div class="flex items-start justify-between gap-4">
       <div class="min-w-0">
         <h3 class="app-section-title truncate">{{ title }}</h3>
@@ -147,6 +168,7 @@ onBeforeUnmount(() => {
         :aria-label="`${title}，共 ${total} 条`"
       >
         <div ref="chartElement" class="absolute inset-0" aria-hidden="true" />
+        <USkeleton v-if="!isChartReady" class="absolute inset-2 rounded-full" />
         <div class="relative z-10 flex flex-col items-center justify-center text-center">
           <span class="text-2xl font-semibold tracking-tight text-highlighted">{{ total }}</span>
           <span class="text-[11px] text-[var(--app-neutral)]">{{ hasData() ? '条记录' : emptyLabel }}</span>

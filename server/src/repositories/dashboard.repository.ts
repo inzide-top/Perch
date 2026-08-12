@@ -1,11 +1,18 @@
-import { and, asc, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm'
 import type {
   InterviewAssessmentPlan,
   InterviewEvidenceStatus,
   InterviewSessionEvaluation,
 } from '@/shared/interview/schemas'
 import { db } from '../db/client'
-import { interviewRounds, interviewSessionEvaluations, interviewSessions, jobOpportunities } from '../db/schema'
+import {
+  interviewRounds,
+  interviewSessionEvaluations,
+  interviewSessions,
+  jobOpportunities,
+  resumes,
+  resumeVersions,
+} from '../db/schema'
 
 export type DashboardInterviewEvidenceRecord = {
   sessionId: string
@@ -40,6 +47,32 @@ function hasText(value: string | null) {
 }
 
 export class DrizzleDashboardRepository {
+  async findSummaryByUserId(userId: string) {
+    const [[currentResume], [mockInterviewCount]] = await Promise.all([
+      db
+        .select({
+          id: resumes.id,
+          title: resumes.title,
+          versionNumber: resumeVersions.versionNumber,
+        })
+        .from(resumes)
+        .innerJoin(resumeVersions, eq(resumes.currentVersionId, resumeVersions.id))
+        .where(eq(resumes.userId, userId))
+        .orderBy(desc(resumes.updatedAt))
+        .limit(1),
+      db
+        .select({ value: count() })
+        .from(interviewSessions)
+        .innerJoin(jobOpportunities, eq(interviewSessions.opportunityId, jobOpportunities.id))
+        .where(and(eq(jobOpportunities.userId, userId), isNull(jobOpportunities.deletedAt))),
+    ])
+
+    return {
+      currentResume: currentResume ?? null,
+      mockInterviewCount: mockInterviewCount?.value ?? 0,
+    }
+  }
+
   async findInterviewSchedulesByUserId(userId: string): Promise<DashboardInterviewScheduleRecord[]> {
     const rows = await db
       .select({
@@ -55,6 +88,7 @@ export class DrizzleDashboardRepository {
       .where(
         and(
           eq(jobOpportunities.userId, userId),
+          isNull(jobOpportunities.deletedAt),
           ne(jobOpportunities.status, 'closed'),
           eq(interviewRounds.status, 'planned'),
           isNotNull(interviewRounds.scheduledAt),
@@ -126,7 +160,7 @@ export class DrizzleDashboardRepository {
       })
       .from(jobOpportunities)
       .leftJoin(interviewRounds, eq(interviewRounds.opportunityId, jobOpportunities.id))
-      .where(eq(jobOpportunities.userId, userId))
+      .where(and(eq(jobOpportunities.userId, userId), isNull(jobOpportunities.deletedAt)))
 
     const writtenTestOpportunityIds = new Set(
       rows.filter((row) => hasText(row.writtenTestReviewNote)).map((row) => row.opportunityId),

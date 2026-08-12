@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import type {
   CurrentStatus,
@@ -18,6 +18,7 @@ import ResumeWorkspaceSkeleton from './components/ResumeWorkspaceSkeleton.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
 import { mockResumeDraft } from './mocks/resumeDraft'
 import { getVersionDiff } from '@/shared/resume/versionDiff'
+import { getResumeInterviewHistoryConflict, type ResumeInterviewHistoryConflict } from '@/services/resumes'
 
 type EditorMode = 'create' | 'edit'
 
@@ -26,6 +27,7 @@ const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
 const resumeStore = useResumeStore()
 const resumePdfImportReviewStore = useResumePdfImportReviewStore()
 const toast = useToast()
+const router = useRouter()
 const { resumes, versions, currentResume, currentVersion, currentResumeVersions, isLoading, loadError } =
   storeToRefs(resumeStore)
 
@@ -37,6 +39,7 @@ const isEditorDirty = ref(false)
 const isSavingResume = ref(false)
 const deleteResumeId = ref<string | null>(null)
 const isDeletingResume = ref(false)
+const resumeDeleteConflict = ref<ResumeInterviewHistoryConflict | null>(null)
 const isUnsavedConfirmOpen = ref(false)
 const isLatestVersionDiffOpen = ref(false)
 const isVersionPanelExpanded = ref(true)
@@ -71,7 +74,7 @@ const versionDiffTarget = computed(() => {
 const versionDiffItems = computed(() => {
   if (!currentResume.value || !versionDiffBase.value || !versionDiffTarget.value) return []
 
-  return getVersionDiff(buildDraftFromVersion(versionDiffBase.value), buildDraftFromVersion(versionDiffTarget.value))
+  return versionDiffTarget.value.diffSummary
 })
 const versionDiffTitle = computed(() => {
   if (!versionDiffBase.value || !versionDiffTarget.value) return ''
@@ -333,20 +336,37 @@ function closeDeleteResumeConfirm() {
 }
 
 async function confirmDeleteResume() {
-  if (!deleteResumeId.value || isDeletingResume.value) return
+  const resumeId = deleteResumeId.value
+  if (!resumeId || isDeletingResume.value) return
 
   isDeletingResume.value = true
 
   try {
-    await resumeStore.deleteResume(deleteResumeId.value)
+    await resumeStore.deleteResume(resumeId)
     deleteResumeId.value = null
     showToast('简历已删除')
   } catch (error) {
     console.error(error)
+    const conflict = getResumeInterviewHistoryConflict(error)
+    if (conflict) {
+      deleteResumeId.value = null
+      resumeDeleteConflict.value = conflict
+      return
+    }
     showToast('删除简历失败，请稍后重试', 'error')
   } finally {
     isDeletingResume.value = false
   }
+}
+
+function closeResumeDeleteConflict() {
+  resumeDeleteConflict.value = null
+}
+
+function openRelatedInterviewRecords(destination: 'archived-interviews' | 'opportunities') {
+  if (!resumeDeleteConflict.value) return
+  resumeDeleteConflict.value = null
+  void router.push({ name: destination })
 }
 
 function requestUnsavedConfirm(confirmAction: () => void, cancelAction: () => void = () => {}) {
@@ -900,6 +920,64 @@ onBeforeUnmount(() => {
               @click="confirmDeleteResume"
             >
               确认删除
+            </UButton>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="resumeDeleteConflict"
+        class="app-overlay-layer fixed inset-0 flex items-center justify-center bg-black/55 px-4"
+      >
+        <div class="app-modal-layer app-panel w-full max-w-md p-5 shadow-xl">
+          <div class="flex items-start gap-3">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
+              <UIcon name="i-lucide-archive-x" class="size-4" />
+            </div>
+            <div class="min-w-0">
+              <h2 class="text-base font-semibold text-highlighted">请先处理关联的模拟面试</h2>
+              <p v-if="resumeDeleteConflict.details.archivedSessionCount > 0" class="mt-2 text-sm leading-6 text-muted">
+                已归档模拟面试中有
+                {{
+                  resumeDeleteConflict.details.archivedSessionCount
+                }}
+                场使用了这份简历。请先在归档列表中彻底删除这些记录，再回来删除简历。
+              </p>
+              <p
+                v-if="resumeDeleteConflict.details.unarchivedSessionCount > 0"
+                class="mt-2 text-sm leading-6 text-muted"
+              >
+                另外还有
+                {{
+                  resumeDeleteConflict.details.unarchivedSessionCount
+                }}
+                场未归档模拟面试使用了这份简历，需要先结束并归档。
+              </p>
+              <p class="mt-2 text-xs leading-5 text-muted">
+                仅归档不会删除问答、评分和能力证据；彻底删除后，这些证据才不再参与能力画像。
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-6 flex flex-wrap justify-end gap-2">
+            <UButton type="button" color="neutral" variant="ghost" @click="closeResumeDeleteConflict">取消</UButton>
+            <UButton
+              v-if="resumeDeleteConflict.details.unarchivedSessionCount > 0"
+              type="button"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-briefcase-business"
+              @click="openRelatedInterviewRecords('opportunities')"
+            >
+              查看机会列表
+            </UButton>
+            <UButton
+              v-if="resumeDeleteConflict.details.archivedSessionCount > 0"
+              type="button"
+              icon="i-lucide-archive"
+              @click="openRelatedInterviewRecords('archived-interviews')"
+            >
+              查看已归档面试
             </UButton>
           </div>
         </div>

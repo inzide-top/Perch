@@ -12,6 +12,7 @@ const props = withDefaults(
     disablePastDates?: boolean
     disableFutureDates?: boolean
     defaultTimeOffsetMinutes?: number
+    contentClass?: string
   }>(),
   {
     placeholder: '选择日期和时间',
@@ -21,6 +22,7 @@ const props = withDefaults(
     disablePastDates: false,
     disableFutureDates: false,
     defaultTimeOffsetMinutes: 0,
+    contentClass: 'app-popover-layer',
   },
 )
 
@@ -114,7 +116,7 @@ function clearValue() {
 </script>
 
 <template>
-  <UPopover v-model:open="open" :ui="{ content: 'app-popover-layer overflow-hidden p-0' }">
+  <UPopover v-model:open="open" :portal="true" :ui="{ content: `${contentClass} overflow-hidden p-0` }">
     <UButton
       type="button"
       color="neutral"

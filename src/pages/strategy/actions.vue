@@ -3,6 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref }
 import { useToast } from '@nuxt/ui/composables'
 import { actionStrategyApi } from '@/services/action-strategy'
 import { useBackgroundTaskStore, useSettingsStore } from '@/stores'
+import type { BackgroundTaskEntry, BackgroundTaskUpdateKind } from '@/stores/background-tasks'
 import type { ActionStrategyOverview, StrategyAction, StrategyPriority } from '@/types/action-strategy'
 import StrategySubnav from './components/StrategySubnav.vue'
 
@@ -19,6 +20,8 @@ const errorMessage = ref<string | null>(null)
 const isActionsExpanded = ref(false)
 let pollTimer: number | null = null
 let lastLoadedAt = 0
+let latestLoadRequestId = 0
+let unsubscribeBackgroundTasks: (() => void) | null = null
 const backgroundRefreshTtlMs = 30_000
 
 const hasModelConfig = computed(() =>
@@ -61,11 +64,15 @@ function schedulePoll() {
 }
 
 async function loadOverview(background = false) {
+  const requestId = ++latestLoadRequestId
   if (background) isRefreshing.value = true
   else isLoading.value = true
   errorMessage.value = null
   try {
-    overview.value = await actionStrategyApi.getOverview()
+    const nextOverview = await actionStrategyApi.getOverview()
+    if (requestId !== latestLoadRequestId) return
+
+    overview.value = nextOverview
     lastLoadedAt = Date.now()
     if (overview.value.ai.freshness === 'generating' && overview.value.ai.snapshotId) {
       backgroundTaskStore.register(
@@ -75,12 +82,22 @@ async function loadOverview(background = false) {
     }
     schedulePoll()
   } catch (error) {
+    if (requestId !== latestLoadRequestId) return
     errorMessage.value = error instanceof Error ? error.message : '行动策略暂时无法加载。'
     if (!overview.value) toast.add({ title: '行动策略加载失败', description: errorMessage.value, color: 'error' })
   } finally {
-    isLoading.value = false
-    isRefreshing.value = false
+    if (requestId === latestLoadRequestId) {
+      isLoading.value = false
+      isRefreshing.value = false
+    }
   }
+}
+
+function handleBackgroundTaskUpdate(task: BackgroundTaskEntry, kind: BackgroundTaskUpdateKind) {
+  if (task.type !== 'action_strategy' || (kind !== 'completed' && kind !== 'failed')) return
+  if (task.snapshotId !== overview.value?.ai.snapshotId) return
+
+  void loadOverview(true)
 }
 
 async function generate() {
@@ -134,17 +151,23 @@ function generateButtonLabel(freshness: ActionStrategyOverview['ai']['freshness'
   return '生成 AI 建议'
 }
 
-onMounted(() => void loadOverview())
+onMounted(() => {
+  unsubscribeBackgroundTasks = backgroundTaskStore.subscribe(handleBackgroundTaskUpdate)
+  void loadOverview()
+})
 onActivated(() => {
   if (!overview.value) return
   if (overview.value.ai.freshness === 'generating') {
-    schedulePoll()
+    void loadOverview(true)
     return
   }
   if (Date.now() - lastLoadedAt >= backgroundRefreshTtlMs) void loadOverview(true)
 })
 onDeactivated(clearPoll)
-onBeforeUnmount(clearPoll)
+onBeforeUnmount(() => {
+  clearPoll()
+  unsubscribeBackgroundTasks?.()
+})
 </script>
 
 <template>
@@ -185,6 +208,7 @@ onBeforeUnmount(clearPoll)
               <UIcon name="i-lucide-loader-circle" class="mr-1 inline size-3.5 animate-spin" />同步中
             </span>
             <UButton
+              v-if="!isEmpty"
               icon="i-lucide-sparkles"
               :loading="isGenerating"
               :disabled="!hasModelConfig || overview.ai.freshness === 'generating'"
@@ -196,14 +220,14 @@ onBeforeUnmount(clearPoll)
         </div>
 
         <div
-          v-if="overview.ai.freshness === 'generating'"
+          v-if="!isEmpty && overview.ai.freshness === 'generating'"
           class="mt-5 flex items-center gap-2 rounded-xl bg-[var(--app-accent-soft)] px-3 py-2.5 text-xs text-primary"
           role="status"
         >
           <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />AI 文案正在后台生成，规则行动已可使用。
         </div>
         <div
-          v-else-if="overview.ai.freshness === 'failed'"
+          v-else-if="!isEmpty && overview.ai.freshness === 'failed'"
           class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E2726A]/30 bg-[#E2726A]/8 px-3 py-2.5 text-xs"
         >
           <span class="text-[var(--app-danger)]"
@@ -214,7 +238,7 @@ onBeforeUnmount(clearPoll)
           >
         </div>
         <div
-          v-else-if="overview.ai.freshness === 'stale'"
+          v-else-if="!isEmpty && overview.ai.freshness === 'stale'"
           class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#ffa235]/35 bg-[#ffa235]/10 px-3 py-2.5"
           role="status"
         >
@@ -240,7 +264,7 @@ onBeforeUnmount(clearPoll)
           </UButton>
         </div>
         <div
-          v-else-if="!hasModelConfig"
+          v-else-if="!isEmpty && !hasModelConfig"
           class="mt-5 flex items-center gap-2 rounded-xl bg-[var(--app-surface-muted)] px-3 py-2.5 text-xs text-muted"
         >
           <UIcon name="i-lucide-info" class="size-4" />尚未配置模型；规则行动仍然可用，配置模型后可生成解释性建议。

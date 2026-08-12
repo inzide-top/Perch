@@ -22,7 +22,7 @@ export type OpportunityInfoForm = {
   description: string
   status: JobOpportunityStatus
   includeWrittenTest: boolean
-  intentionLevel: OpportunityIntentionLevel
+  intentionLevel: OpportunityIntentionLevel | null
   industry: string
   note: string
 }

@@ -9,6 +9,7 @@ import { useResumeStore } from '@/stores'
 import type { CapabilityProfile } from '@/types/capability'
 import type { DashboardAbilityInsight, DashboardHistoricalWeakness } from '@/types/dashboard'
 import CapabilityProfileSkeleton from './components/CapabilityProfileSkeleton.vue'
+import CapabilityJdEvidence from './components/CapabilityJdEvidence.vue'
 import StrategySubnav from './components/StrategySubnav.vue'
 
 defineOptions({ name: 'CapabilityProfilePage' })
@@ -82,40 +83,6 @@ function getInsightMeta(item: DashboardAbilityInsight) {
 function getWeaknessMeta(item: DashboardHistoricalWeakness) {
   const confidenceLabel = { high: '高可信', medium: '中可信', low: '低可信' }[item.confidence]
   return `${item.masteryScore} 分 · ${confidenceLabel}`
-}
-
-function getStatusLabel(status: CapabilityProfile['jdSignals'][number]['opportunityStatus']) {
-  return {
-    pending_apply: '待投递',
-    applied: '已投递',
-    written_test: '笔试中',
-    interviewing: '面试中',
-    oc: 'OC',
-    offered: '已 Offer',
-    closed: '已终止',
-  }[status]
-}
-
-function getRecommendationLabel(recommendation: CapabilityProfile['jdSignals'][number]['recommendation']) {
-  return {
-    strong_match: '强匹配',
-    worth_trying: '值得投递',
-    risky: '谨慎投递',
-    not_recommended: '不建议',
-  }[recommendation]
-}
-
-function getRecommendationClass(recommendation: CapabilityProfile['jdSignals'][number]['recommendation']) {
-  return {
-    strong_match:
-      'border border-[color-mix(in_srgb,#8A5EED_35%,var(--app-border))] bg-[color-mix(in_srgb,#8A5EED_12%,transparent)] text-[#8A5EED]',
-    worth_trying:
-      'border border-[color-mix(in_srgb,var(--app-success)_35%,var(--app-border))] bg-[color-mix(in_srgb,var(--app-success)_12%,transparent)] text-[var(--app-success)]',
-    risky:
-      'border border-[color-mix(in_srgb,var(--app-warning)_35%,var(--app-border))] bg-[color-mix(in_srgb,var(--app-warning)_12%,transparent)] text-[var(--app-warning)]',
-    not_recommended:
-      'border border-[color-mix(in_srgb,var(--app-neutral)_35%,var(--app-border))] bg-[color-mix(in_srgb,var(--app-neutral)_12%,transparent)] text-[var(--app-text-muted)]',
-  }[recommendation]
 }
 
 function getInterviewStatusLabel(status: CapabilityProfile['interview']['sessions'][number]['status']) {
@@ -238,7 +205,7 @@ watch(
               <span class="app-soft-badge rounded-full px-2.5 py-1 text-[11px] font-medium">证据聚合</span>
             </div>
             <p class="mt-3 text-sm leading-6 text-muted">
-              汇总已有 JD 分析和已结束的模拟面试；不会额外调用 AI，也不会把不同来源强行合并成一个分数。
+              汇总已有 JD 分析和已结束的模拟面试；页面加载时不会额外调用生成式 AI，也不会把不同来源强行合并成一个分数。
             </p>
           </div>
 
@@ -400,111 +367,7 @@ watch(
           <p v-else class="mt-3 text-xs leading-5 text-muted">还没有重复暴露的历史薄弱主题。</p>
         </div>
       </article>
-      <article class="app-card min-w-0 p-5 sm:p-6">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p class="app-section-kicker">JD evidence</p>
-            <h2 class="mt-1 text-base font-semibold text-highlighted">JD 分析信号</h2>
-            <p class="mt-1 text-xs leading-5 text-muted">每条信号保留来源岗位和简历版本，不做跨岗位语义合并。</p>
-          </div>
-          <span
-            v-if="profile.sourceCounts.failedJdAnalyses"
-            class="app-soft-badge rounded-full px-2.5 py-1 text-[11px] text-muted"
-          >
-            {{ profile.sourceCounts.failedJdAnalyses }} 条分析失败，不纳入结论
-          </span>
-        </div>
-
-        <div v-if="profile.jdSignals.length" class="mt-5 max-h-[42rem] space-y-3 overflow-y-auto pr-1">
-          <article
-            v-for="signal in profile.jdSignals"
-            :key="signal.opportunityId"
-            class="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4"
-          >
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="min-w-0">
-                <RouterLink
-                  :to="`/opportunities/${signal.opportunityId}`"
-                  class="truncate text-sm font-semibold text-highlighted hover:text-primary"
-                >
-                  {{ signal.company }} · {{ signal.jobTitle }}
-                </RouterLink>
-                <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                  <span>{{ formatDateOnly(signal.updatedAt) }}</span>
-                  <span>·</span>
-                  <span>{{ getStatusLabel(signal.opportunityStatus) }}</span>
-                  <span :class="signal.isCurrentVersion ? 'text-[var(--app-success)]' : 'text-muted'"
-                    >· {{ signal.isCurrentVersion ? '当前简历版本' : `基于 V${signal.versionNumber}` }}</span
-                  >
-                  <span v-if="signal.modelName">· {{ signal.modelName }}</span>
-                </div>
-              </div>
-              <div class="flex shrink-0 items-center gap-2">
-                <span class="text-lg font-semibold" :class="scoreClass(signal.matchScore)">{{
-                  signal.matchScore
-                }}</span>
-                <span
-                  class="rounded-full px-2 py-1 text-[10px] font-medium"
-                  :class="getRecommendationClass(signal.recommendation)"
-                >
-                  {{ getRecommendationLabel(signal.recommendation) }}
-                </span>
-              </div>
-            </div>
-
-            <p class="mt-3 line-clamp-2 text-xs leading-5 text-muted">{{ signal.summary }}</p>
-
-            <div class="mt-4 grid gap-3 md:grid-cols-2">
-              <section>
-                <div class="flex items-center gap-2">
-                  <span class="size-2 rounded-full bg-[var(--app-success)]" />
-                  <h3 class="text-xs font-semibold text-highlighted">优势</h3>
-                </div>
-                <div v-if="signal.strengths.length" class="mt-2 space-y-2">
-                  <div
-                    v-for="item in signal.strengths"
-                    :key="item.title"
-                    class="rounded-xl bg-[var(--app-surface)] px-3 py-2.5"
-                  >
-                    <p class="text-xs font-medium text-highlighted">{{ item.title }}</p>
-                    <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-muted">{{ item.reason }}</p>
-                  </div>
-                </div>
-                <p v-else class="mt-2 text-xs text-muted">这条分析没有记录优势项。</p>
-              </section>
-              <section>
-                <div class="flex items-center gap-2">
-                  <span class="size-2 rounded-full bg-[var(--app-warning)]" />
-                  <h3 class="text-xs font-semibold text-highlighted">待补强</h3>
-                </div>
-                <div v-if="signal.gaps.length" class="mt-2 space-y-2">
-                  <div
-                    v-for="item in signal.gaps"
-                    :key="item.title"
-                    class="rounded-xl bg-[var(--app-surface)] px-3 py-2.5"
-                  >
-                    <p class="text-xs font-medium text-highlighted">{{ item.title }}</p>
-                    <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-muted">{{ item.reason }}</p>
-                  </div>
-                </div>
-                <p v-else class="mt-2 text-xs text-muted">这条分析没有记录待补强项。</p>
-              </section>
-            </div>
-
-            <div v-if="signal.suggestions.length" class="mt-3 border-t border-[var(--app-border)] pt-3">
-              <p class="text-[11px] font-medium text-muted">简历建议 · {{ signal.suggestions.length }} 条</p>
-              <p class="mt-1 line-clamp-2 text-xs leading-5 text-muted">
-                {{ signal.suggestions[0].title }}：{{ signal.suggestions[0].reason }}
-              </p>
-            </div>
-          </article>
-        </div>
-        <div v-else class="app-panel-muted mt-5 border-dashed p-6 text-center">
-          <p class="text-sm font-medium text-highlighted">还没有已完成的 JD 分析</p>
-          <p class="mt-1 text-xs leading-5 text-muted">完成一条 JD 分析后，优势和待补强信号会自动出现在这里。</p>
-          <UButton to="/opportunities" size="sm" variant="outline" color="neutral" class="mt-4">查看机会管理</UButton>
-        </div>
-      </article>
+      <CapabilityJdEvidence :profile="profile" />
 
       <article class="app-card min-w-0 p-5 sm:p-6">
         <div class="flex items-start justify-between gap-3">

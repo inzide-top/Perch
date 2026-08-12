@@ -13,8 +13,12 @@ import { capabilityProfileRoute } from './routes/capability-profile.route'
 import { actionStrategyRoute } from './routes/action-strategy.route'
 import { chatRoute } from './routes/chat.route'
 import { chatRunDebugRoute } from './routes/chat-run-debug.route'
-import { DuplicateJobOpportunityError, OpportunityNotFoundError } from './services/opportunity.service'
-import { ResumeNotFoundError } from './services/resume.service'
+import {
+  DuplicateJobOpportunityError,
+  OpportunityInterviewHistoryConflictError,
+  OpportunityNotFoundError,
+} from './services/opportunity.service'
+import { ResumeInterviewHistoryConflictError, ResumeNotFoundError } from './services/resume.service'
 import { JobAnalysisNotFoundError } from './services/job-analysis.service'
 import { InterviewConflictError, InterviewNotFoundError } from './services/interview.service'
 import { BackgroundTaskCapacityError } from './services/background-task.service'
@@ -93,6 +97,22 @@ app.setErrorHandler((error, request, reply) => {
   }
 
   if (error instanceof DuplicateJobOpportunityError) {
+    return reply.status(error.statusCode).send({
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    })
+  }
+
+  if (error instanceof OpportunityInterviewHistoryConflictError) {
+    return reply.status(error.statusCode).send({
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    })
+  }
+
+  if (error instanceof ResumeInterviewHistoryConflictError) {
     return reply.status(error.statusCode).send({
       message: error.message,
       code: error.code,

@@ -131,8 +131,26 @@ test('buildDashboardOverview aggregates pipeline, match buckets, and structured 
       createInterviewSchedule('round-upcoming', '2026-08-06T08:00:00.000Z'),
     ],
     generatedAt: now,
+    summary: {
+      currentResume: {
+        id: '00000000-0000-4000-8000-000000000020',
+        title: '前端开发主线',
+        versionNumber: 3,
+      },
+      mockInterviewCount: 4,
+    },
   })
 
+  assert.deepEqual(result.summary, {
+    currentResume: {
+      id: '00000000-0000-4000-8000-000000000020',
+      title: '前端开发主线',
+      versionNumber: 3,
+    },
+    analyzingCount: 0,
+    followUpCount: 1,
+    mockInterviewCount: 4,
+  })
   assert.equal(result.opportunityPipeline.total, 3)
   assert.deepEqual(
     result.opportunityPipeline.stages.filter((item) => item.count > 0),
@@ -241,4 +259,10 @@ test('dashboard keeps a stable empty state when there are no opportunities or ev
   assert.equal(result.matchDistribution.withoutAnalysisCount, 0)
   assert.deepEqual(result.recentActivities, [])
   assert.deepEqual(result.interviewCalendar, { events: [], upcomingCount: 0, overdueCount: 0 })
+  assert.deepEqual(result.summary, {
+    currentResume: null,
+    analyzingCount: 0,
+    followUpCount: 0,
+    mockInterviewCount: 0,
+  })
 })

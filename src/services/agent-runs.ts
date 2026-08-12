@@ -13,6 +13,9 @@ export type AgentRunDebugItem = {
   reviewDocumentId: string | null
   reviewSourceType: 'written_test' | 'interview' | null
   reviewDocumentStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
+  resumePdfImportTaskId: string | null
+  resumePdfFileName: string | null
+  resumePdfImportStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
   opportunityId: string | null
   company: string | null
   jobTitle: string | null

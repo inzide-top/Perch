@@ -45,6 +45,7 @@ const workflowOptions: { label: string; value: 'all' | AgentWorkflowType }[] = [
   { label: '单题深度点评', value: 'interview_deep_evaluation' },
   { label: '整场复盘', value: 'interview_final_summary' },
   { label: '真实复盘提取', value: 'review_extraction' },
+  { label: 'PDF 简历识别', value: 'resume_pdf_import' },
   { label: '求职策略', value: 'action_strategy' },
 ]
 const timeOptions = [
@@ -99,12 +100,14 @@ function workflowLabel(workflowType: AgentWorkflowType) {
     interview_deep_evaluation: '单题深度点评',
     interview_final_summary: '整场复盘',
     review_extraction: '真实复盘提取',
+    resume_pdf_import: 'PDF 简历识别',
     action_strategy: '求职策略',
     chat_turn: 'AI 对话',
   }[workflowType]
 }
 
 function opportunityLabel(run: AgentRunDebugItem) {
+  if (run.workflowType === 'resume_pdf_import') return run.resumePdfFileName ?? 'PDF 简历'
   if (run.company && run.jobTitle) return `${run.company} · ${run.jobTitle}`
   return run.company ?? run.jobTitle ?? '未关联岗位'
 }
@@ -126,6 +129,7 @@ function processingTitle(workflowType: AgentWorkflowType) {
     interview_deep_evaluation: '模型正在生成单题深度点评',
     interview_final_summary: '模型正在生成整场面试复盘',
     review_extraction: '模型正在提取真实复盘文本',
+    resume_pdf_import: '模型正在识别 PDF 简历结构',
     action_strategy: '模型正在生成求职策略文案',
     chat_turn: '模型正在处理 AI 对话',
   }[workflowType]
@@ -522,6 +526,10 @@ onBeforeUnmount(() => {
                 <div v-if="selectedRun.interviewTurnId">
                   <dt class="text-muted">Turn ID</dt>
                   <dd class="mt-1 break-all font-mono text-highlighted">{{ selectedRun.interviewTurnId }}</dd>
+                </div>
+                <div v-if="selectedRun.resumePdfImportTaskId">
+                  <dt class="text-muted">PDF Import Task ID</dt>
+                  <dd class="mt-1 break-all font-mono text-highlighted">{{ selectedRun.resumePdfImportTaskId }}</dd>
                 </div>
               </dl>
             </details>

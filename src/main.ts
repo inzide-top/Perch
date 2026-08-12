@@ -15,7 +15,6 @@ app.use(ui)
 
 const resumeStore = useResumeStore(pinia)
 resumeStore.hydrateFromStorage()
-void resumeStore.loadFromApi()
 const opportunityStore = useOpportunityStore(pinia)
 opportunityStore.hydrateFromStorage()
 useSettingsStore(pinia).hydrateFromStorage()

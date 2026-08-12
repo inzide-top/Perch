@@ -7,6 +7,7 @@ import {
   jobAnalyses,
   jobOpportunities,
   reviewDocuments,
+  resumePdfImportTasks,
 } from '../db/schema'
 import type { AgentWorkflowType } from '@/shared/interview/schemas'
 import { measureDb } from '../utils/request-metrics'
@@ -30,6 +31,24 @@ export type CompleteReviewExtractionRunRecord = {
 export type FailReviewExtractionRunRecord = {
   runId: string
   error: AgentRunRow['error']
+  rawOutput: string | null
+  tokenUsage: AgentRunRow['tokenUsage']
+  durationMs: number
+  finishedAt: string
+}
+
+export type CompleteResumePdfImportRunRecord = {
+  runId: string
+  rawOutput: string
+  parsedOutput: AgentRunRow['parsedOutput']
+  tokenUsage: AgentRunRow['tokenUsage']
+  durationMs: number
+  finishedAt: string
+}
+
+export type FailResumePdfImportRunRecord = {
+  runId: string
+  error: NonNullable<AgentRunRow['error']>
   rawOutput: string | null
   tokenUsage: AgentRunRow['tokenUsage']
   durationMs: number
@@ -67,6 +86,9 @@ export class DrizzleAgentRunRepository {
       reviewDocumentId: reviewDocuments.id,
       reviewSourceType: reviewDocuments.sourceType,
       reviewDocumentStatus: reviewDocuments.status,
+      resumePdfImportTaskId: resumePdfImportTasks.id,
+      resumePdfFileName: resumePdfImportTasks.fileName,
+      resumePdfImportStatus: resumePdfImportTasks.status,
     }
   }
 
@@ -99,6 +121,7 @@ export class DrizzleAgentRunRepository {
       .leftJoin(interviewSessions, eq(agentRuns.interviewSessionId, interviewSessions.id))
       .leftJoin(interviewTurns, eq(agentRuns.interviewTurnId, interviewTurns.id))
       .leftJoin(reviewDocuments, eq(agentRuns.reviewDocumentId, reviewDocuments.id))
+      .leftJoin(resumePdfImportTasks, eq(agentRuns.resumePdfImportTaskId, resumePdfImportTasks.id))
       .leftJoin(
         jobOpportunities,
         or(
@@ -117,6 +140,7 @@ export class DrizzleAgentRunRepository {
       .leftJoin(interviewSessions, eq(agentRuns.interviewSessionId, interviewSessions.id))
       .leftJoin(interviewTurns, eq(agentRuns.interviewTurnId, interviewTurns.id))
       .leftJoin(reviewDocuments, eq(agentRuns.reviewDocumentId, reviewDocuments.id))
+      .leftJoin(resumePdfImportTasks, eq(agentRuns.resumePdfImportTaskId, resumePdfImportTasks.id))
       .leftJoin(
         jobOpportunities,
         or(
@@ -293,6 +317,88 @@ export class DrizzleAgentRunRepository {
       .returning()
 
     if (!run) throw new Error('真实复盘提取 AgentRun 不存在或已不处于 processing 状态')
+    return run
+  }
+
+  async createResumePdfImportRun(run: typeof agentRuns.$inferInsert) {
+    if (!run.resumePdfImportTaskId || run.workflowType !== 'resume_pdf_import') {
+      throw new TypeError('PDF 简历识别 AgentRun 必须绑定 resumePdfImportTaskId，并使用 resume_pdf_import workflowType')
+    }
+
+    const [created] = await db
+      .insert(agentRuns)
+      .values(run)
+      .onConflictDoNothing({ target: [agentRuns.operationKey, agentRuns.attemptNumber] })
+      .returning()
+    if (created) return created
+
+    const [existing] = await db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.operationKey, run.operationKey), eq(agentRuns.attemptNumber, run.attemptNumber)))
+      .limit(1)
+    return existing ?? null
+  }
+
+  async markResumePdfImportRunProcessing(runId: string, startedAt: string) {
+    const [run] = await db
+      .update(agentRuns)
+      .set({ status: 'processing', startedAt })
+      .where(
+        and(eq(agentRuns.id, runId), eq(agentRuns.workflowType, 'resume_pdf_import'), eq(agentRuns.status, 'pending')),
+      )
+      .returning()
+
+    if (!run) throw new Error('PDF 简历识别 AgentRun 不存在或已不处于 pending 状态')
+    return run
+  }
+
+  async completeResumePdfImportRun(record: CompleteResumePdfImportRunRecord) {
+    const [run] = await db
+      .update(agentRuns)
+      .set({
+        status: 'completed',
+        rawOutput: record.rawOutput,
+        parsedOutput: record.parsedOutput,
+        tokenUsage: record.tokenUsage,
+        durationMs: record.durationMs,
+        error: null,
+        finishedAt: record.finishedAt,
+      })
+      .where(
+        and(
+          eq(agentRuns.id, record.runId),
+          eq(agentRuns.workflowType, 'resume_pdf_import'),
+          eq(agentRuns.status, 'processing'),
+        ),
+      )
+      .returning()
+
+    if (!run) throw new Error('PDF 简历识别 AgentRun 不存在或已不处于 processing 状态')
+    return run
+  }
+
+  async failResumePdfImportRun(record: FailResumePdfImportRunRecord) {
+    const [run] = await db
+      .update(agentRuns)
+      .set({
+        status: 'failed',
+        error: record.error,
+        rawOutput: record.rawOutput,
+        tokenUsage: record.tokenUsage,
+        durationMs: record.durationMs,
+        finishedAt: record.finishedAt,
+      })
+      .where(
+        and(
+          eq(agentRuns.id, record.runId),
+          eq(agentRuns.workflowType, 'resume_pdf_import'),
+          eq(agentRuns.status, 'processing'),
+        ),
+      )
+      .returning()
+
+    if (!run) throw new Error('PDF 简历识别 AgentRun 不存在或已不处于 processing 状态')
     return run
   }
 }

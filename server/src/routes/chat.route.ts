@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
   chatConversationParamsSchema,
+  chatBootstrapQuerySchema,
   chatMessageParamsSchema,
   chatRunEventsQuerySchema,
   chatRunParamsSchema,
@@ -12,6 +13,7 @@ import {
   createChatTurn,
   deleteChatConversation,
   getChatConversation,
+  getChatBootstrap,
   getChatConversations,
   getChatRun,
   getChatRunEvents,
@@ -22,6 +24,12 @@ import {
 import { formatChatSseEvent } from '../services/chat/chat-sse'
 
 export const chatRoute: FastifyPluginAsync = async (app) => {
+  app.get('/chat/bootstrap', async (request, reply) => {
+    const query = chatBootstrapQuerySchema.parse(request.query)
+    const result = await getChatBootstrap(query)
+    return reply.status(200).send(result)
+  })
+
   app.post('/chat/conversations', async (request, reply) => {
     const result = await createChatConversation(request.body)
     return reply.status(201).send(result)

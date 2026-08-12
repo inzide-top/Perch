@@ -35,6 +35,9 @@ export type AgentRunDebugEntry = {
   reviewDocumentId: string | null
   reviewSourceType: 'written_test' | 'interview' | null
   reviewDocumentStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
+  resumePdfImportTaskId: string | null
+  resumePdfFileName: string | null
+  resumePdfImportStatus: 'pending' | 'processing' | 'completed' | 'failed' | null
 }
 
 export function toAgentRunDebugItem(entry: AgentRunDebugEntry) {
@@ -54,6 +57,9 @@ export function toAgentRunDebugItem(entry: AgentRunDebugEntry) {
     reviewDocumentId: entry.reviewDocumentId,
     reviewSourceType: entry.reviewSourceType,
     reviewDocumentStatus: entry.reviewDocumentStatus,
+    resumePdfImportTaskId: entry.resumePdfImportTaskId,
+    resumePdfFileName: entry.resumePdfFileName,
+    resumePdfImportStatus: entry.resumePdfImportStatus,
     attemptNumber: entry.run.attemptNumber,
     status: entry.run.status,
     modelName: entry.run.modelName,

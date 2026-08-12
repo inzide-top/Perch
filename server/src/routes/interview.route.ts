@@ -10,11 +10,15 @@ import {
   createInterviewSession,
   deleteInterviewQuestionFeedback,
   endInterviewSession,
+  archiveInterviewSession,
+  deleteArchivedInterviewSession,
+  getArchivedInterviewSessions,
   getActiveInterviewModelUsage,
   getAnswerDeepEvaluation,
   getInterviewSession,
   getInterviewSessionStatus,
   getInterviewSessions,
+  restoreInterviewSession,
   generateAnswerDeepEvaluation,
   retryInterviewAnswer,
   retryInterviewSkip,
@@ -39,6 +43,29 @@ export const interviewRoute: FastifyPluginAsync = async (app) => {
 
   app.get('/interview-sessions/active-model-usage', async (_request, reply) => {
     const result = await getActiveInterviewModelUsage()
+    return reply.status(200).send(result)
+  })
+
+  app.get('/interview-sessions/archived', async (_request, reply) => {
+    const result = await getArchivedInterviewSessions()
+    return reply.status(200).send(result)
+  })
+
+  app.post('/interview-sessions/:sessionId/archive', async (request, reply) => {
+    const { sessionId } = interviewSessionParamsSchema.parse(request.params)
+    const result = await archiveInterviewSession(sessionId)
+    return reply.status(200).send(result)
+  })
+
+  app.post('/interview-sessions/:sessionId/restore', async (request, reply) => {
+    const { sessionId } = interviewSessionParamsSchema.parse(request.params)
+    const result = await restoreInterviewSession(sessionId)
+    return reply.status(200).send(result)
+  })
+
+  app.delete('/interview-sessions/:sessionId', async (request, reply) => {
+    const { sessionId } = interviewSessionParamsSchema.parse(request.params)
+    const result = await deleteArchivedInterviewSession(sessionId)
     return reply.status(200).send(result)
   })
 

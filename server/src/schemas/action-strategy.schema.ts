@@ -35,7 +35,7 @@ const actionCandidateSchema = z
     company: requiredText.max(100),
     jobTitle: requiredText.max(100),
     status: z.enum(['pending_apply', 'applied', 'written_test', 'interviewing', 'oc', 'offered', 'closed']),
-    intentionLevel: z.enum(['S', 'A', 'B', 'C']),
+    intentionLevel: z.enum(['S', 'A', 'B', 'C']).nullable(),
     matchScore: z.number().min(0).max(100).nullable(),
     waitingStage: strategyWaitingStageSchema.nullable(),
     facts: z.array(requiredText.max(200)).max(5),

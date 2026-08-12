@@ -746,6 +746,24 @@ export class DrizzleChatRepository {
     return row?.run ?? null
   }
 
+  async findLatestActiveRunByConversationId(conversationId: string, userId: string) {
+    const [row] = await db
+      .select({ run: chatRuns })
+      .from(chatRuns)
+      .innerJoin(chatConversations, eq(chatRuns.conversationId, chatConversations.id))
+      .where(
+        and(
+          eq(chatRuns.conversationId, conversationId),
+          eq(chatConversations.userId, userId),
+          inArray(chatRuns.status, ['queued', 'running', 'waiting_input', 'waiting_confirmation', 'cancelling']),
+        ),
+      )
+      .orderBy(desc(chatRuns.createdAt))
+      .limit(1)
+
+    return row?.run ?? null
+  }
+
   async listToolActionsByConversationId(conversationId: string, userId: string) {
     const rows = await db
       .select({ toolAction: chatToolActions })
@@ -1330,7 +1348,11 @@ export class DrizzleChatRepository {
       const now = new Date().toISOString()
       const [updatedAction] = await tx
         .update(chatToolActions)
-        .set({ status: 'pending', updatedAt: now })
+        .set({
+          status: 'pending',
+          input: { ...toolAction.input, providedValue: providedInput.value },
+          updatedAt: now,
+        })
         .where(eq(chatToolActions.id, toolAction.id))
         .returning()
       const nextRevision = record.command.expectedRevision + 1
