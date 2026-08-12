@@ -101,8 +101,25 @@ function isSameValue(before: unknown, after: unknown) {
   return normalizeValue(before) === normalizeValue(after)
 }
 
-function normalizeStructuredValue(value: unknown) {
-  return JSON.stringify(value ?? [])
+function serializePortfolioLinks(value: ResumeDraft['portfolioLinks']) {
+  return JSON.stringify((value ?? []).map((link) => [link.label, link.url]))
+}
+
+function serializeLanguages(value: ResumeDraft['languages']) {
+  return JSON.stringify((value ?? []).map((language) => [language.language, language.level]))
+}
+
+function serializeWorkExperiences(value: ResumeDraft['workExperiences']) {
+  return JSON.stringify(
+    (value ?? []).map((experience) => [
+      experience.companyName,
+      experience.industry ?? '',
+      experience.department ?? '',
+      experience.jobTitle,
+      experience.period.start,
+      experience.period.end,
+    ]),
+  )
 }
 
 function formatPortfolioLinks(value: ResumeDraft['portfolioLinks']) {
@@ -232,7 +249,7 @@ export function getVersionDiff(before: ResumeDraft, after: ResumeDraft) {
     })
   }
 
-  if (normalizeStructuredValue(before.portfolioLinks) !== normalizeStructuredValue(after.portfolioLinks)) {
+  if (serializePortfolioLinks(before.portfolioLinks) !== serializePortfolioLinks(after.portfolioLinks)) {
     diff.push({
       field: 'portfolioLinks',
       label: '作品链接',
@@ -245,7 +262,7 @@ export function getVersionDiff(before: ResumeDraft, after: ResumeDraft) {
     })
   }
 
-  if (normalizeStructuredValue(before.languages) !== normalizeStructuredValue(after.languages)) {
+  if (serializeLanguages(before.languages) !== serializeLanguages(after.languages)) {
     diff.push({
       field: 'languages',
       label: '语言能力',
@@ -255,7 +272,7 @@ export function getVersionDiff(before: ResumeDraft, after: ResumeDraft) {
     })
   }
 
-  if (normalizeStructuredValue(before.workExperiences) !== normalizeStructuredValue(after.workExperiences)) {
+  if (serializeWorkExperiences(before.workExperiences) !== serializeWorkExperiences(after.workExperiences)) {
     diff.push({
       field: 'workExperiences',
       label: '过往工作经历',

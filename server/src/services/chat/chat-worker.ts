@@ -12,6 +12,7 @@ import type { ChatConversationScopeType } from '@/shared/chat/schemas'
 import {
   batchUpdateOpportunityProfilesForUser,
   createInterviewScheduleForUser,
+  terminateOpportunityForUser,
   transitionOpportunityStatusForUser,
   updateInterviewReviewForUser,
   updateOpportunityProfileForUser,
@@ -171,6 +172,7 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
         updateOpportunityProfileForUser,
         batchUpdateOpportunityProfilesForUser,
         transitionOpportunityStatusForUser,
+        terminateOpportunityForUser,
         createInterviewScheduleForUser,
         createMockInterviewForUser: (record) =>
           createInterviewSessionForUser({

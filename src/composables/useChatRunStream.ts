@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
-import { chatApi, getAllChatRunEvents } from '@/services/chat-api'
+import { chatApi, getAllChatRunEvents, type ChatBootstrapRunSummary } from '@/services/chat-api'
 import { readToolConfirmationRequest, type ChatToolConfirmation } from '@/shared/chat/confirmation'
 import { readToolInputRequest, type ChatToolInputRequest } from '@/shared/chat/input-request'
 import {
@@ -544,9 +544,16 @@ export function useChatRunStream() {
     }
   }
 
-  async function resumeRun(runId: string, expectedConversationId?: string) {
+  async function resumeRun(
+    runId: string,
+    expectedConversationId?: string,
+    prefetchedRun: ChatBootstrapRunSummary | null = null,
+  ) {
     try {
-      const [run, history] = await Promise.all([chatApi.getRun(runId), getAllChatRunEvents(runId)])
+      const [run, history] = await Promise.all([
+        prefetchedRun?.id === runId ? Promise.resolve(prefetchedRun) : chatApi.getRun(runId),
+        getAllChatRunEvents(runId),
+      ])
 
       if (expectedConversationId && run.conversationId !== expectedConversationId) return false
 
@@ -589,6 +596,10 @@ export function useChatRunStream() {
     return resumeRun(persisted.runId, expectedConversationId)
   }
 
+  function discardPersistedRun(conversationId: string) {
+    clearPersistedCursor(conversationId)
+  }
+
   onBeforeUnmount(() => stop(false))
 
   return {
@@ -606,6 +617,7 @@ export function useChatRunStream() {
     connect,
     resumeRun,
     resumeFromStorage,
+    discardPersistedRun,
     beginConfirmationCommand,
     stop,
     clearState,

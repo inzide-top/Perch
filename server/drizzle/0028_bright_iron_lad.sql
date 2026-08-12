@@ -1,0 +1,1 @@
+ALTER TABLE "job_opportunities" ALTER COLUMN "intention_level" DROP NOT NULL;

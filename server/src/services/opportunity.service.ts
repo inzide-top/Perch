@@ -115,12 +115,25 @@ class OpportunityStatusConflictError extends Error {
   }
 }
 
-class OpportunityInterviewHistoryConflictError extends Error {
-  statusCode = 409
+export type OpportunityInterviewHistoryConflictDetails = {
+  archiveableCount: number
+  blockingCount: number
+  blockingStatuses: string[]
+}
 
-  constructor() {
-    super('该机会存在模拟面试历史，当前不能直接删除')
+export class OpportunityInterviewHistoryConflictError extends Error {
+  statusCode = 409
+  code = 'opportunity_interviews_not_archived' as const
+  details: OpportunityInterviewHistoryConflictDetails
+
+  constructor(details: OpportunityInterviewHistoryConflictDetails) {
+    super(
+      details.blockingCount > 0
+        ? '该机会还有进行中的模拟面试，请先结束或取消后再归档'
+        : '该机会仍有未归档的模拟面试，可以一键归档后继续删除',
+    )
     this.name = 'OpportunityInterviewHistoryConflictError'
+    this.details = details
   }
 }
 
@@ -655,6 +668,60 @@ export type TransitionOpportunityStatusForUserInput = {
   note?: string
 }
 
+export type TerminateOpportunityForUserInput = {
+  opportunityId: string
+  userId: string
+  expectedStatus: Exclude<JobOpportunityStatus, 'closed'>
+  reasonNote?: string
+}
+
+/** 后台 Chat Worker 不依赖 HTTP 请求上下文，因此使用显式 userId 执行终止。 */
+export async function terminateOpportunityForUser(input: TerminateOpportunityForUserInput) {
+  const opportunity = await opportunityRepository.findOpportunityById(input.opportunityId)
+  if (!opportunity || opportunity.userId !== input.userId) throw new OpportunityNotFoundError(input.opportunityId)
+  if (opportunity.status === 'closed') return { opportunity, alreadyApplied: true }
+  if (opportunity.status !== input.expectedStatus) throw new OpportunityStatusConflictError()
+
+  const now = new Date().toISOString()
+  const reasonNote = input.reasonNote?.trim() ?? ''
+  const updatedOpportunity: JobOpportunityRecord = {
+    ...opportunity,
+    status: 'closed',
+    updatedAt: now,
+  }
+  const statusHistory = createStatusHistoryItem(
+    input.opportunityId,
+    'closed',
+    opportunity.status,
+    now,
+    reasonNote || '用户通过 AI 助手终止机会流程',
+    'user',
+  )
+  const termination: OpportunityTermination = {
+    id: crypto.randomUUID(),
+    opportunityId: input.opportunityId,
+    fromStatus: opportunity.status,
+    // 自由文本原因不能仅凭当前阶段推断为“面试失败”等业务结论。
+    reasonCode: 'other',
+    reasonNote,
+    createdAt: now,
+  }
+  const isUpdated = await opportunityRepository.terminateOpportunityForUser(
+    updatedOpportunity,
+    input.expectedStatus,
+    statusHistory,
+    termination,
+  )
+  if (isUpdated) return { opportunity: updatedOpportunity, alreadyApplied: false }
+
+  // 数据库写入成功后 Worker 崩溃重放时，已终止视为幂等成功。
+  const current = await opportunityRepository.findOpportunityById(input.opportunityId)
+  if (current?.userId === input.userId && current.status === 'closed') {
+    return { opportunity: current, alreadyApplied: true }
+  }
+  throw new OpportunityStatusConflictError()
+}
+
 export async function transitionOpportunityStatusForUser(input: TransitionOpportunityStatusForUserInput) {
   const opportunity = await opportunityRepository.findOpportunityById(input.opportunityId)
   if (!opportunity || opportunity.userId !== input.userId) throw new OpportunityNotFoundError(input.opportunityId)
@@ -705,13 +772,16 @@ export async function transitionOpportunityStatusForUser(input: TransitionOpport
   return { opportunity: updatedOpportunity, alreadyApplied: false }
 }
 
-async function getOpportunityForCurrentUser(opportunityId: string): Promise<JobOpportunityRecord> {
+async function getOpportunityForCurrentUser(
+  opportunityId: string,
+  options: { includeDeleted?: boolean } = {},
+): Promise<JobOpportunityRecord> {
   const [userId, opportunity] = await Promise.all([
     getCurrentUserId(),
     opportunityRepository.findOpportunityById(opportunityId),
   ])
 
-  if (!opportunity || opportunity.userId !== userId) {
+  if (!opportunity || opportunity.userId !== userId || (!options.includeDeleted && opportunity.deletedAt)) {
     throw new OpportunityNotFoundError(opportunityId)
   }
 
@@ -777,12 +847,13 @@ export async function createJobOpportunity(input: unknown): Promise<JobOpportuni
     description: parsedInput.description,
     status: 'pending_apply',
     includeWrittenTest: false,
-    intentionLevel: 'B',
+    intentionLevel: null,
     industry: '',
     note: '',
     writtenTestScheduledAt: null,
     writtenTestReviewNote: null,
     writtenTestReviewedAt: null,
+    deletedAt: null,
     createdAt: now,
     updatedAt: now,
   }
@@ -819,8 +890,12 @@ export async function getJobOpportunities(filters: JobOpportunityListFilters): P
     .map((opportunity) => toJobOpportunityListItem(opportunity, analysisSummaries.get(opportunity.id) ?? null))
     .filter((opportunity) => {
       if (filters.statuses.length > 0 && !filters.statuses.includes(opportunity.status)) return false
-      if (filters.intentionLevels.length > 0 && !filters.intentionLevels.includes(opportunity.intentionLevel))
+      if (
+        filters.intentionLevels.length > 0 &&
+        (!opportunity.intentionLevel || !filters.intentionLevels.includes(opportunity.intentionLevel))
+      ) {
         return false
+      }
       if (
         filters.recommendations.length > 0 &&
         (!opportunity.analysis?.recommendation ||
@@ -841,27 +916,104 @@ export async function getJobOpportunities(filters: JobOpportunityListFilters): P
 }
 
 export async function getJobOpportunityById(opportunityId: string) {
-  await getOpportunityForCurrentUser(opportunityId)
+  // 归档模拟面试仍可查看原机会快照，因此只读详情允许读取软删除机会。
+  await getOpportunityForCurrentUser(opportunityId, { includeDeleted: true })
 
   return getOpportunityDetailOrThrow(opportunityId)
 }
 
-export async function deleteJobOpportunity(opportunityId: string): Promise<{ id: string }> {
-  const userId = await getCurrentUserId()
-  await getOpportunityForCurrentUser(opportunityId)
-  if (await interviewRepository.hasSessionsByOpportunityId(opportunityId)) {
-    throw new OpportunityInterviewHistoryConflictError()
+const archiveableInterviewSessionStatuses = new Set(['completed', 'ended_early', 'cancelled', 'preparation_failed'])
+
+function summarizeInterviewDeletionConflict(
+  sessions: Array<{ status: string }>,
+): OpportunityInterviewHistoryConflictDetails {
+  const blockingStatuses = sessions
+    .filter((session) => !archiveableInterviewSessionStatuses.has(session.status))
+    .map((session) => session.status)
+
+  return {
+    archiveableCount: sessions.length - blockingStatuses.length,
+    blockingCount: blockingStatuses.length,
+    blockingStatuses,
   }
+}
+
+async function prepareOpportunityAnalysisForDeletion(opportunityId: string) {
   const analysis = await jobAnalysisRepository.findAnalysisByOpportunityId(opportunityId)
   cancelJobAnalysisForOpportunity(opportunityId)
   if (analysis && !analysis.sourceAnalysisId && (analysis.status === 'pending' || analysis.status === 'processing')) {
     await jobAnalysisRepository.markFollowersFailedForDeletedSource(analysis.id, new Date().toISOString())
   }
-  const deletedOpportunityId = await opportunityRepository.deleteOpportunityForUser(opportunityId, userId)
+}
+
+export async function deleteJobOpportunity(opportunityId: string): Promise<{ id: string }> {
+  const userId = await getCurrentUserId()
+  await getOpportunityForCurrentUser(opportunityId)
+  const unarchivedSessions = await interviewRepository.findUnarchivedSessionStatesByOpportunityId(opportunityId)
+  if (unarchivedSessions.length > 0) {
+    throw new OpportunityInterviewHistoryConflictError(summarizeInterviewDeletionConflict(unarchivedSessions))
+  }
+  await prepareOpportunityAnalysisForDeletion(opportunityId)
+  const deletedOpportunityId = await opportunityRepository.softDeleteOpportunityForUser(
+    opportunityId,
+    userId,
+    new Date().toISOString(),
+  )
 
   if (!deletedOpportunityId) throw new OpportunityNotFoundError(opportunityId)
 
   return { id: deletedOpportunityId }
+}
+
+export async function archiveInterviewsAndDeleteJobOpportunity(opportunityId: string) {
+  const userId = await getCurrentUserId()
+  await getOpportunityForCurrentUser(opportunityId)
+
+  const unarchivedSessions = await interviewRepository.findUnarchivedSessionStatesByOpportunityId(opportunityId)
+  const conflict = summarizeInterviewDeletionConflict(unarchivedSessions)
+  if (conflict.blockingCount > 0) throw new OpportunityInterviewHistoryConflictError(conflict)
+
+  await prepareOpportunityAnalysisForDeletion(opportunityId)
+  const result = await opportunityRepository.archiveInterviewsAndSoftDeleteOpportunityForUser(
+    opportunityId,
+    userId,
+    new Date().toISOString(),
+  )
+
+  if (result.status === 'not_found') throw new OpportunityNotFoundError(opportunityId)
+  if (result.status === 'blocked') {
+    const latestSessions = await interviewRepository.findUnarchivedSessionStatesByOpportunityId(opportunityId)
+    throw new OpportunityInterviewHistoryConflictError(summarizeInterviewDeletionConflict(latestSessions))
+  }
+
+  return { id: result.id, archivedSessionCount: result.archivedSessionCount }
+}
+
+export type BatchDeleteJobOpportunitiesResult = {
+  deletedIds: string[]
+  failures: Array<{ opportunityId: string; reason: string }>
+}
+
+/**
+ * 批量删除允许部分成功，但每一条都复用单条删除的归属、模拟面试归档和分析取消规则。
+ */
+export async function deleteJobOpportunities(opportunityIds: string[]): Promise<BatchDeleteJobOpportunitiesResult> {
+  const deletedIds: string[] = []
+  const failures: BatchDeleteJobOpportunitiesResult['failures'] = []
+
+  for (const opportunityId of opportunityIds) {
+    try {
+      const result = await deleteJobOpportunity(opportunityId)
+      deletedIds.push(result.id)
+    } catch (error) {
+      failures.push({
+        opportunityId,
+        reason: error instanceof Error ? error.message : '删除失败，请稍后重试',
+      })
+    }
+  }
+
+  return { deletedIds, failures }
 }
 
 export async function updateJobOpportunity(opportunityId: string, input: unknown): Promise<JobOpportunityDetail> {
@@ -877,7 +1029,7 @@ export async function updateJobOpportunity(opportunityId: string, input: unknown
     introduction: parsedInput.introduction ?? opportunity.introduction,
     description: parsedInput.description ?? opportunity.description,
     includeWrittenTest: parsedInput.includeWrittenTest ?? opportunity.includeWrittenTest,
-    intentionLevel: parsedInput.intentionLevel ?? opportunity.intentionLevel,
+    intentionLevel: parsedInput.intentionLevel === undefined ? opportunity.intentionLevel : parsedInput.intentionLevel,
     industry: parsedInput.industry ?? opportunity.industry,
     note: parsedInput.note ?? opportunity.note,
     updatedAt: now,

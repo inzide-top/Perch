@@ -34,6 +34,19 @@ import { withBackgroundTaskCapacity } from './background-task.service'
 const maxAttempts = 3
 const retryDelaysMs = [0, 1_000, 3_000]
 
+export class ActionStrategySourceEmptyError extends Error {
+  statusCode = 409
+
+  constructor() {
+    super('当前没有可用于生成行动策略的机会或能力证据')
+    this.name = 'ActionStrategySourceEmptyError'
+  }
+}
+
+function hasActionStrategySource(build: ActionStrategyBuildResult) {
+  return build.sourceSummary.opportunityCount > 0 || build.actions.length > 0 || build.capabilityActions.length > 0
+}
+
 function isUniqueViolation(error: unknown) {
   return Boolean(
     error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === '23505',
@@ -134,11 +147,14 @@ function toOverview(
   build: ActionStrategyBuildResult,
   snapshot: ActionStrategySnapshotRecord | null,
 ): ActionStrategyOverview {
+  const hasSourceData = hasActionStrategySource(build)
+  const effectiveSnapshot = hasSourceData ? snapshot : null
   const freshness = resolveActionStrategyFreshness({
-    snapshotStatus: snapshot?.status ?? null,
-    snapshotFingerprint: snapshot?.inputFingerprint ?? null,
+    hasSourceData,
+    snapshotStatus: effectiveSnapshot?.status ?? null,
+    snapshotFingerprint: effectiveSnapshot?.inputFingerprint ?? null,
     currentFingerprint: build.currentFingerprint,
-    completedAt: snapshot?.completedAt ?? null,
+    completedAt: effectiveSnapshot?.completedAt ?? null,
     now: new Date(build.generatedAt),
   })
 
@@ -150,14 +166,14 @@ function toOverview(
     capabilityActions: build.capabilityActions,
     ai: {
       freshness: freshness.freshness,
-      status: snapshot?.status ?? 'not_generated',
-      snapshotId: snapshot?.id ?? null,
-      modelName: snapshot?.modelName ?? null,
-      generatedAt: snapshot?.completedAt ?? null,
+      status: effectiveSnapshot?.status ?? 'not_generated',
+      snapshotId: effectiveSnapshot?.id ?? null,
+      modelName: effectiveSnapshot?.modelName ?? null,
+      generatedAt: effectiveSnapshot?.completedAt ?? null,
       expiresAt: freshness.expiresAt,
       staleReasons: freshness.staleReasons,
-      summary: snapshot?.result ?? null,
-      error: freshness.freshness === 'failed' ? snapshotError(snapshot) : null,
+      summary: effectiveSnapshot?.result ?? null,
+      error: freshness.freshness === 'failed' ? snapshotError(effectiveSnapshot) : null,
     },
   }
 }
@@ -312,6 +328,7 @@ export async function generateActionStrategy(input: unknown): Promise<ActionStra
   const parsed = modelConnectionSchema.parse((input as { modelConnection?: unknown } | null)?.modelConnection)
   const userId = await getCurrentUserId()
   const { build } = await buildCurrentStrategy(userId)
+  if (!hasActionStrategySource(build)) throw new ActionStrategySourceEmptyError()
   const normalizedBaseUrl = normalizeBaseUrl(parsed.baseUrl)
   const currentOverview = toOverview(build, await actionStrategyRepository.findLatestByUserId(userId))
   const activeSnapshot = await actionStrategyRepository.findActiveByUserId(userId)
@@ -328,6 +345,7 @@ export async function generateActionStrategy(input: unknown): Promise<ActionStra
   })
   const cachedFreshness = cached
     ? resolveActionStrategyFreshness({
+        hasSourceData: true,
         snapshotStatus: cached.status,
         snapshotFingerprint: cached.inputFingerprint,
         currentFingerprint: build.currentFingerprint,

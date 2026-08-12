@@ -184,6 +184,7 @@ function toSessionSummary(
     startedAt: session.startedAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
+    archivedAt: session.archivedAt,
   }
 }
 
@@ -205,6 +206,7 @@ function toPublicSession(session: NonNullable<Awaited<ReturnType<typeof intervie
     startedAt: session.startedAt,
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
+    archivedAt: session.archivedAt,
     updatedAt: session.updatedAt,
   }
 }
@@ -420,6 +422,57 @@ export async function getInterviewSessions(opportunityId: string) {
       evaluation: record.evaluation,
     }),
   )
+}
+
+export async function getArchivedInterviewSessions() {
+  const userId = await getCurrentUserId()
+  const records = await interviewRepository.listArchivedSessionSummariesByUserId(userId)
+
+  return records.map((record) => ({
+    ...toSessionSummary(record.session, {
+      answeredQuestionCount: record.answeredQuestionCount ?? 0,
+      validAnswerCount: record.validAnswerCount ?? 0,
+      evaluation: record.evaluation,
+    }),
+    company: record.company,
+    jobTitle: record.jobTitle,
+    opportunityDeletedAt: record.opportunityDeletedAt,
+  }))
+}
+
+export async function archiveInterviewSession(sessionId: string) {
+  const session = await requireOwnedSession(sessionId)
+  if (session.archivedAt) return toSessionSummary(session)
+
+  const archived = await interviewRepository.archiveSession(sessionId, new Date().toISOString())
+  if (!archived) {
+    throw new InterviewConflictError('只有已经结束、取消或准备失败的模拟面试可以归档')
+  }
+
+  return toSessionSummary(archived)
+}
+
+export async function restoreInterviewSession(sessionId: string) {
+  const session = await requireOwnedSession(sessionId)
+  if (!session.archivedAt) return toSessionSummary(session)
+
+  const opportunity = await requireOwnedOpportunity(session.opportunityId)
+  if (opportunity.deletedAt) {
+    throw new InterviewConflictError('所属机会已删除，不能恢复这场模拟面试')
+  }
+
+  const restored = await interviewRepository.restoreSession(sessionId, new Date().toISOString())
+  if (!restored) throw new InterviewConflictError('模拟面试归档状态已变化，请刷新后重试')
+  return toSessionSummary(restored)
+}
+
+export async function deleteArchivedInterviewSession(sessionId: string) {
+  const session = await requireOwnedSession(sessionId)
+  if (!session.archivedAt) throw new InterviewConflictError('请先归档这场模拟面试，再进行彻底删除')
+
+  const deletedId = await interviewRepository.deleteArchivedSession(sessionId)
+  if (!deletedId) throw new InterviewConflictError('模拟面试归档状态已变化，请刷新后重试')
+  return { id: deletedId }
 }
 
 export type InterviewSessionStatusSnapshot = {

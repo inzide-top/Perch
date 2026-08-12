@@ -19,6 +19,7 @@ import {
   createGlobalTransitionOpportunityStatusTool,
   createTransitionOpportunityStatusTool,
 } from './chat-tools/status-tools'
+import { createGlobalTerminateOpportunityTool, createTerminateOpportunityTool } from './chat-tools/termination-tools'
 import { createGlobalInterviewScheduleTool, createInterviewScheduleTool } from './chat-tools/interview-schedule-tools'
 import { createGlobalMockInterviewTool, createMockInterviewTool } from './chat-tools/mock-interview-tools'
 import {
@@ -53,6 +54,11 @@ export function createChatToolRegistry(input: CreateChatToolRegistryInput, depen
           dependencies.transitionOpportunityStatusForUser,
         ),
       )
+      if (dependencies.terminateOpportunityForUser) {
+        definitions.push(
+          createTerminateOpportunityTool(input.userId, input.opportunity, dependencies.terminateOpportunityForUser),
+        )
+      }
     }
     if (input.opportunity.status === 'interviewing') {
       if (!dependencies.createInterviewScheduleForUser) throw new Error('创建面试安排工具缺少数据库写入依赖')
@@ -143,6 +149,15 @@ export function createChatToolRegistry(input: CreateChatToolRegistryInput, depen
         input.userId,
         dependencies.findOpportunitiesByUserId,
         dependencies.transitionOpportunityStatusForUser,
+      ),
+    )
+  }
+  if (dependencies.terminateOpportunityForUser) {
+    definitions.push(
+      createGlobalTerminateOpportunityTool(
+        input.userId,
+        dependencies.findOpportunitiesByUserId,
+        dependencies.terminateOpportunityForUser,
       ),
     )
   }

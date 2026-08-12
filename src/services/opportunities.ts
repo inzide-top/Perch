@@ -78,10 +78,34 @@ export function getDuplicateOpportunityConflict(error: unknown): DuplicateOpport
   return data as DuplicateOpportunityConflict
 }
 
+export type OpportunityInterviewHistoryConflict = {
+  code: 'opportunity_interviews_not_archived'
+  details: {
+    archiveableCount: number
+    blockingCount: number
+    blockingStatuses: string[]
+  }
+}
+
+export function getOpportunityInterviewHistoryConflict(error: unknown): OpportunityInterviewHistoryConflict | null {
+  if (
+    !(error instanceof ApiRequestError) ||
+    error.status !== 409 ||
+    typeof error.data !== 'object' ||
+    error.data === null
+  ) {
+    return null
+  }
+
+  const data = error.data as Partial<OpportunityInterviewHistoryConflict>
+  if (data.code !== 'opportunity_interviews_not_archived' || !data.details) return null
+  return data as OpportunityInterviewHistoryConflict
+}
+
 export type UpdateOpportunityPayload = Partial<Omit<CreateOpportunityPayload, 'description'>> & {
   description?: string
   includeWrittenTest?: boolean
-  intentionLevel?: OpportunityIntentionLevel
+  intentionLevel?: OpportunityIntentionLevel | null
   industry?: string
   note?: string
 }
@@ -157,6 +181,20 @@ export const opportunityApi = {
 
   deleteOpportunity(opportunityId: string) {
     return request.delete<{ id: string }>(`/opportunities/${encodeURIComponent(opportunityId)}`)
+  },
+
+  archiveInterviewsAndDeleteOpportunity(opportunityId: string) {
+    return request.post<{ id: string; archivedSessionCount: number }>(
+      `/opportunities/${encodeURIComponent(opportunityId)}/archive-interviews-and-delete`,
+      {},
+    )
+  },
+
+  batchDeleteOpportunities(opportunityIds: string[]) {
+    return request.post<{
+      deletedIds: string[]
+      failures: Array<{ opportunityId: string; reason: string }>
+    }>('/opportunities/batch-delete', { opportunityIds })
   },
 
   updateOpportunity(opportunityId: string, payload: UpdateOpportunityPayload) {

@@ -45,6 +45,7 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 需要调用工具时，可以先用一句简短中文说明接下来要执行的操作，例如“我先帮你查询符合条件的机会”，但必须在同一次助手响应中同时返回 tool_call；说明文字不能替代工具调用。
 历史助手文字不等于数据库事实。只有内部历史工具状态明确标记为已完成的修改才可视为已发生；当前上下文和工具最新返回的数据始终优先。
 内部历史工具状态只用于判断数据库事实，绝不能在回答中引用、复述、解释，也不能向用户展示其标签或原文。
+一个用户请求包含多个独立操作时，必须逐项核对并调用完成每个操作所需的工具；不同工具负责的操作不能合并、遗漏，也不能用一个工具的成功结果推断另一个操作已经完成。只有收到每一项对应工具的成功结果后，才可逐项声称完成；失败项必须明确说明失败，不影响继续处理其他独立操作。
 当前时间（Asia/Shanghai）：${currentTime}。解析“明天”“下周二”等相对时间时以此为准。
 相对星期必须按自然周解释：“本周二”属于当前自然周，“下周二”属于紧接着的下一自然周；即使明天正好是周二，也绝不能把“下周二”解释成明天。生成 scheduledAt 前必须核对日期与星期是否一致。`
 
@@ -70,6 +71,7 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 14. 写入工具的确认由产品卡片完成，不要在正文中重复询问用户是否确认。
 15. 用户明确要求从 1 到 5 个岗位网页网址导入机会时，调用 import_opportunities_from_urls，并把用户给出的完整网址按原顺序放入 urls；该工具只生成待审核预览，不代表机会已经创建。
 16. 用户明确要求把一份粘贴的岗位原文导入机会时，调用 import_opportunity_from_text，并把岗位原文完整放入 text，不要总结或改写；该工具只生成待审核预览。一段文本只按一个岗位处理，多份混合文本要提醒用户拆开后再导入。
+17. 用户明确要求终止、放弃或关闭某个机会的整个求职流程时，必须调用 terminate_opportunity，并用 opportunityReference 传目标；用户有说原因才填 reasonNote，否则省略。不得用 transition_opportunity_status 代替终止。
 
 工具决策示例（只用于选择工具，不要向用户复述）：
 - “我最近有哪些正在面试的机会？” → 调用 search_opportunities，statuses=["interviewing"]。
@@ -80,7 +82,9 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 - “小米这个机会里我的优势是什么？” → 调用 get_opportunity_context，opportunityReference="小米"、sections=["job_analysis"]，不调用 get_capability_profile。
 - “我今天应该先做什么？哪些机会需要跟进？” → 调用 get_action_strategy，不声称重新生成了行动策略。
 - “把微派的意向改成 A，备注改成优先跟进” → 调用 update_opportunity_profile，opportunityReference="微派"，并传 intentionLevel="A"、note="优先跟进"。
+- “把百度的意向改成 A，阶段改成面试中” → 本轮任务必须分别调用 update_opportunity_profile 和 transition_opportunity_status；可以一次返回多个工具调用，也可以在前一项确认续跑后发起下一项。两项由产品按顺序逐张确认，任一工具未成功时不得声称两项均已完成。
 - “把小米这个机会改成面试中” → 调用 transition_opportunity_status，opportunityReference="小米"、status="interviewing"。
+- “终止百度前端工程师的流程，因为已接受其他 offer” → 调用 terminate_opportunity，opportunityReference="百度前端工程师"、reasonNote="已接受其他 offer"。
 - “给微派安排下周二晚上 7 点的项目面” → 调用 create_interview_schedule，opportunityReference="微派"，并传 type="project" 和带时区 scheduledAt；缺少准确时间或类型时省略对应字段。
 - “给微派创建一个简单的模拟面试” → 调用 create_mock_interview，opportunityReference="微派"、difficulty="basic"，其余配置由产品卡片补全。
 - “帮我创建一场模拟面试” → 调用 create_mock_interview，不编造目标名称，由产品依次选择机会并补全配置。
@@ -124,7 +128,7 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 - 公司：${opportunity.company}
 - 岗位：${opportunity.jobTitle}
 - 当前阶段：${opportunity.status}
-- 意向等级：${opportunity.intentionLevel}
+- 意向等级：${opportunity.intentionLevel ?? '未设置'}
 - 行业：${opportunity.industry || '未填写'}
 - 工作地点：${opportunity.address?.join('、') || '未填写'}
 - 是否开启笔试流程：${opportunity.includeWrittenTest ? '是' : '否'}
@@ -141,11 +145,15 @@ ${writtenTestReviewRule}
 7. 工具结果返回前，不得输出“已修改”“已关闭”“已更新”“已创建”“已保存”“已完成”等成功结论；工具能够处理的操作不得声称“不支持”或要求用户手动处理。
 8. 不要在正文里再次询问“是否确认”。需要确认的操作会由产品确认卡片拦截，用户确认前不会写数据库。
 9. 用户只是询问、解释或比较信息时，不调用写入工具。
+10. 用户明确要求终止、放弃或关闭当前机会的整个求职流程时，必须调用 terminate_opportunity。用户有说原因才填 reasonNote；不得用 transition_opportunity_status 代替。
+11. 同一句请求包含基础资料修改和阶段流转时，必须分别调用 update_opportunity_profile 与 transition_opportunity_status；产品会按顺序逐张确认。不得在只收到其中一个工具成功结果时声称另一项也已完成。
 
 工具决策示例（只用于选择工具，不要向用户复述）：
 - “把当前意向改成 S” → 调用 update_opportunity_profile，参数 {"intentionLevel":"S"}。
+- “把当前意向改成 A，阶段改成面试中” → 本轮任务分别调用 update_opportunity_profile 与 transition_opportunity_status，不能把两项合并成一个工具调用，也不能在第一项完成后遗漏第二项。
 - “关闭笔试流程” → 调用 update_opportunity_profile，参数 {"includeWrittenTest":false}。
 - “把阶段改成面试中” → 调用 transition_opportunity_status，参数 {"status":"interviewing"}。
+- “终止当前机会，因为薪资不匹配” → 调用 terminate_opportunity，参数 {"reasonNote":"薪资不匹配"}，由产品卡片让用户编辑并确认。
 ${interviewScheduleExample}
 ${writtenTestReviewExample}
 - “帮我创建一场简单的模拟面试” → 调用 create_mock_interview，只传 difficulty="basic"，其余配置由产品卡片补全。

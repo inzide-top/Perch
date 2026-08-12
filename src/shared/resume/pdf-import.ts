@@ -32,6 +32,7 @@ export type ResumePdfImportTaskStatus = 'pending' | 'processing' | 'completed' |
 export type ResumePdfImportTaskRecord = {
   id: string
   status: ResumePdfImportTaskStatus
+  currentAttempt: number
   fileName: string
   result: ResumePdfImportResponse | null
   error: { code: string; message: string; retryable: boolean } | null

@@ -118,8 +118,8 @@ function canOpenReviewFromStatus(status: JobOpportunityStatus) {
 }
 
 function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
-  if (status === 'written_test') return '笔试复盘'
-  if (status === 'interviewing') return '面试管理'
+  if (status === 'written_test') return infoForm.value.status === 'closed' ? '笔试记录' : '笔试复盘'
+  if (status === 'interviewing') return infoForm.value.status === 'closed' ? '面试记录' : '面试管理'
 
   return '复盘'
 }
@@ -453,7 +453,10 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
           <div class="space-y-4">
             <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <div class="app-panel-muted p-3">
-                <p class="preference-field-label">意向等级</p>
+                <div class="mb-1.5 flex items-center justify-between gap-2">
+                  <p class="preference-field-label mb-0">意向等级</p>
+                  <span v-if="!infoForm.intentionLevel" class="text-[11px] text-muted">未设置</span>
+                </div>
                 <div class="grid grid-cols-4 gap-1.5">
                   <button
                     v-for="item in intentionOptions"
@@ -535,7 +538,7 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
                 class="interview-review-action-appear app-interactive-button"
                 @click="emit('openInterviewReviewDrawer')"
               >
-                面试管理
+                {{ infoForm.status === 'closed' ? '查看面试记录' : '面试管理' }}
               </UButton>
               <UButton
                 v-if="canOpenWrittenTestReview"
@@ -547,7 +550,7 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
                 class="interview-review-action-appear app-interactive-button"
                 @click="emit('openWrittenTestReviewDrawer')"
               >
-                笔试复盘
+                {{ infoForm.status === 'closed' ? '查看笔试复盘' : '笔试复盘' }}
               </UButton>
             </div>
           </div>

@@ -2,6 +2,20 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { toChatMessageParts } from './chat-message-mapper'
 
+test('多个写工具卡片按执行顺序放在引导语和最终结果之间', () => {
+  const parts = toChatMessageParts('我先帮你核对这两项修改。\n\n两项修改都已执行完成。', [], {
+    toolActionIds: ['6ad676a2-0359-446a-b3d3-a1fc92d5f490', '8c23f521-df7d-4f26-8043-67730bb3b4f1'],
+    leadingText: '我先帮你核对这两项修改。',
+  })
+
+  assert.deepEqual(parts, [
+    { type: 'text', text: '我先帮你核对这两项修改。' },
+    { type: 'tool_action', toolActionId: '6ad676a2-0359-446a-b3d3-a1fc92d5f490' },
+    { type: 'tool_action', toolActionId: '8c23f521-df7d-4f26-8043-67730bb3b4f1' },
+    { type: 'text', text: '\n\n两项修改都已执行完成。' },
+  ])
+})
+
 test('批量网址导入结果会持久化为可恢复的审核卡消息 Part', () => {
   const parts = toChatMessageParts('已完成岗位信息识别。', [
     {

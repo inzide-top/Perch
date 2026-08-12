@@ -7,12 +7,18 @@ import { useChatConversation } from '@/composables/useChatConversation'
 import { useChatStore } from '@/stores/chat'
 import { useOpportunityStore, useSettingsStore } from '@/stores'
 import { toUserVisibleChatText } from '@/shared/chat/user-visible-text'
-import type { ChatConversationRecord } from '@/services/chat-api'
+import {
+  chatApi,
+  type ChatBootstrapRunSummary,
+  type ChatConversationDetail,
+  type ChatConversationRecord,
+} from '@/services/chat-api'
 import {
   chatOpportunityIntentionChangePresentationSchema,
   chatOpportunityProfileBatchChangePresentationSchema,
   chatOpportunityProfileChangePresentationSchema,
   chatOpportunityStatusTransitionPresentationSchema,
+  chatOpportunityTerminationInputPresentationSchema,
   chatInterviewScheduleInputPresentationSchema,
   chatInterviewScheduleCreatePresentationSchema,
   chatMockInterviewInputPresentationSchema,
@@ -31,6 +37,7 @@ import {
   type ChatOpportunityImportResultPart,
   type ChatOpportunitySearchResultPart,
   type ChatOpportunityStatusTransitionPresentation,
+  type ChatOpportunityTerminationInputPresentation,
   type ChatReviewInputPresentation,
   type ChatReviewSavePresentation,
   type ChatOpportunityTargetInputPresentation,
@@ -47,6 +54,7 @@ import OpportunityIntentionConfirmationCard, {
 import OpportunityProfileConfirmationCard from './OpportunityProfileConfirmationCard.vue'
 import OpportunityProfileBatchConfirmationCard from './OpportunityProfileBatchConfirmationCard.vue'
 import OpportunityStatusTransitionConfirmationCard from './OpportunityStatusTransitionConfirmationCard.vue'
+import OpportunityTerminationCard from './OpportunityTerminationCard.vue'
 import InterviewScheduleInputCard from './InterviewScheduleInputCard.vue'
 import InterviewScheduleConfirmationCard from './InterviewScheduleConfirmationCard.vue'
 import MockInterviewInputCard from './MockInterviewInputCard.vue'
@@ -66,6 +74,7 @@ type OpportunityIntentionActionPart = {
   toolActionId: string
   presentation: ChatOpportunityIntentionChangePresentation
   status: OpportunityIntentionConfirmationStatus
+  errorMessage: string | null
 }
 
 type OpportunityProfileActionPart = {
@@ -73,6 +82,7 @@ type OpportunityProfileActionPart = {
   toolActionId: string
   presentation: ChatOpportunityProfileChangePresentation
   status: OpportunityIntentionConfirmationStatus
+  errorMessage: string | null
 }
 
 type OpportunityProfileBatchActionPart = {
@@ -80,6 +90,7 @@ type OpportunityProfileBatchActionPart = {
   toolActionId: string
   presentation: ChatOpportunityProfileBatchChangePresentation
   status: OpportunityIntentionConfirmationStatus
+  errorMessage: string | null
 }
 
 type OpportunityStatusTransitionActionPart = {
@@ -87,6 +98,7 @@ type OpportunityStatusTransitionActionPart = {
   toolActionId: string
   presentation: ChatOpportunityStatusTransitionPresentation
   status: OpportunityIntentionConfirmationStatus
+  errorMessage: string | null
 }
 
 type OpportunityConfirmationActionPart =
@@ -133,6 +145,15 @@ type ResumeTargetInputActionPart = {
   status: 'waiting' | 'submitted'
 }
 
+type OpportunityTerminationActionPart = {
+  type: 'opportunity_termination_action'
+  requestId: string | null
+  toolActionId: string
+  presentation: ChatOpportunityTerminationInputPresentation
+  status: OpportunityIntentionConfirmationStatus
+  errorMessage: string | null
+}
+
 type InterviewScheduleConfirmationActionPart = {
   type: 'interview_schedule_confirmation_action'
   toolActionId: string
@@ -165,6 +186,7 @@ type ChatUiMessagePart =
   | ReviewInputActionPart
   | OpportunityTargetInputActionPart
   | ResumeTargetInputActionPart
+  | OpportunityTerminationActionPart
   | OpportunityConfirmationActionPart
 
 type ChatUiMessage = {
@@ -416,15 +438,17 @@ const activeToolNotice = computed(() => {
                     ? '批量修改机会资料'
                     : activity.name === 'transition_opportunity_status'
                       ? '修改机会阶段'
-                      : activity.name === 'create_interview_schedule'
-                        ? '创建面试安排'
-                        : activity.name === 'create_mock_interview'
-                          ? '创建模拟面试'
-                          : activity.name === 'save_written_test_review'
-                            ? '保存笔试复盘'
-                            : activity.name === 'save_interview_review'
-                              ? '保存面试复盘'
-                              : '处理请求'
+                      : activity.name === 'terminate_opportunity'
+                        ? '终止机会流程'
+                        : activity.name === 'create_interview_schedule'
+                          ? '创建面试安排'
+                          : activity.name === 'create_mock_interview'
+                            ? '创建模拟面试'
+                            : activity.name === 'save_written_test_review'
+                              ? '保存笔试复盘'
+                              : activity.name === 'save_interview_review'
+                                ? '保存面试复盘'
+                                : '处理请求'
   if (activity.status === 'requested' || activity.status === 'running') {
     return {
       label: `正在调用工具 · ${toolLabel}`,
@@ -515,6 +539,11 @@ const streamStatusLabel = computed(() => {
     if (chatOpportunityTargetInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success) {
       return '等待你选择目标机会'
     }
+    if (
+      chatOpportunityTerminationInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success
+    ) {
+      return '等待你确认终止机会'
+    }
     if (latestToolInputRequest.value.toolName === 'create_mock_interview') return '等待你配置模拟面试'
     if (latestToolInputRequest.value.toolName === 'save_written_test_review') return '等待你补充笔试复盘'
     if (latestToolInputRequest.value.toolName === 'save_interview_review') return '等待你补充面试复盘'
@@ -544,6 +573,12 @@ const streamStatusLabel = computed(() => {
       return '正在修改机会阶段'
     }
     if (latestToolActivity.value.status === 'failed') return '机会阶段修改失败'
+  }
+  if (latestToolActivity.value?.name === 'terminate_opportunity') {
+    if (latestToolActivity.value.status === 'requested' || latestToolActivity.value.status === 'running') {
+      return '正在终止机会流程'
+    }
+    if (latestToolActivity.value.status === 'failed') return '机会流程终止失败'
   }
   if (latestToolActivity.value?.name === 'create_interview_schedule') {
     if (latestToolActivity.value.status === 'requested' || latestToolActivity.value.status === 'running') {
@@ -720,6 +755,7 @@ function createStreamingInputActionPart():
   | ReviewInputActionPart
   | OpportunityTargetInputActionPart
   | ResumeTargetInputActionPart
+  | OpportunityTerminationActionPart
   | null {
   const request = latestToolInputRequest.value
   if (!request) return null
@@ -742,6 +778,7 @@ function createStreamingInputActionPart():
       'update_opportunity_profile',
       'batch_update_opportunity_profiles',
       'transition_opportunity_status',
+      'terminate_opportunity',
       'create_interview_schedule',
       'create_mock_interview',
       'save_written_test_review',
@@ -757,6 +794,20 @@ function createStreamingInputActionPart():
         status: request.status,
       }
     }
+  }
+
+  if (request.toolName === 'terminate_opportunity') {
+    const presentation = chatOpportunityTerminationInputPresentationSchema.safeParse(request.presentation)
+    return presentation.success
+      ? {
+          type: 'opportunity_termination_action',
+          requestId: request.requestId,
+          toolActionId: request.toolActionId,
+          presentation: presentation.data,
+          status: request.status === 'waiting' ? 'waiting' : 'approving',
+          errorMessage: null,
+        }
+      : null
   }
 
   if (request.toolName === 'create_interview_schedule') {
@@ -798,10 +849,10 @@ function createStreamingInputActionPart():
   return null
 }
 
-function createStreamingConfirmationActionPart(): OpportunityConfirmationActionPart | null {
-  const confirmation = latestToolConfirmation.value
+function createStreamingConfirmationActionPart(
+  confirmation: (typeof chat.stream.toolConfirmations.value)[number],
+): OpportunityConfirmationActionPart | null {
   if (
-    !confirmation ||
     ![
       'update_opportunity_intention_level',
       'update_opportunity_profile',
@@ -836,6 +887,7 @@ function createStreamingConfirmationActionPart(): OpportunityConfirmationActionP
           toolActionId: confirmation.toolActionId,
           presentation: presentation.data,
           status,
+          errorMessage: activity?.error ?? null,
         }
       : null
   }
@@ -848,6 +900,7 @@ function createStreamingConfirmationActionPart(): OpportunityConfirmationActionP
           toolActionId: confirmation.toolActionId,
           presentation: presentation.data,
           status,
+          errorMessage: activity?.error ?? null,
         }
       : null
   }
@@ -860,6 +913,7 @@ function createStreamingConfirmationActionPart(): OpportunityConfirmationActionP
           toolActionId: confirmation.toolActionId,
           presentation: presentation.data,
           status,
+          errorMessage: activity?.error ?? null,
         }
       : null
   }
@@ -872,6 +926,7 @@ function createStreamingConfirmationActionPart(): OpportunityConfirmationActionP
           toolActionId: confirmation.toolActionId,
           presentation: presentation.data,
           status,
+          errorMessage: activity?.error ?? null,
         }
       : null
   }
@@ -933,19 +988,40 @@ const chatUiMessages = computed<ChatUiMessage[]>(() => {
 
   if (shouldShowStreamingMessage) {
     const parts: ChatUiMessage['parts'] = []
-    const confirmationPart = createStreamingConfirmationActionPart()
+    const confirmationParts = chat.stream.toolConfirmations.value.flatMap((confirmation) => {
+      const part = createStreamingConfirmationActionPart(confirmation)
+      return part ? [part] : []
+    })
     const inputPart = createStreamingInputActionPart()
-    const interactionPart = confirmationPart ?? inputPart
+    const visibleInputPart =
+      inputPart &&
+      !chat.stream.toolConfirmations.value.some(
+        (confirmation) => confirmation.callId === latestToolInputRequest.value?.callId,
+      )
+        ? inputPart
+        : null
     const displayedText = displayedStreamingAssistantText.value
 
-    if (interactionPart) {
-      const callId = confirmationPart ? latestToolConfirmation.value!.callId : latestToolInputRequest.value!.callId
-      const boundaryType = confirmationPart ? 'confirmation_requested' : 'input_requested'
+    if (confirmationParts.length > 0) {
+      const firstConfirmation = chat.stream.toolConfirmations.value[0]!
+      const leadingTextLength = Math.min(
+        getInteractionLeadingTextLength(firstConfirmation.callId, 'confirmation_requested'),
+        displayedText.length,
+      )
+      const leadingText = displayedText.slice(0, leadingTextLength)
+      const trailingText = displayedText.slice(leadingTextLength)
+      if (leadingText) parts.push({ type: 'text', text: leadingText })
+      parts.push(...confirmationParts)
+      if (visibleInputPart) parts.push(visibleInputPart)
+      if (trailingText) parts.push({ type: 'text', text: trailingText })
+    } else if (visibleInputPart) {
+      const callId = latestToolInputRequest.value!.callId
+      const boundaryType = 'input_requested'
       const leadingTextLength = Math.min(getInteractionLeadingTextLength(callId, boundaryType), displayedText.length)
       const leadingText = displayedText.slice(0, leadingTextLength)
       const trailingText = displayedText.slice(leadingTextLength)
       if (leadingText) parts.push({ type: 'text', text: leadingText })
-      parts.push(interactionPart)
+      parts.push(visibleInputPart)
       if (trailingText) parts.push({ type: 'text', text: trailingText })
     } else if (displayedText) {
       parts.push({ type: 'text', text: displayedText })
@@ -1056,10 +1132,18 @@ function toPersistedOpportunityIntentionActionPart(toolActionId: string): Opport
     toolActionId,
     presentation: presentation.data,
     status: getPersistedToolActionStatus(action),
+    errorMessage: readToolActionErrorMessage(action.error),
   }
 }
 
-function toPersistedOpportunityActionPart(toolActionId: string): OpportunityConfirmationActionPart | null {
+function readToolActionErrorMessage(error: unknown) {
+  if (!error || typeof error !== 'object' || !('message' in error)) return null
+  return typeof error.message === 'string' ? error.message : null
+}
+
+function toPersistedOpportunityActionPart(
+  toolActionId: string,
+): OpportunityConfirmationActionPart | OpportunityTerminationActionPart | null {
   const action = chat.toolActions.value.find((item) => item.id === toolActionId)
   if (!action) return null
   if (action.toolName === 'update_opportunity_intention_level') {
@@ -1074,6 +1158,7 @@ function toPersistedOpportunityActionPart(toolActionId: string): OpportunityConf
       toolActionId,
       presentation: presentation.data,
       status: getPersistedToolActionStatus(action),
+      errorMessage: readToolActionErrorMessage(action.error),
     }
   }
 
@@ -1087,6 +1172,7 @@ function toPersistedOpportunityActionPart(toolActionId: string): OpportunityConf
       toolActionId,
       presentation: presentation.data,
       status: getPersistedToolActionStatus(action),
+      errorMessage: readToolActionErrorMessage(action.error),
     }
   }
 
@@ -1100,6 +1186,34 @@ function toPersistedOpportunityActionPart(toolActionId: string): OpportunityConf
       toolActionId,
       presentation: presentation.data,
       status: getPersistedToolActionStatus(action),
+      errorMessage: readToolActionErrorMessage(action.error),
+    }
+  }
+
+  if (action.toolName === 'terminate_opportunity') {
+    const presentation = chatOpportunityTerminationInputPresentationSchema.safeParse(
+      action.input.inputRequestPresentation,
+    )
+    if (!presentation.success) return null
+    const providedValue =
+      action.input.providedValue &&
+      typeof action.input.providedValue === 'object' &&
+      !Array.isArray(action.input.providedValue)
+        ? (action.input.providedValue as Record<string, unknown>)
+        : null
+    const reasonNote =
+      typeof action.output?.reasonNote === 'string'
+        ? action.output.reasonNote
+        : providedValue && typeof providedValue.reasonNote === 'string'
+          ? providedValue.reasonNote
+          : null
+    return {
+      type: 'opportunity_termination_action',
+      requestId: null,
+      toolActionId,
+      presentation: reasonNote === null ? presentation.data : { ...presentation.data, values: { reasonNote } },
+      status: getPersistedToolActionStatus(action),
+      errorMessage: readToolActionErrorMessage(action.error),
     }
   }
 
@@ -1169,32 +1283,42 @@ async function submitToolInput(requestId: string, value: unknown) {
 }
 
 async function cancelToolInput(
-  kind: 'interview_schedule' | 'mock_interview' | 'review' | 'opportunity_target' | 'resume_target',
+  kind:
+    | 'interview_schedule'
+    | 'mock_interview'
+    | 'review'
+    | 'opportunity_target'
+    | 'resume_target'
+    | 'opportunity_termination',
 ) {
   try {
     await chat.cancel(
       kind === 'resume_target'
         ? 'resume_target_cancelled'
-        : kind === 'opportunity_target'
-          ? 'opportunity_target_cancelled'
-          : kind === 'review'
-            ? 'review_input_cancelled'
-            : kind === 'mock_interview'
-              ? 'mock_interview_input_cancelled'
-              : 'interview_schedule_input_cancelled',
+        : kind === 'opportunity_termination'
+          ? 'opportunity_termination_input_cancelled'
+          : kind === 'opportunity_target'
+            ? 'opportunity_target_cancelled'
+            : kind === 'review'
+              ? 'review_input_cancelled'
+              : kind === 'mock_interview'
+                ? 'mock_interview_input_cancelled'
+                : 'interview_schedule_input_cancelled',
     )
   } catch (error) {
     toast.add({
       title:
         kind === 'resume_target'
           ? '取消选择简历失败'
-          : kind === 'opportunity_target'
-            ? '取消选择机会失败'
-            : kind === 'review'
-              ? '取消填写复盘失败'
-              : kind === 'mock_interview'
-                ? '取消创建模拟面试失败'
-                : '取消创建面试安排失败',
+          : kind === 'opportunity_termination'
+            ? '取消终止机会失败'
+            : kind === 'opportunity_target'
+              ? '取消选择机会失败'
+              : kind === 'review'
+                ? '取消填写复盘失败'
+                : kind === 'mock_interview'
+                  ? '取消创建模拟面试失败'
+                  : '取消创建面试安排失败',
       description: error instanceof Error ? error.message : '请稍后重试',
       color: 'error',
       icon: 'i-lucide-circle-alert',
@@ -1321,7 +1445,10 @@ async function loadHistory(force = false) {
   return chatStore.loadConversations(getHistoryQuery(), force)
 }
 
-async function openSelectedConversation() {
+async function openSelectedConversation(prefetched?: {
+  detail: ChatConversationDetail
+  activeRun: ChatBootstrapRunSummary | null
+}) {
   const conversationId = chatStore.selectedConversationId
   optimisticText.value = null
   optimisticReferences.value = []
@@ -1334,7 +1461,8 @@ async function openSelectedConversation() {
   // 绑定机会只属于尚未落库的新对话草稿；打开任何历史会话时都必须清掉草稿绑定。
   draftOpportunityId.value = null
   try {
-    const result = await chat.open(conversationId)
+    const result = prefetched?.detail ?? (await chat.open(conversationId))
+    if (prefetched) chat.hydrate(prefetched.detail)
     chatStore.upsertConversation(result.conversation)
     const pendingSubmission = chat.getPendingSubmission()
     if (pendingSubmission) {
@@ -1343,7 +1471,7 @@ async function openSelectedConversation() {
       optimisticSentAt.value = pendingSubmission.submittedAt
     }
 
-    const recovery = await chat.recoverAfterOpen()
+    const recovery = await chat.recoverAfterOpen(prefetched?.activeRun)
     optimisticText.value = null
     optimisticReferences.value = []
     optimisticSentAt.value = null
@@ -1365,21 +1493,24 @@ async function ensureConversation() {
   if (isBootstrapping.value) return
   isBootstrapping.value = true
   try {
-    const conversations = await loadHistory(true)
-    if (chatStore.selectedConversationId && (await openSelectedConversation())) return
+    const bootstrap = await chatApi.bootstrap({
+      selectedConversationId: chatStore.selectedConversationId ?? undefined,
+      limit: 20,
+    })
+    chatStore.hydrateConversationPage(bootstrap.conversations, { limit: 20, archived: 'active' })
 
-    chatStore.selectConversation(null)
-    const firstGlobal = conversations.find(
-      (conversation) => conversation.scopeType === 'global' && !conversation.archivedAt,
-    )
-    const fallback = firstGlobal ?? conversations.find((conversation) => !conversation.archivedAt) ?? null
-    if (fallback) {
-      skipNextConversationOpen = true
-      chatStore.selectConversation(fallback.id)
-      await openSelectedConversation()
-    } else {
+    if (!bootstrap.selectedConversation) {
+      chatStore.selectConversation(null)
       chat.clear()
+      return
     }
+
+    const conversationId = bootstrap.selectedConversation.conversation.id
+    if (chatStore.selectedConversationId !== conversationId) {
+      skipNextConversationOpen = true
+      chatStore.selectConversation(conversationId)
+    }
+    await openSelectedConversation({ detail: bootstrap.selectedConversation, activeRun: bootstrap.activeRun })
   } catch {
     // chatStore.error 会在模板中显示。
   } finally {
@@ -1671,6 +1802,7 @@ watch(
           'update_opportunity_profile',
           'batch_update_opportunity_profiles',
           'transition_opportunity_status',
+          'terminate_opportunity',
           'create_interview_schedule',
           'create_mock_interview',
           'save_written_test_review',
@@ -2028,10 +2160,21 @@ onBeforeUnmount(() => {
                       @submit="submitToolInput(part.requestId, $event)"
                       @cancel="cancelToolInput('mock_interview')"
                     />
+                    <OpportunityTerminationCard
+                      v-else-if="part.type === 'opportunity_termination_action'"
+                      :presentation="part.presentation"
+                      :status="part.status"
+                      :error-message="part.errorMessage"
+                      :pending="Boolean(part.requestId && chat.submittingInputRequestId.value === part.requestId)"
+                      :cancelling="chat.isCancelling.value"
+                      @submit="part.requestId && submitToolInput(part.requestId, $event)"
+                      @cancel="cancelToolInput('opportunity_termination')"
+                    />
                     <OpportunityIntentionConfirmationCard
                       v-else-if="part.type === 'opportunity_intention_action'"
                       :presentation="part.presentation"
                       :status="part.status"
+                      :error-message="part.errorMessage"
                       :pending-decision="
                         chat.confirmingToolActionId.value === part.toolActionId
                           ? chat.confirmingToolDecision.value
@@ -2044,6 +2187,7 @@ onBeforeUnmount(() => {
                       v-else-if="part.type === 'opportunity_profile_action'"
                       :presentation="part.presentation"
                       :status="part.status"
+                      :error-message="part.errorMessage"
                       :pending-decision="
                         chat.confirmingToolActionId.value === part.toolActionId
                           ? chat.confirmingToolDecision.value
@@ -2056,6 +2200,7 @@ onBeforeUnmount(() => {
                       v-else-if="part.type === 'opportunity_profile_batch_action'"
                       :presentation="part.presentation"
                       :status="part.status"
+                      :error-message="part.errorMessage"
                       :pending-decision="
                         chat.confirmingToolActionId.value === part.toolActionId
                           ? chat.confirmingToolDecision.value
@@ -2068,6 +2213,7 @@ onBeforeUnmount(() => {
                       v-else-if="part.type === 'opportunity_status_transition_action'"
                       :presentation="part.presentation"
                       :status="part.status"
+                      :error-message="part.errorMessage"
                       :pending-decision="
                         chat.confirmingToolActionId.value === part.toolActionId
                           ? chat.confirmingToolDecision.value

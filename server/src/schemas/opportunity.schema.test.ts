@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   addInterviewRoundInputSchema,
+  batchDeleteJobOpportunitiesInputSchema,
   completeInterviewRoundInputSchema,
   updateInterviewRoundInputSchema,
+  updateJobOpportunityInputSchema,
 } from './opportunity.schema'
 
 const baseRound = {
@@ -41,4 +43,21 @@ test('普通编辑接口不允许顺便流转轮次状态', () => {
 test('完成动作只接受已完成后的结果值', () => {
   assert.equal(completeInterviewRoundInputSchema.safeParse({ result: 'unknown' }).success, true)
   assert.equal(completeInterviewRoundInputSchema.safeParse({ result: 'pending' }).success, false)
+})
+
+test('批量删除会去重机会 ID，并限制一次最多处理 50 条', () => {
+  const id = '11111111-1111-4111-8111-111111111111'
+  const parsed = batchDeleteJobOpportunitiesInputSchema.parse({ opportunityIds: [id, id] })
+  assert.deepEqual(parsed.opportunityIds, [id])
+
+  const tooManyIds = Array.from(
+    { length: 51 },
+    (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+  )
+  assert.equal(batchDeleteJobOpportunitiesInputSchema.safeParse({ opportunityIds: tooManyIds }).success, false)
+})
+
+test('机会编辑接口用 null 表示清空意向等级', () => {
+  assert.deepEqual(updateJobOpportunityInputSchema.parse({ intentionLevel: null }), { intentionLevel: null })
+  assert.equal(updateJobOpportunityInputSchema.safeParse({ intentionLevel: '' }).success, false)
 })

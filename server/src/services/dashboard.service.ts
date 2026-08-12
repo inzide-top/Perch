@@ -68,6 +68,10 @@ export type DashboardAggregationInput = {
     interviewReviews: number
   }
   interviewSchedules?: DashboardInterviewScheduleRecord[]
+  summary?: {
+    currentResume: { id: string; title: string; versionNumber: number } | null
+    mockInterviewCount: number
+  }
   generatedAt?: string
 }
 
@@ -305,6 +309,16 @@ export function buildDashboardOverview(input: DashboardAggregationInput): Dashbo
 
   return {
     generatedAt,
+    summary: {
+      currentResume: input.summary?.currentResume ?? null,
+      analyzingCount: [...input.analysisByOpportunityId.values()].filter(
+        (analysis) => analysis.status === 'pending' || analysis.status === 'processing',
+      ).length,
+      followUpCount: input.opportunities.filter((opportunity) =>
+        ['applied', 'written_test', 'interviewing', 'oc'].includes(opportunity.status),
+      ).length,
+      mockInterviewCount: input.summary?.mockInterviewCount ?? input.interviewEvidence.length,
+    },
     ability: {
       dataStatus,
       strengths: abilityInsights.strengths,
@@ -323,12 +337,14 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   const userId = await getCurrentUserId()
   const opportunities = await opportunityRepository.findOpportunitiesByUserId(userId)
   const opportunityIds = opportunities.map((opportunity) => opportunity.id)
-  const [analysisByOpportunityId, interviewEvidence, reviewSourceCounts, interviewSchedules] = await Promise.all([
-    getJobAnalysisListSummaries(opportunityIds),
-    dashboardRepository.findInterviewEvidenceByUserId(userId),
-    dashboardRepository.findReviewSourceCountsByUserId(userId),
-    dashboardRepository.findInterviewSchedulesByUserId(userId),
-  ])
+  const [analysisByOpportunityId, interviewEvidence, reviewSourceCounts, interviewSchedules, summary] =
+    await Promise.all([
+      getJobAnalysisListSummaries(opportunityIds),
+      dashboardRepository.findInterviewEvidenceByUserId(userId),
+      dashboardRepository.findReviewSourceCountsByUserId(userId),
+      dashboardRepository.findInterviewSchedulesByUserId(userId),
+      dashboardRepository.findSummaryByUserId(userId),
+    ])
 
   return buildDashboardOverview({
     opportunities,
@@ -336,5 +352,6 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
     interviewEvidence,
     reviewSourceCounts,
     interviewSchedules,
+    summary,
   })
 }

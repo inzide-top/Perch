@@ -98,6 +98,14 @@ export type ChatConversationPage = {
   nextCursor: string | null
 }
 
+export type ChatBootstrapRunSummary = ChatRunSnapshot & { conversationId: string }
+
+export type ChatBootstrapResponse = {
+  conversations: ChatConversationPage
+  selectedConversation: ChatConversationDetail | null
+  activeRun: ChatBootstrapRunSummary | null
+}
+
 export type ChatTurnResult = {
   message: ChatMessageRecord
   run: ChatRunRecord
@@ -132,6 +140,14 @@ export type ChatCommandInput =
     }
 
 export const chatApi = {
+  bootstrap(options: { selectedConversationId?: string; limit?: number } = {}) {
+    const query = new URLSearchParams()
+    if (options.selectedConversationId) query.set('selectedConversationId', options.selectedConversationId)
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return request.get<ChatBootstrapResponse>(`/chat/bootstrap${suffix}`)
+  },
+
   listConversations(options: ListChatConversationsOptions = {}) {
     const query = new URLSearchParams()
     if (options.cursor) query.set('cursor', options.cursor)

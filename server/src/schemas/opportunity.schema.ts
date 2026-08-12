@@ -141,6 +141,13 @@ export const opportunityIdParamsSchema = z.object({
   opportunityId: z.string().uuid(),
 })
 
+export const batchDeleteJobOpportunitiesInputSchema = z
+  .object({
+    opportunityIds: z.array(z.string().uuid()).min(1).max(50),
+  })
+  .strict()
+  .transform(({ opportunityIds }) => ({ opportunityIds: [...new Set(opportunityIds)] }))
+
 function commaSeparatedValues<T extends z.ZodType<string, string>>(schema: T) {
   return z
     .string()
@@ -220,7 +227,7 @@ export const updateJobOpportunityInputSchema = z
     introduction: optionalText,
     description: optionalText,
     includeWrittenTest: z.boolean().optional(),
-    intentionLevel: opportunityIntentionLevelSchema.optional(),
+    intentionLevel: opportunityIntentionLevelSchema.nullable().optional(),
     industry: optionalText,
     note: optionalText,
   })

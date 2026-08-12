@@ -82,7 +82,7 @@ class ChatRunCancelledError extends Error {
 }
 
 function toError(error: unknown): AgentRunError {
-  const candidate = error as { code?: unknown; message?: unknown; retryable?: unknown } | null
+  const candidate = error as { code?: unknown; message?: unknown; retryable?: unknown; statusCode?: unknown } | null
   const knownCodes = new Set<AgentRunError['code']>([
     'structured_output_validation_failed',
     'model_request_failed',
@@ -99,11 +99,36 @@ function toError(error: unknown): AgentRunError {
       ? (candidate.code as AgentRunError['code'])
       : 'unknown'
 
+  const rawMessage = typeof candidate?.message === 'string' ? candidate.message : '聊天任务执行失败'
+  const message =
+    candidate?.statusCode === 409 && !/[\u3400-\u9fff]/.test(rawMessage)
+      ? '机会信息已发生变化，请重新读取后再试'
+      : candidate?.statusCode === 400 && !/[\u3400-\u9fff]/.test(rawMessage)
+        ? '当前修改不符合机会所处的业务状态'
+        : rawMessage
+
   return {
     code,
-    message: typeof candidate?.message === 'string' ? candidate.message : '聊天任务执行失败',
+    message,
     retryable: typeof candidate?.retryable === 'boolean' ? candidate.retryable : code !== 'cancelled',
   }
+}
+
+function toFailureNotice(error: unknown, continuation?: ChatRunContinuation) {
+  if (!continuation) return '当前任务执行失败，请稍后再试'
+
+  const candidate = error as { message?: unknown; statusCode?: unknown } | null
+  const message = typeof candidate?.message === 'string' ? candidate.message.trim() : ''
+  const containsChinese = /[\u3400-\u9fff]/.test(message)
+
+  if (candidate?.statusCode === 409) {
+    return `当前修改失败：${containsChinese ? message : '机会信息已发生变化，请重新读取后再试'}`
+  }
+  if (candidate?.statusCode === 400) {
+    return `当前修改失败：${containsChinese ? message : '当前修改不符合机会所处的业务状态'}`
+  }
+
+  return '当前修改失败：数据库写入未完成，请稍后重试'
 }
 
 function toEventPayload(event: ModelProviderStreamEvent): ChatJsonObject {
@@ -141,8 +166,19 @@ function prependTextSectionBreak(existingText: string, nextText: string) {
 }
 
 function readContinuationLeadingText(continuation?: ChatRunContinuation) {
-  const pendingAssistantMessage = continuation?.checkpoint.messages.at(-1)
-  return pendingAssistantMessage?.role === 'assistant' ? pendingAssistantMessage.content : ''
+  const messages = continuation?.checkpoint.messages ?? []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role === 'assistant' && message.toolCalls?.length) return message.content
+  }
+  return ''
+}
+
+function readContinuationToolActionIds(continuation?: ChatRunContinuation) {
+  if (!continuation) return []
+  return continuation.checkpoint.toolActionIds?.length
+    ? [...continuation.checkpoint.toolActionIds]
+    : [continuation.checkpoint.toolActionId]
 }
 
 /**
@@ -338,6 +374,7 @@ export async function executeChatRun(
   let streamedText = readContinuationLeadingText(input.continuation)
   let shouldSeparateNextText = Boolean(streamedText.trim())
   const continuationToolActionId = input.continuation?.checkpoint.toolActionId ?? null
+  const continuationToolActionIds = readContinuationToolActionIds(input.continuation)
 
   const runtimeInput: AgentRuntimeInput = {
     modelConnection: input.modelConnection,
@@ -460,8 +497,8 @@ export async function executeChatRun(
     const messageParts = toChatMessageParts(
       finalText,
       result.toolResults,
-      continuationToolActionId
-        ? { toolActionId: continuationToolActionId, leadingText: readContinuationLeadingText(input.continuation) }
+      result.toolActionIds.length > 0
+        ? { toolActionIds: result.toolActionIds, leadingText: readContinuationLeadingText(input.continuation) }
         : undefined,
     )
 
@@ -516,8 +553,8 @@ export async function executeChatRun(
         const cancelledMessageParts = toChatMessageParts(
           cancelledMessageText,
           [],
-          continuationToolActionId
-            ? { toolActionId: continuationToolActionId, leadingText: readContinuationLeadingText(input.continuation) }
+          continuationToolActionIds.length > 0
+            ? { toolActionIds: continuationToolActionIds, leadingText: readContinuationLeadingText(input.continuation) }
             : undefined,
         )
         const partialMessage = await dependencies.persistence.appendAssistantMessage({
@@ -548,7 +585,7 @@ export async function executeChatRun(
         })
         await appendEvent('run_cancelled', failure)
       } else {
-        const failureNotice = '当前任务执行失败，请稍后再试'
+        const failureNotice = toFailureNotice(error, input.continuation)
         const failureMessageText = streamedText.trim() ? `${streamedText.trimEnd()}\n\n${failureNotice}` : failureNotice
         const failureMessage = await dependencies.persistence.appendAssistantMessage({
           userId: input.userId,
@@ -562,9 +599,9 @@ export async function executeChatRun(
             parts: toChatMessageParts(
               failureMessageText,
               [],
-              continuationToolActionId
+              continuationToolActionIds.length > 0
                 ? {
-                    toolActionId: continuationToolActionId,
+                    toolActionIds: continuationToolActionIds,
                     leadingText: readContinuationLeadingText(input.continuation),
                   }
                 : undefined,

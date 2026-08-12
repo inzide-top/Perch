@@ -131,7 +131,7 @@ watch(
 
     <div
       v-if="isOpen"
-      class="app-panel absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden shadow-xl"
+      class="app-panel absolute left-0 top-[calc(100%+0.5rem)] z-30 w-[min(37.5rem,calc(100vw-2rem))] overflow-hidden shadow-xl"
       @mousedown.stop
       @click.stop
       @wheel.stop

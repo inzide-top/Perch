@@ -36,6 +36,9 @@ function createEntry(overrides: Partial<AgentRunDebugEntry> = {}): AgentRunDebug
     reviewDocumentId: null,
     reviewSourceType: null,
     reviewDocumentStatus: null,
+    resumePdfImportTaskId: null,
+    resumePdfFileName: null,
+    resumePdfImportStatus: null,
     ...overrides,
   }
 }
@@ -74,4 +77,29 @@ test('模拟面试回答调试记录保留 Session、Turn 和题次上下文', (
   assert.equal(item.interviewTurnId, '00000000-0000-4000-8000-000000000005')
   assert.equal(item.turnSequenceNumber, 3)
   assert.equal(item.mainQuestionNumber, 2)
+})
+
+test('PDF 简历识别调试记录保留任务和文件上下文', () => {
+  const entry = createEntry()
+  const item = toAgentRunDebugItem(
+    createEntry({
+      run: {
+        ...entry.run,
+        workflowType: 'resume_pdf_import',
+        analysisId: null,
+        operationKey: 'resume_pdf_import:00000000-0000-4000-8000-000000000006',
+      },
+      opportunityId: null,
+      company: null,
+      jobTitle: null,
+      resumePdfImportTaskId: '00000000-0000-4000-8000-000000000006',
+      resumePdfFileName: '张晨-前端工程师.pdf',
+      resumePdfImportStatus: 'processing',
+    }),
+  )
+
+  assert.equal(item.workflowType, 'resume_pdf_import')
+  assert.equal(item.resumePdfImportTaskId, '00000000-0000-4000-8000-000000000006')
+  assert.equal(item.resumePdfFileName, '张晨-前端工程师.pdf')
+  assert.equal(item.resumePdfImportStatus, 'processing')
 })

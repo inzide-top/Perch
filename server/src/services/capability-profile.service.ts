@@ -15,6 +15,12 @@ import {
 import { resumeRepository, type ResumeRecord } from '../repositories/resume.repository'
 import { ResumeNotFoundError } from './resume.service'
 import { getCurrentUserId } from '../context/current-user'
+import {
+  capabilityJdSignalRepository,
+  type CapabilityJdSignalEmbeddingSource,
+} from '../repositories/capability-jd-signal.repository'
+import { buildCapabilityJdOverview } from './capability-jd-theme'
+import { getConfiguredEmbeddingAdapter } from './retrieval/embedding-environment'
 
 function hasText(value: string | undefined | null) {
   return Boolean(value?.trim())
@@ -99,6 +105,7 @@ export type CapabilityProfileBuildInput = {
   resume: ResumeRecord
   currentVersion: NonNullable<Awaited<ReturnType<typeof resumeRepository.findVersionById>>>
   analyses: CapabilityJobAnalysisRecord[]
+  jdSignalEmbeddings?: CapabilityJdSignalEmbeddingSource[]
   interviewEvidence: CapabilityInterviewRecord[]
   generatedAt?: string
 }
@@ -109,6 +116,11 @@ export function buildCapabilityProfile(input: CapabilityProfileBuildInput): Capa
     .map((record) => toJdSignal(record, input.currentVersion.id))
     .filter((signal): signal is CapabilityJdSignal => signal !== null)
   const interviewSessions = input.interviewEvidence.map((record) => toInterviewSession(record, input.currentVersion.id))
+  const jdOverview = buildCapabilityJdOverview({
+    records: input.jdSignalEmbeddings ?? [],
+    analyzedOpportunityIds: jdSignals.map((signal) => signal.opportunityId),
+    currentVersionId: input.currentVersion.id,
+  })
 
   const interviewOverview = buildDashboardOverview({
     opportunities: [],
@@ -151,6 +163,7 @@ export function buildCapabilityProfile(input: CapabilityProfileBuildInput): Capa
       failedJdAnalyses: input.analyses.filter((record) => record.status === 'failed').length,
       simulatedSessions: interviewSessions.length,
     },
+    jdOverview,
     jdSignals,
     interview: {
       strengths: interviewOverview.ability.strengths,
@@ -189,6 +202,13 @@ export async function getCapabilityProfileForUser(userId: string, resumeId?: str
         failedJdAnalyses: 0,
         simulatedSessions: 0,
       },
+      jdOverview: {
+        indexingStatus: 'ready',
+        analyzedOpportunityCount: 0,
+        indexedOpportunityCount: 0,
+        strengthThemes: [],
+        gapThemes: [],
+      },
       jdSignals: [],
       interview: {
         strengths: [],
@@ -202,15 +222,26 @@ export async function getCapabilityProfileForUser(userId: string, resumeId?: str
   const currentVersion = await resumeRepository.findVersionById(resume.currentVersionId)
   if (!currentVersion) throw new Error(`Current version ${resume.currentVersionId} not found`)
 
-  const [analyses, interviewEvidence] = await Promise.all([
+  let embeddingModel: string | null = null
+  try {
+    embeddingModel = getConfiguredEmbeddingAdapter()?.modelName ?? null
+  } catch (error) {
+    console.error('Capability profile cannot load JD signal embeddings because configuration is invalid', error)
+  }
+
+  const [analyses, interviewEvidence, jdSignalEmbeddings] = await Promise.all([
     capabilityProfileRepository.findJobAnalysesByResumeId(userId, resume.id),
     capabilityProfileRepository.findInterviewEvidenceByResumeId(userId, resume.id),
+    embeddingModel
+      ? capabilityJdSignalRepository.findSignalsByResumeId({ userId, resumeId: resume.id, embeddingModel })
+      : Promise.resolve([]),
   ])
 
   return buildCapabilityProfile({
     resume,
     currentVersion,
     analyses,
+    jdSignalEmbeddings,
     interviewEvidence,
   })
 }

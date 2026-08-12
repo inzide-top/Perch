@@ -118,7 +118,7 @@ export const chatOpportunitySearchResultPartSchema = z
             jobTitle: requiredText.max(200),
             status: opportunityStatusSchema,
             statusLabel: requiredText.max(40),
-            intentionLevel: opportunityIntentionLevelSchema,
+            intentionLevel: opportunityIntentionLevelSchema.nullable(),
             industry: z.string().trim().max(100),
             address: z.array(z.string().trim().max(100)).max(10),
             updatedAt: requiredText.max(80),
@@ -250,6 +250,21 @@ export const chatOpportunityStatusTransitionPresentationSchema = z
     direction: z.enum(['forward', 'backward', 'same']),
     enableWrittenTest: z.boolean(),
     warning: z.string().trim().max(300).nullable(),
+  })
+  .strict()
+
+/** 终止是高风险写操作：用户可编辑原因，也可留空后直接确认。 */
+export const chatOpportunityTerminationInputPresentationSchema = z
+  .object({
+    kind: z.literal('opportunity_termination_input'),
+    title: requiredText.max(80),
+    opportunityId: z.string().uuid(),
+    company: requiredText.max(200),
+    jobTitle: requiredText.max(200),
+    fromStatus: opportunityStatusSchema.exclude(['closed']),
+    fromStatusLabel: requiredText.max(40),
+    values: z.object({ reasonNote: z.string().trim().max(1_000) }).strict(),
+    warning: requiredText.max(300),
   })
   .strict()
 
@@ -398,7 +413,7 @@ export const chatOpportunityTargetInputPresentationSchema = z
             jobTitle: requiredText.max(200),
             status: opportunityStatusSchema,
             statusLabel: requiredText.max(40),
-            intentionLevel: opportunityIntentionLevelSchema,
+            intentionLevel: opportunityIntentionLevelSchema.nullable(),
             updatedAt: requiredText.max(80),
           })
           .strict(),
@@ -438,6 +453,7 @@ export const chatToolInputPresentationSchema = z.discriminatedUnion('kind', [
   chatInterviewScheduleInputPresentationSchema,
   chatMockInterviewInputPresentationSchema,
   chatReviewInputPresentationSchema,
+  chatOpportunityTerminationInputPresentationSchema,
 ])
 
 /** SSE confirmation_requested 和历史 ToolAction 共用的机会确认卡协议。 */
@@ -523,6 +539,9 @@ export type ChatOpportunityProfileBatchChangePresentation = z.output<
 >
 export type ChatOpportunityStatusTransitionPresentation = z.output<
   typeof chatOpportunityStatusTransitionPresentationSchema
+>
+export type ChatOpportunityTerminationInputPresentation = z.output<
+  typeof chatOpportunityTerminationInputPresentationSchema
 >
 export type ChatInterviewScheduleInputPresentation = z.output<typeof chatInterviewScheduleInputPresentationSchema>
 export type ChatInterviewScheduleCreatePresentation = z.output<typeof chatInterviewScheduleCreatePresentationSchema>

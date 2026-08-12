@@ -3,9 +3,18 @@ import { and, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { resumePdfImportTasks } from '../db/schema'
 import { getCurrentUserId } from '../context/current-user'
+import { agentRunRepository } from '../repositories/agent-run.repository'
 import { withBackgroundTaskCapacity } from './background-task.service'
-import { extractSelectablePdfText, ResumePdfImportError, structureResumePdfText } from './resume-pdf-import.service'
-import type { ModelConnection } from './ai/model-client'
+import {
+  extractSelectablePdfText,
+  ResumePdfImportError,
+  resumePdfImportPromptVersion,
+  ResumePdfStructuredOutputError,
+  structureResumePdfText,
+  type ResumePdfImportAttemptLifecycle,
+} from './resume-pdf-import.service'
+import { ModelRequestError, type ModelConnection } from './ai/model-client'
+import type { AgentRunError, AgentTokenUsage } from '@/types/opportunity'
 import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
 
 const ACTIVE_TASK_STALE_AFTER_MS = 20 * 60 * 1000
@@ -14,6 +23,7 @@ function toPublicTask(task: typeof resumePdfImportTasks.$inferSelect): ResumePdf
   return {
     id: task.id,
     status: task.status,
+    currentAttempt: task.currentAttempt,
     fileName: task.fileName,
     result: task.result,
     error: task.error,
@@ -24,6 +34,10 @@ function toPublicTask(task: typeof resumePdfImportTasks.$inferSelect): ResumePdf
 }
 
 function toTaskError(error: unknown) {
+  if (error instanceof ResumePdfStructuredOutputError) {
+    return { code: error.code, message: error.message, retryable: true }
+  }
+
   if (error instanceof ResumePdfImportError) {
     return {
       code: error.statusCode === 402 ? 'model_quota_exhausted' : 'resume_pdf_import_failed',
@@ -36,6 +50,107 @@ function toTaskError(error: unknown) {
     code: 'resume_pdf_import_failed',
     message: error instanceof Error ? error.message : 'PDF 简历识别失败，请稍后重试',
     retryable: true,
+  }
+}
+
+function toAgentRunError(error: unknown): AgentRunError {
+  if (error instanceof ResumePdfStructuredOutputError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      validationIssues: error.validationIssues,
+    }
+  }
+
+  if (error instanceof ModelRequestError) {
+    return { code: error.code, message: error.message, retryable: error.retryable }
+  }
+
+  return {
+    code: 'unknown',
+    message: error instanceof Error ? error.message : 'PDF 简历识别发生未知错误',
+    retryable: false,
+  }
+}
+
+function getAttemptRawOutput(error: unknown) {
+  if (error instanceof ResumePdfStructuredOutputError) return error.rawOutput
+  if (error instanceof ModelRequestError) return error.rawOutput
+  return null
+}
+
+function getAttemptTokenUsage(error: unknown): AgentTokenUsage | null {
+  if (error instanceof ResumePdfStructuredOutputError) return error.tokenUsage
+  if (error instanceof ModelRequestError) return error.tokenUsage
+  return null
+}
+
+function createAttemptLifecycle(input: {
+  taskId: string
+  userId: string
+  modelConnection: ModelConnection
+}): ResumePdfImportAttemptLifecycle {
+  const runStates = new Map<number, { runId: string; startedAtMs: number }>()
+  const operationKey = `resume_pdf_import:${input.taskId}`
+
+  return {
+    async onAttemptStarted(context) {
+      const attemptNumber = (await agentRunRepository.findLatestAttemptNumber(operationKey)) + 1
+      const runId = crypto.randomUUID()
+      const startedAt = new Date().toISOString()
+      const run = await agentRunRepository.createResumePdfImportRun({
+        id: runId,
+        workflowType: 'resume_pdf_import',
+        resumePdfImportTaskId: input.taskId,
+        operationKey,
+        attemptNumber,
+        status: 'pending',
+        modelName: input.modelConnection.modelName,
+        promptVersion: resumePdfImportPromptVersion,
+        input: context.input,
+        rawOutput: null,
+        parsedOutput: null,
+        error: null,
+        durationMs: null,
+        tokenUsage: null,
+        startedAt,
+        finishedAt: null,
+      })
+      if (!run) throw new Error('PDF 简历识别 AgentRun 创建失败')
+      await agentRunRepository.markResumePdfImportRunProcessing(run.id, startedAt)
+      await db
+        .update(resumePdfImportTasks)
+        .set({ currentAttempt: attemptNumber, updatedAt: startedAt })
+        .where(and(eq(resumePdfImportTasks.id, input.taskId), eq(resumePdfImportTasks.userId, input.userId)))
+      runStates.set(context.attemptNumber, { runId: run.id, startedAtMs: Date.now() })
+    },
+    async onAttemptCompleted(context, result) {
+      const state = runStates.get(context.attemptNumber)
+      if (!state) return
+
+      await agentRunRepository.completeResumePdfImportRun({
+        runId: state.runId,
+        rawOutput: result.rawOutput,
+        parsedOutput: result.parsedOutput,
+        tokenUsage: result.tokenUsage,
+        durationMs: Date.now() - state.startedAtMs,
+        finishedAt: new Date().toISOString(),
+      })
+    },
+    async onAttemptFailed(context, error) {
+      const state = runStates.get(context.attemptNumber)
+      if (!state) return
+
+      await agentRunRepository.failResumePdfImportRun({
+        runId: state.runId,
+        error: toAgentRunError(error),
+        rawOutput: getAttemptRawOutput(error),
+        tokenUsage: getAttemptTokenUsage(error),
+        durationMs: Date.now() - state.startedAtMs,
+        finishedAt: new Date().toISOString(),
+      })
+    },
   }
 }
 
@@ -96,11 +211,21 @@ async function runResumePdfImportTask(input: {
     .where(and(eq(resumePdfImportTasks.id, input.taskId), eq(resumePdfImportTasks.userId, input.userId)))
 
   try {
-    const result = await structureResumePdfText({
-      fileName: input.fileName,
-      extracted: input.extracted,
-      modelConnection: input.modelConnection,
-    })
+    const result = await structureResumePdfText(
+      {
+        fileName: input.fileName,
+        extracted: input.extracted,
+        modelConnection: input.modelConnection,
+      },
+      {
+        operationKey: `resume_pdf_import:${input.taskId}`,
+        lifecycle: createAttemptLifecycle({
+          taskId: input.taskId,
+          userId: input.userId,
+          modelConnection: input.modelConnection,
+        }),
+      },
+    )
     const completedAt = new Date().toISOString()
     await db
       .update(resumePdfImportTasks)
@@ -144,6 +269,7 @@ export async function createResumePdfImportTask(input: {
         result: null,
         error: null,
         modelName: input.modelConnection.modelName,
+        currentAttempt: 0,
         createdAt: now,
         updatedAt: now,
         completedAt: null,

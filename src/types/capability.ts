@@ -44,6 +44,38 @@ export type CapabilityJdSignal = {
   suggestions: ResumeSuggestion[]
 }
 
+export type CapabilityJdThemeSource = {
+  opportunityId: string
+  company: string
+  jobTitle: string
+  resumeVersionId: string
+  versionNumber: number
+  isCurrentVersion: boolean
+  originalTitle: string
+  reason: string
+}
+
+export type CapabilityJdTheme = {
+  themeKey: string
+  label: string
+  type: 'strength' | 'gap'
+  opportunityCount: number
+  totalOpportunityCount: number
+  frequencyRatio: number
+  currentVersionCount: number
+  historicalVersionCount: number
+  needsRevalidation: boolean
+  sources: CapabilityJdThemeSource[]
+}
+
+export type CapabilityJdOverview = {
+  indexingStatus: 'ready' | 'partial' | 'indexing'
+  analyzedOpportunityCount: number
+  indexedOpportunityCount: number
+  strengthThemes: CapabilityJdTheme[]
+  gapThemes: CapabilityJdTheme[]
+}
+
 export type CapabilityInterviewSession = {
   sessionId: string
   opportunityId: string
@@ -73,6 +105,7 @@ export type CapabilityProfile = {
     failedJdAnalyses: number
     simulatedSessions: number
   }
+  jdOverview: CapabilityJdOverview
   jdSignals: CapabilityJdSignal[]
   interview: {
     strengths: DashboardAbilityInsight[]

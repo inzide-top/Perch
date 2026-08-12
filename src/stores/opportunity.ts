@@ -456,11 +456,49 @@ export const useOpportunityStore = defineStore('opportunity', {
     async deleteOpportunity(opportunityId: string) {
       const result = await opportunityApi.deleteOpportunity(opportunityId)
 
-      useBackgroundTaskStore().unregister({ type: 'job_analysis', opportunityId: result.id })
-      this.opportunities = this.opportunities.filter((opportunity) => opportunity.id !== result.id)
-      this.analysisTasks = this.analysisTasks.filter((task) => task.opportunityId !== result.id)
-      this.analyses = this.analyses.filter((analysis) => analysis.opportunityId !== result.id)
-      delete this.opportunityDetailCache[result.id]
+      this.removeDeletedOpportunityFromState(result.id)
+
+      return result
+    },
+
+    async archiveInterviewsAndDeleteOpportunity(opportunityId: string) {
+      const result = await opportunityApi.archiveInterviewsAndDeleteOpportunity(opportunityId)
+
+      this.removeDeletedOpportunityFromState(result.id)
+
+      return result
+    },
+
+    removeDeletedOpportunityFromState(opportunityId: string) {
+      useBackgroundTaskStore().unregister({ type: 'job_analysis', opportunityId })
+      this.opportunities = this.opportunities.filter((opportunity) => opportunity.id !== opportunityId)
+      this.analysisTasks = this.analysisTasks.filter((task) => task.opportunityId !== opportunityId)
+      this.analyses = this.analyses.filter((analysis) => analysis.opportunityId !== opportunityId)
+      delete this.opportunityDetailCache[opportunityId]
+
+      const currentIds = resolveCurrentIds({
+        opportunities: this.opportunities,
+        analyses: this.analyses,
+        currentOpportunityId: this.currentOpportunityId,
+        currentAnalysisId: this.currentAnalysisId,
+      })
+      this.currentOpportunityId = currentIds.currentOpportunityId
+      this.currentAnalysisId = currentIds.currentAnalysisId
+      this.opportunitiesLoadedAt = Date.now()
+      this.persistToStorage()
+    },
+
+    async batchDeleteOpportunities(opportunityIds: string[]) {
+      const result = await opportunityApi.batchDeleteOpportunities(opportunityIds)
+      const deletedIds = new Set(result.deletedIds)
+
+      for (const opportunityId of result.deletedIds) {
+        useBackgroundTaskStore().unregister({ type: 'job_analysis', opportunityId })
+        delete this.opportunityDetailCache[opportunityId]
+      }
+      this.opportunities = this.opportunities.filter((opportunity) => !deletedIds.has(opportunity.id))
+      this.analysisTasks = this.analysisTasks.filter((task) => !deletedIds.has(task.opportunityId))
+      this.analyses = this.analyses.filter((analysis) => !deletedIds.has(analysis.opportunityId))
 
       const currentIds = resolveCurrentIds({
         opportunities: this.opportunities,

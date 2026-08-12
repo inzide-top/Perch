@@ -10,6 +10,7 @@ import {
   createChatConversationInputSchema,
   completeOpportunityImportItemsInputSchema,
   sendChatMessageInputSchema,
+  type ChatBootstrapQuery,
   type ListChatConversationsQuery,
   updateChatConversationInputSchema,
   type ChatRunEventsQuery,
@@ -140,6 +141,10 @@ function encodeConversationCursor(conversation: { updatedAt: string; id: string 
 
 export async function getChatConversations(query: ListChatConversationsQuery) {
   const userId = await getCurrentUserId()
+  return getChatConversationPage(userId, query)
+}
+
+async function getChatConversationPage(userId: string, query: ListChatConversationsQuery) {
   const result = await chatRepository.listConversationsByUserId({ userId, ...query })
   const hasMore = result.rows.length > query.limit
   const pageRows = result.rows.slice(0, query.limit)
@@ -150,6 +155,57 @@ export async function getChatConversations(query: ListChatConversationsQuery) {
     total: result.total,
     hasMore,
     nextCursor: hasMore && pageRows.length > 0 ? encodeConversationCursor(pageRows[pageRows.length - 1]!) : null,
+  }
+}
+
+async function getChatConversationDetailForUser(conversationId: string, userId: string) {
+  const conversation = await chatRepository.findConversationById(conversationId, userId)
+  if (!conversation) throw new ChatRepositoryNotFoundError('聊天会话不存在')
+
+  const [messages, toolActions] = await Promise.all([
+    chatRepository.listMessagesByConversationId(conversationId, userId),
+    chatRepository.listToolActionsByConversationId(conversationId, userId),
+  ])
+  return {
+    conversation: toPublicConversation(conversation),
+    messages,
+    toolActions,
+  }
+}
+
+export async function getChatBootstrap(query: ChatBootstrapQuery) {
+  const userId = await getCurrentUserId()
+  const conversations = await getChatConversationPage(userId, {
+    limit: query.limit,
+    search: undefined,
+    archived: 'active',
+  })
+
+  const requestedConversation = query.selectedConversationId
+    ? await chatRepository.findConversationById(query.selectedConversationId, userId)
+    : null
+  const selectedConversationSummary =
+    requestedConversation && !requestedConversation.archivedAt
+      ? toPublicConversation(requestedConversation)
+      : (conversations.items.find((item) => item.scopeType === 'global') ?? conversations.items[0] ?? null)
+
+  if (!selectedConversationSummary) {
+    return { conversations, selectedConversation: null, activeRun: null }
+  }
+
+  if (!conversations.items.some((item) => item.id === selectedConversationSummary.id)) {
+    conversations.items.unshift(selectedConversationSummary)
+  }
+
+  const [selectedConversation, activeRun] = await Promise.all([
+    getChatConversationDetailForUser(selectedConversationSummary.id, userId),
+    chatRepository.findLatestActiveRunByConversationId(selectedConversationSummary.id, userId),
+  ])
+
+  return {
+    conversations,
+    selectedConversation,
+    activeRun: activeRun ? { ...toChatRunSnapshot(activeRun), conversationId: activeRun.conversationId } : null,
   }
 }
 
@@ -176,18 +232,7 @@ export async function deleteChatConversation(conversationId: string) {
 
 export async function getChatConversation(conversationId: string) {
   const userId = await getCurrentUserId()
-  const conversation = await chatRepository.findConversationById(conversationId, userId)
-  if (!conversation) throw new ChatRepositoryNotFoundError('聊天会话不存在')
-
-  const [messages, toolActions] = await Promise.all([
-    chatRepository.listMessagesByConversationId(conversationId, userId),
-    chatRepository.listToolActionsByConversationId(conversationId, userId),
-  ])
-  return {
-    conversation: toPublicConversation(conversation),
-    messages,
-    toolActions,
-  }
+  return getChatConversationDetailForUser(conversationId, userId)
 }
 
 export async function completeChatOpportunityImportItems(messageId: string, input: unknown) {
@@ -600,9 +645,11 @@ export async function submitChatCommand(runId: string, input: unknown) {
             ? { cancelledMessage: '已取消创建模拟面试。' }
             : parsed.payload.reason === 'review_input_cancelled'
               ? { cancelledMessage: '已取消填写复盘。' }
-              : parsed.payload.reason === 'opportunity_target_cancelled'
-                ? { cancelledMessage: '已取消选择机会。' }
-                : {}),
+              : parsed.payload.reason === 'opportunity_termination_input_cancelled'
+                ? { cancelledMessage: '已取消终止机会流程。' }
+                : parsed.payload.reason === 'opportunity_target_cancelled'
+                  ? { cancelledMessage: '已取消选择机会。' }
+                  : {}),
         commandRecordId: result.command.id,
         updatedAt: new Date().toISOString(),
       })

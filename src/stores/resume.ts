@@ -293,6 +293,7 @@ export const useResumeStore = defineStore('resume', {
 
       this.currentResumeId = result.resume.id
       this.currentVersionId = result.version.id
+      this.persistToStorage()
     },
 
     async deleteResume(resumeId: string) {

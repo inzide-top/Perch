@@ -96,3 +96,21 @@ test('fingerprint is stable for the same deterministic input and changes when ev
   assert.equal(first.currentFingerprint, same.currentFingerprint)
   assert.notEqual(first.currentFingerprint, changed.currentFingerprint)
 })
+
+test('未设置意向等级不会被行动策略误写成 null 级意向', () => {
+  const result = buildActionStrategy({
+    opportunities: [
+      opportunity({
+        status: 'interviewing',
+        intentionLevel: null,
+        statusHistory: [{ toStatus: 'interviewing', createdAt: '2026-07-31T09:00:00.000Z' }],
+      }),
+    ],
+    now: new Date('2026-08-06T09:00:00.000Z'),
+  })
+  const action = result.actions.find((item) => item.type === 'follow_up')
+
+  assert.ok(action)
+  assert.match(action.reason, /意向等级未设置/)
+  assert.doesNotMatch(action.reason, /null 级意向/)
+})

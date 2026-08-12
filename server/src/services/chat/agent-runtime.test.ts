@@ -158,6 +158,151 @@ test('需要确认的工具会暂停，并可在确认后恢复', async () => {
   assert.equal(executeCount.value, 1)
 })
 
+test('同一次模型返回多个写工具时逐张确认，不会丢掉后续操作', async () => {
+  const adapter = new FakeAdapter([
+    [
+      { type: 'text_delta', text: '我先帮你核对这两项修改。' },
+      { type: 'tool_call', callId: 'call_profile', name: 'update_profile', arguments: { value: 'A' } },
+      { type: 'tool_call', callId: 'call_status', name: 'update_status', arguments: { value: 'interviewing' } },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      { type: 'text_delta', text: '两项修改都已执行完成。' },
+      { type: 'completed', finishReason: 'stop', tokenUsage: null },
+    ],
+  ])
+  const executions: string[] = []
+  const createWriteTool = (name: string) => ({
+    name,
+    version: '1',
+    description: name,
+    inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+    inputValidator: z.object({ value: z.string().min(1) }).strict(),
+    requiresConfirmation: true,
+    execute: async (input: Record<string, unknown>) => {
+      executions.push(name)
+      return { value: input.value }
+    },
+  })
+  const runtime = new AgentRuntime(adapter)
+  const input = createInput(
+    new AgentToolRegistry([createWriteTool('update_profile'), createWriteTool('update_status')]),
+  )
+
+  const firstWaiting = await runtime.run(input)
+  assert.equal(firstWaiting.status, 'waiting_confirmation')
+  if (firstWaiting.status !== 'waiting_confirmation') return
+  assert.equal(firstWaiting.checkpoint.pendingCall.name, 'update_profile')
+  assert.deepEqual(
+    firstWaiting.checkpoint.remainingCalls?.map((call) => call.name),
+    ['update_status'],
+  )
+  assert.equal(adapter.inputs.length, 1)
+
+  const secondWaiting = await runtime.resume(input, firstWaiting.checkpoint, 'approved')
+  assert.equal(secondWaiting.status, 'waiting_confirmation')
+  if (secondWaiting.status !== 'waiting_confirmation') return
+  assert.equal(secondWaiting.checkpoint.pendingCall.name, 'update_status')
+  assert.equal(secondWaiting.checkpoint.toolActionIds?.length, 2)
+  assert.deepEqual(executions, ['update_profile'])
+  // 第一项通过后直接展示第二张卡，不允许模型提前总结。
+  assert.equal(adapter.inputs.length, 1)
+
+  const completed = await runtime.resume(input, secondWaiting.checkpoint, 'approved')
+  assert.equal(completed.status, 'completed')
+  if (completed.status !== 'completed') return
+  assert.deepEqual(executions, ['update_profile', 'update_status'])
+  assert.equal(completed.toolActionIds.length, 2)
+  assert.equal(adapter.inputs.length, 2)
+  assert.deepEqual(
+    adapter.inputs[1]?.messages.slice(-3).map((message) => message.role === 'tool' && message.toolCallId),
+    [false, 'call_profile', 'call_status'],
+  )
+})
+
+test('同批次前一项写入失败时记录失败并继续确认后续独立操作', async () => {
+  const adapter = new FakeAdapter([
+    [
+      { type: 'tool_call', callId: 'call-failed-profile', name: 'update_profile', arguments: { value: 'A' } },
+      { type: 'tool_call', callId: 'call-next-status', name: 'update_status', arguments: { value: 'interviewing' } },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      { type: 'text_delta', text: '意向修改失败，阶段修改成功。' },
+      { type: 'completed', finishReason: 'stop', tokenUsage: null },
+    ],
+  ])
+  const failedCalls: string[] = []
+  let statusExecuteCount = 0
+  const createWriteTool = (
+    name: string,
+    execute: (input: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  ) => ({
+    name,
+    version: '1',
+    description: name,
+    inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+    inputValidator: z.object({ value: z.string().min(1) }).strict(),
+    requiresConfirmation: true,
+    execute,
+  })
+  const registry = new AgentToolRegistry([
+    createWriteTool('update_profile', async () => {
+      throw new Error('机会资料版本已变化')
+    }),
+    createWriteTool('update_status', async (input) => {
+      statusExecuteCount += 1
+      return { value: input.value }
+    }),
+  ])
+  const runtime = new AgentRuntime(adapter)
+  const input: AgentRuntimeInput = {
+    ...createInput(registry),
+    onToolFailed: ({ call }) => {
+      failedCalls.push(call.callId)
+    },
+  }
+
+  const firstWaiting = await runtime.run(input)
+  assert.equal(firstWaiting.status, 'waiting_confirmation')
+  if (firstWaiting.status !== 'waiting_confirmation') return
+
+  const secondWaiting = await runtime.resume(input, firstWaiting.checkpoint, 'approved')
+  assert.equal(secondWaiting.status, 'waiting_confirmation')
+  if (secondWaiting.status !== 'waiting_confirmation') return
+  assert.equal(secondWaiting.checkpoint.pendingCall.callId, 'call-next-status')
+  assert.deepEqual(failedCalls, ['call-failed-profile'])
+
+  const completed = await runtime.resume(input, secondWaiting.checkpoint, 'approved')
+  assert.equal(completed.status, 'completed')
+  if (completed.status !== 'completed') return
+  assert.equal(statusExecuteCount, 1)
+  assert.equal(completed.text, '意向修改失败，阶段修改成功。')
+  assert.equal(adapter.inputs.length, 2)
+  assert.deepEqual(
+    adapter.inputs[1]?.messages
+      .slice(-3)
+      .map((message) =>
+        message.role === 'tool' ? { callId: message.toolCallId, content: message.content } : { role: message.role },
+      ),
+    [
+      { role: 'assistant' },
+      {
+        callId: 'call-failed-profile',
+        content: JSON.stringify({
+          status: 'error',
+          error: {
+            code: 'tool_execution_failed',
+            message: '工具 update_profile 执行失败，本项修改未完成。',
+          },
+          recoveryInstruction: '不要重试或声称本项已完成；继续处理同一次请求中尚未执行的其他独立操作。',
+        }),
+      },
+      { callId: 'call-next-status', content: JSON.stringify({ value: 'interviewing' }) },
+    ],
+  )
+})
+
 test('缺少工具参数时先等待用户补充，再进入确认并沿用同一个 ToolAction', async () => {
   const adapter = new FakeAdapter([
     [

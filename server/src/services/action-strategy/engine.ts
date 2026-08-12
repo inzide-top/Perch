@@ -22,11 +22,15 @@ const priorityRank: Record<StrategyPriority, number> = {
   low: 3,
 }
 
-const intentionRank: Record<StrategyOpportunityContext['intentionLevel'], number> = {
+const intentionRank: Record<NonNullable<StrategyOpportunityContext['intentionLevel']>, number> = {
   S: 0,
   A: 1,
   B: 2,
   C: 3,
+}
+
+function getIntentionRank(intentionLevel: StrategyOpportunityContext['intentionLevel']) {
+  return intentionLevel ? intentionRank[intentionLevel] : 4
 }
 
 const activeOpportunityStatuses: JobOpportunityStatus[] = ['applied', 'written_test', 'interviewing', 'oc']
@@ -152,7 +156,7 @@ function getOpportunityActions(opportunity: StrategyOpportunityContext, nowMs: n
   const analysis = opportunity.analysis
   const analysisScore = analysis?.status === 'completed' ? analysis.matchScore : null
   const analysisLabel = analysisScore === null ? '尚未有可用匹配度' : `匹配度 ${analysisScore} 分`
-  const intentionLabel = `${opportunity.intentionLevel} 级意向`
+  const intentionLabel = opportunity.intentionLevel ? `${opportunity.intentionLevel} 级意向` : '意向等级未设置'
 
   if (analysis?.status === 'failed') {
     candidates.push({
@@ -265,8 +269,8 @@ function sortCandidates(left: StrategyCandidateInput, right: StrategyCandidateIn
   if (priorityRank[left.priority] !== priorityRank[right.priority]) {
     return priorityRank[left.priority] - priorityRank[right.priority]
   }
-  if (intentionRank[left.intentionLevel] !== intentionRank[right.intentionLevel]) {
-    return intentionRank[left.intentionLevel] - intentionRank[right.intentionLevel]
+  if (getIntentionRank(left.intentionLevel) !== getIntentionRank(right.intentionLevel)) {
+    return getIntentionRank(left.intentionLevel) - getIntentionRank(right.intentionLevel)
   }
   if ((right.matchScore ?? -1) !== (left.matchScore ?? -1)) {
     return (right.matchScore ?? -1) - (left.matchScore ?? -1)
