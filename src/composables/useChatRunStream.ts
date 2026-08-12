@@ -18,6 +18,7 @@ export type ChatToolActivity = {
   status: 'requested' | 'running' | 'completed' | 'failed'
   output?: Record<string, unknown>
   error?: string
+  recoverable?: boolean
 }
 
 export type UseChatRunStreamOptions = {
@@ -76,6 +77,7 @@ function readToolActivity(event: ChatRunEventRecord) {
     callId,
     name,
     status: 'failed' as const,
+    recoverable: event.payload.recoverable === true,
     ...(error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
       ? { error: error.message }
       : {}),
@@ -414,6 +416,10 @@ export function useChatRunStream() {
       return
     }
     if (event.eventType === 'tool_call_completed') {
+      snapshot.value = { ...base, status: 'running', phase: 'calling_model' }
+      return
+    }
+    if (event.eventType === 'tool_call_failed' && event.payload.recoverable === true) {
       snapshot.value = { ...base, status: 'running', phase: 'calling_model' }
       return
     }

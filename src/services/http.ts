@@ -21,7 +21,8 @@ export class ApiRequestError extends Error {
 async function coreRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
 
-  if (options.body !== undefined && options.body !== null && !headers.has('content-type')) {
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+  if (options.body !== undefined && options.body !== null && !isFormData && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
 
@@ -56,6 +57,10 @@ export const request = {
 
   post<T>(path: string, payload?: unknown, options: RequestOptions = {}) {
     return coreRequest<T>(path, withJsonBody('POST', payload, options))
+  },
+
+  postForm<T>(path: string, payload: FormData, options: RequestOptions = {}) {
+    return coreRequest<T>(path, { ...options, method: 'POST', body: payload })
   },
 
   patch<T>(path: string, payload?: unknown, options: RequestOptions = {}) {

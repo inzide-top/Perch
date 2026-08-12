@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { backgroundTaskApi, type BackgroundTaskReference, type BackgroundTaskStatus } from '@/services/background-tasks'
 import type { AnswerDeepEvaluationResult } from '@/shared/interview/schemas'
 import type { AgentRunStatus, JobAnalysisProgress } from '@/types/opportunity'
+import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
 import { isSameBackgroundTaskVersion } from './background-task-version'
 
 export type BackgroundTaskEntry = BackgroundTaskReference & {
@@ -20,6 +21,7 @@ export type BackgroundTaskEntry = BackgroundTaskReference & {
     updatedAt: string | null
     completedAt: string | null
   } | null
+  resumePdfImport: ResumePdfImportTaskRecord | null
   updatedAt: string | null
 }
 
@@ -49,6 +51,7 @@ export const backgroundTaskClientLimits = {
   job_analysis: 5,
   answer_deep_evaluation: 5,
   action_strategy: 1,
+  resume_pdf_import: 2,
   total: 10,
 } as const
 let pollingPromise: Promise<void> | null = null
@@ -60,7 +63,9 @@ function taskKey(reference: BackgroundTaskReference) {
     ? `job_analysis:${reference.opportunityId}`
     : reference.type === 'answer_deep_evaluation'
       ? `answer_deep_evaluation:${reference.sessionId}:${reference.turnId}`
-      : `action_strategy:${reference.snapshotId}`
+      : reference.type === 'action_strategy'
+        ? `action_strategy:${reference.snapshotId}`
+        : `resume_pdf_import:${reference.taskId}`
 }
 
 function isActive(status: BackgroundTaskEntry['status']) {
@@ -90,6 +95,7 @@ function toEntry(status: BackgroundTaskStatus, previous?: BackgroundTaskEntry): 
       analysis: status.analysis,
       evaluation: null,
       strategy: null,
+      resumePdfImport: null,
       updatedAt: status.analysis?.updatedAt ?? null,
     }
   }
@@ -112,22 +118,43 @@ function toEntry(status: BackgroundTaskStatus, previous?: BackgroundTaskEntry): 
           }
         : null,
       strategy: null,
+      resumePdfImport: null,
       updatedAt: status.evaluation?.updatedAt ?? null,
+    }
+  }
+
+  if (status.type === 'action_strategy') {
+    return {
+      type: status.type,
+      snapshotId: status.snapshotId,
+      key: taskKey(status),
+      displayContext: previous?.displayContext ?? null,
+      status: status.strategy?.status ?? 'missing',
+      analysis: null,
+      evaluation: null,
+      strategy: status.strategy
+        ? {
+            error: status.strategy.error,
+            updatedAt: status.strategy.updatedAt,
+            completedAt: status.strategy.completedAt,
+          }
+        : null,
+      resumePdfImport: null,
+      updatedAt: status.strategy?.updatedAt ?? null,
     }
   }
 
   return {
     type: status.type,
-    snapshotId: status.snapshotId,
+    taskId: status.taskId,
     key: taskKey(status),
     displayContext: previous?.displayContext ?? null,
-    status: status.strategy?.status ?? 'missing',
+    status: status.importTask?.status ?? 'missing',
     analysis: null,
     evaluation: null,
-    strategy: status.strategy
-      ? { error: status.strategy.error, updatedAt: status.strategy.updatedAt, completedAt: status.strategy.completedAt }
-      : null,
-    updatedAt: status.strategy?.updatedAt ?? null,
+    strategy: null,
+    resumePdfImport: status.importTask,
+    updatedAt: status.importTask?.updatedAt ?? null,
   }
 }
 
@@ -181,7 +208,9 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
               ? `当前最多同时执行 ${typeLimit} 个 JD 分析任务，请等待已有任务完成。`
               : reference.type === 'answer_deep_evaluation'
                 ? `当前最多同时执行 ${typeLimit} 个深度点评任务，请等待已有任务完成。`
-                : `当前最多同时生成 ${typeLimit} 个行动策略，请等待已有任务完成。`,
+                : reference.type === 'action_strategy'
+                  ? `当前最多同时生成 ${typeLimit} 个行动策略，请等待已有任务完成。`
+                  : `当前最多同时识别 ${typeLimit} 份 PDF 简历，请等待已有任务完成。`,
         }
       }
 
@@ -237,6 +266,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
         analysis: null,
         evaluation: null,
         strategy: null,
+        resumePdfImport: null,
         updatedAt: null,
       }
       this.tasksByKey[key] = entry
@@ -255,6 +285,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
       current.analysis = null
       current.evaluation = null
       current.strategy = null
+      current.resumePdfImport = null
       current.updatedAt = null
       persist(this.$state)
       this.start()
@@ -317,7 +348,9 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
                     ? status.analysis?.status === 'completed'
                     : status.type === 'answer_deep_evaluation'
                       ? status.evaluation?.status === 'completed'
-                      : status.strategy?.status === 'completed'
+                      : status.type === 'action_strategy'
+                        ? status.strategy?.status === 'completed'
+                        : status.importTask?.status === 'completed'
                   : false
 
               if (!reachedCompleted) return status
@@ -331,6 +364,11 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
                 if (status.type === 'answer_deep_evaluation') {
                   const evaluation = await backgroundTaskApi.getCompletedDeepEvaluation(status.sessionId, status.turnId)
                   return { ...status, evaluation }
+                }
+
+                if (status.type === 'resume_pdf_import') {
+                  const importTask = await backgroundTaskApi.getCompletedResumePdfImport(status.taskId)
+                  return { ...status, importTask }
                 }
 
                 return status

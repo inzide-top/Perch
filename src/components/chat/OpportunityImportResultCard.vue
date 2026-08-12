@@ -6,6 +6,7 @@ import type { ChatOpportunityImportResultPart } from '@/shared/chat/schemas'
 
 const props = defineProps<{
   part: ChatOpportunityImportResultPart
+  messageId: string
 }>()
 
 const route = useRoute()
@@ -14,15 +15,22 @@ const reviewStore = useOpportunityImportReviewStore()
 
 const readyItems = computed(() => props.part.items.filter((item) => item.status === 'ready'))
 const failedItems = computed(() => props.part.items.filter((item) => item.status === 'failed'))
+const createdItems = computed(() => readyItems.value.filter((item) => Boolean(getCreatedOpportunityId(item))))
+const pendingReadyItems = computed(() => readyItems.value.filter((item) => !getCreatedOpportunityId(item)))
+
+function getCreatedOpportunityId(item: Extract<ChatOpportunityImportResultPart['items'][number], { status: 'ready' }>) {
+  const itemIndex = props.part.items.indexOf(item)
+  return item.createdOpportunityId ?? reviewStore.createdItemsByMessageId[props.messageId]?.[itemIndex] ?? null
+}
 
 function getReadyTitle(item: Extract<ChatOpportunityImportResultPart['items'][number], { status: 'ready' }>) {
   return [item.preview.company, item.preview.jobTitle].filter(Boolean).join(' · ') || '待补全岗位信息'
 }
 
 async function openReviewWorkbench() {
-  if (readyItems.value.length === 0) return
+  if (pendingReadyItems.value.length === 0) return
 
-  reviewStore.open(props.part)
+  reviewStore.open(props.part, props.messageId)
   if (route.name !== 'opportunities') {
     await router.push({ name: 'opportunities' })
   }
@@ -54,7 +62,13 @@ async function openReviewWorkbench() {
         class="flex min-w-0 items-start gap-2 rounded-xl border border-default bg-[var(--app-surface)] px-3 py-2.5"
       >
         <UIcon
-          :name="item.status === 'ready' ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
+          :name="
+            item.status === 'ready' && getCreatedOpportunityId(item)
+              ? 'i-lucide-badge-check'
+              : item.status === 'ready'
+                ? 'i-lucide-circle-check'
+                : 'i-lucide-circle-alert'
+          "
           class="mt-0.5 size-3.5 shrink-0"
           :class="item.status === 'ready' ? 'text-success' : 'text-error'"
         />
@@ -62,6 +76,7 @@ async function openReviewWorkbench() {
           <template v-if="item.status === 'ready'">
             <p class="truncate text-xs font-medium text-highlighted">{{ getReadyTitle(item) }}</p>
             <p class="mt-1 truncate text-[10px] text-muted">{{ item.sourceLabel }}</p>
+            <p v-if="getCreatedOpportunityId(item)" class="mt-1 text-[10px] leading-4 text-success">已创建到机会列表</p>
             <p v-if="item.preview.missingRequiredFields.length" class="mt-1 text-[10px] leading-4 text-warning">
               仍需补全 {{ item.preview.missingRequiredFields.length }} 个必填字段
             </p>
@@ -75,9 +90,17 @@ async function openReviewWorkbench() {
     </div>
 
     <div class="mt-3 flex items-center justify-between gap-3 border-t border-default pt-3">
-      <p class="text-[10px] leading-4 text-muted">识别结果尚未创建，需审核并补全必填项。</p>
+      <p class="text-[10px] leading-4 text-muted">
+        {{
+          pendingReadyItems.length
+            ? `还有 ${pendingReadyItems.length} 条结果待审核创建。`
+            : createdItems.length
+              ? `已创建 ${createdItems.length} 条机会，该结果现为只读。`
+              : '没有可创建的识别结果。'
+        }}
+      </p>
       <UButton
-        v-if="readyItems.length"
+        v-if="pendingReadyItems.length"
         type="button"
         size="xs"
         color="primary"

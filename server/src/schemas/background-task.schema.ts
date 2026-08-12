@@ -6,6 +6,7 @@ const backgroundTaskReferenceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('job_analysis'), opportunityId: uuidSchema }).strict(),
   z.object({ type: z.literal('answer_deep_evaluation'), sessionId: uuidSchema, turnId: uuidSchema }).strict(),
   z.object({ type: z.literal('action_strategy'), snapshotId: uuidSchema }).strict(),
+  z.object({ type: z.literal('resume_pdf_import'), taskId: uuidSchema }).strict(),
 ])
 
 export const backgroundTaskStatusInputSchema = z

@@ -1,5 +1,13 @@
 import type { Resume, ResumeContent, ResumeVersion, VersionDiffItem } from '@/types/resume'
-import { request } from './http'
+import type { LlmConnectionSettings } from '@/types/settings'
+import { request, type RequestOptions } from './http'
+import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
+
+export type {
+  ResumePdfImportDraft,
+  ResumePdfImportResponse,
+  ResumePdfImportTaskRecord,
+} from '@/shared/resume/pdf-import'
 
 export type CreateResumePayload = {
   title: string
@@ -58,6 +66,23 @@ export const resumeApi = {
 
   createResume(payload: CreateResumePayload) {
     return request.post<CreateResumeResponse>('/resumes', payload)
+  },
+
+  importResumePdf(file: File, modelConnection: LlmConnectionSettings, options: RequestOptions = {}) {
+    const payload = new FormData()
+    payload.append('modelConnection', JSON.stringify(modelConnection))
+    payload.append('file', file, file.name)
+    return request.postForm<ResumePdfImportTaskRecord>('/resumes/import-pdf', payload, options)
+  },
+
+  getResumePdfImportTask(taskId: string) {
+    return request.get<ResumePdfImportTaskRecord>(`/resumes/import-pdf/${encodeURIComponent(taskId)}`)
+  },
+
+  retryResumePdfImportTask(taskId: string, modelConnection: LlmConnectionSettings) {
+    return request.post<ResumePdfImportTaskRecord>(`/resumes/import-pdf/${encodeURIComponent(taskId)}/retry`, {
+      modelConnection,
+    })
   },
 
   saveResumeVersion(resumeId: string, payload: SaveResumeVersionPayload) {

@@ -34,6 +34,31 @@ test('短回答生成一个带问题上下文的稳定分块', () => {
   assert.match(chunks[0]?.contentHash ?? '', /^[a-f0-9]{64}$/)
 })
 
+test('长问题默认保留前 350 字和后 250 字，并省略中间内容', () => {
+  const questionHead = '前'.repeat(350)
+  const questionMiddle = '中'.repeat(400)
+  const questionTail = '后'.repeat(250)
+
+  const chunks = chunkChatMemoryTurn({
+    userText: `${questionHead}${questionMiddle}${questionTail}`,
+    assistantText: '这是回答。',
+  })
+
+  assert.equal(chunks.length, 1)
+  assert.ok(chunks[0]?.content.includes(`用户问题：${questionHead}…${questionTail}`))
+  assert.ok(!chunks[0]?.content.includes(questionMiddle))
+})
+
+test('默认分块扩展到 1600 字后仍为回答保留原有空间', () => {
+  const chunks = chunkChatMemoryTurn({
+    userText: '问题'.repeat(500),
+    assistantText: '回答内容。'.repeat(800),
+  })
+
+  assert.ok(chunks.length > 1)
+  assert.ok(chunks.every((chunk) => chunk.content.length <= 1600))
+})
+
 test('长回答分块后每段都保留问题上下文且不超过最大长度', () => {
   const assistantText = Array.from(
     { length: 20 },

@@ -1,19 +1,31 @@
 import crypto from 'node:crypto'
 import { and, asc, count, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, max, or, type SQL } from 'drizzle-orm'
 import { db } from '../db/client'
-import { chatCommands, chatConversations, chatMessages, chatRunEvents, chatRuns, chatToolActions } from '../db/schema'
+import {
+  chatCommands,
+  chatConversationSummaries,
+  chatConversations,
+  chatMessages,
+  chatRunEvents,
+  chatRuns,
+  chatToolActions,
+} from '../db/schema'
 import type { AgentRunError, AgentTokenUsage } from '@/types/opportunity'
-import type {
-  ChatJsonObject,
-  ChatMessageRole,
-  ChatRunPhase,
-  ChatRunStatus,
-  ChatToolActionStatus,
-  ChatToolUserDecision,
+import {
+  chatMessagePartSchema,
+  type ChatJsonObject,
+  type ChatMessagePart,
+  type ChatMessageRole,
+  type ChatRunPhase,
+  type ChatRunStatus,
+  type ChatToolActionStatus,
+  type ChatToolUserDecision,
 } from '@/shared/chat/schemas'
 import { chatCommandReplayMatches } from './chat-command'
 
 type ChatConversationInsert = typeof chatConversations.$inferInsert
+type ChatConversationSummaryInsert = typeof chatConversationSummaries.$inferInsert
+type ChatConversationSummaryRecord = typeof chatConversationSummaries.$inferSelect
 type ChatMessageInsert = typeof chatMessages.$inferInsert
 type ChatRunInsert = typeof chatRuns.$inferInsert
 type ChatRunEventInsert = typeof chatRunEvents.$inferInsert
@@ -49,6 +61,12 @@ export type UpdateChatConversationTitleIfUnchangedRecord = {
   expectedTitle: string
   title: string
   updatedAt: string
+}
+
+export type SaveChatConversationSummaryRecord = Omit<ChatConversationSummaryInsert, 'revision'> & {
+  userId: string
+  expectedRevision: number | null
+  expectedSummarizedThroughSequence: number
 }
 
 export type ListChatConversationsRecord = {
@@ -392,6 +410,135 @@ export class DrizzleChatRepository {
       .orderBy(asc(chatMessages.sequenceNumber))
 
     return rows.map(({ message }) => message)
+  }
+
+  async findConversationSummary(conversationId: string, userId: string): Promise<ChatConversationSummaryRecord | null> {
+    const [row] = await db
+      .select({ summary: chatConversationSummaries })
+      .from(chatConversationSummaries)
+      .innerJoin(chatConversations, eq(chatConversationSummaries.conversationId, chatConversations.id))
+      .where(and(eq(chatConversationSummaries.conversationId, conversationId), eq(chatConversations.userId, userId)))
+      .limit(1)
+
+    return row?.summary ?? null
+  }
+
+  /**
+   * 摘要是异步派生缓存。expectedRevision 和旧游标同时匹配时才允许覆盖，
+   * 避免较慢的旧压缩任务把较新的摘要写回旧版本。
+   */
+  async saveConversationSummaryIfCurrent(record: SaveChatConversationSummaryRecord) {
+    return db.transaction(async (tx) => {
+      const [conversation] = await tx
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(and(eq(chatConversations.id, record.conversationId), eq(chatConversations.userId, record.userId)))
+        .limit(1)
+
+      if (!conversation) throw new ChatRepositoryNotFoundError('聊天会话不存在')
+
+      const [current] = await tx
+        .select()
+        .from(chatConversationSummaries)
+        .where(eq(chatConversationSummaries.conversationId, record.conversationId))
+        .limit(1)
+        .for('update')
+
+      if (!current) {
+        if (record.expectedRevision !== null || record.expectedSummarizedThroughSequence !== 0) return null
+
+        const [created] = await tx
+          .insert(chatConversationSummaries)
+          .values({
+            conversationId: record.conversationId,
+            summary: record.summary,
+            summarizedThroughSequence: record.summarizedThroughSequence,
+            revision: 1,
+            modelName: record.modelName,
+            promptVersion: record.promptVersion,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          })
+          .returning()
+        return created ?? null
+      }
+
+      if (
+        current.revision !== record.expectedRevision ||
+        current.summarizedThroughSequence !== record.expectedSummarizedThroughSequence ||
+        record.summarizedThroughSequence <= current.summarizedThroughSequence
+      ) {
+        return null
+      }
+
+      const [updated] = await tx
+        .update(chatConversationSummaries)
+        .set({
+          summary: record.summary,
+          summarizedThroughSequence: record.summarizedThroughSequence,
+          revision: current.revision + 1,
+          modelName: record.modelName,
+          promptVersion: record.promptVersion,
+          updatedAt: record.updatedAt,
+        })
+        .where(eq(chatConversationSummaries.conversationId, record.conversationId))
+        .returning()
+
+      return updated ?? null
+    })
+  }
+
+  async completeOpportunityImportItems(record: {
+    messageId: string
+    userId: string
+    items: Array<{ itemIndex: number; opportunityId: string }>
+    updatedAt: string
+  }) {
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ message: chatMessages })
+        .from(chatMessages)
+        .innerJoin(chatConversations, eq(chatMessages.conversationId, chatConversations.id))
+        .where(and(eq(chatMessages.id, record.messageId), eq(chatConversations.userId, record.userId)))
+        .limit(1)
+        .for('update')
+
+      if (!row || row.message.role !== 'assistant') {
+        throw new ChatRepositoryNotFoundError('岗位导入结果消息不存在')
+      }
+
+      const parsedParts = chatMessagePartSchema.array().safeParse(row.message.parts)
+      if (!parsedParts.success) throw new ChatRepositoryConflictError('岗位导入结果消息结构无效')
+
+      const completions = new Map(record.items.map((item) => [item.itemIndex, item.opportunityId]))
+      let matchedCount = 0
+      const parts: ChatMessagePart[] = parsedParts.data.map((part) => {
+        if (part.type !== 'opportunity_import_result') return part
+
+        return {
+          ...part,
+          items: part.items.map((item, itemIndex) => {
+            const opportunityId = completions.get(itemIndex)
+            if (!opportunityId || item.status !== 'ready') return item
+            matchedCount += 1
+            return { ...item, createdOpportunityId: opportunityId, createdAt: record.updatedAt }
+          }),
+        }
+      })
+
+      if (matchedCount !== completions.size) {
+        throw new ChatRepositoryConflictError('待回写的岗位导入结果已变化，请重新打开对话')
+      }
+
+      const [message] = await tx
+        .update(chatMessages)
+        .set({ parts, updatedAt: record.updatedAt })
+        .where(eq(chatMessages.id, record.messageId))
+        .returning()
+
+      if (!message) throw new ChatRepositoryConflictError('岗位导入结果状态更新失败')
+      return message
+    })
   }
 
   async createUserMessageAndRun(record: CreateChatTurnRecord) {
