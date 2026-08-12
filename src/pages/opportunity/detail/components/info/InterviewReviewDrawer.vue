@@ -2,14 +2,13 @@
 import { computed, ref } from 'vue'
 import type { InterviewRound, InterviewRoundResult, InterviewRoundType, JobOpportunity } from '@/types/opportunity'
 import type { ReviewDocumentSummary } from '@/types/review'
-import { formatDateOnly } from '@/shared/formatDate'
+import { formatDateTime } from '@/shared/formatDate'
 import type { InterviewManagementTab, InterviewRoundForm } from '../../types'
 
 const props = defineProps<{
   open: boolean
   opportunity: JobOpportunity
   roundTypeOptions: { label: string; value: InterviewRoundType }[]
-  dateLabel: string
   adding: boolean
   completingRoundId: string | null
   cancelingRoundId: string | null
@@ -22,7 +21,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   add: [mode: InterviewManagementTab]
-  selectDate: [value: unknown]
   edit: [round: InterviewRound]
   complete: [round: InterviewRound]
   cancel: [round: InterviewRound]
@@ -32,8 +30,6 @@ const emit = defineEmits<{
 
 const form = defineModel<InterviewRoundForm>('form', { required: true })
 const activeTab = defineModel<InterviewManagementTab>('activeTab', { required: true })
-const datePopoverOpen = defineModel<boolean>('datePopoverOpen', { required: true })
-const calendarDate = defineModel<unknown>('calendarDate', { required: true })
 const deletingRoundId = defineModel<string | null>('deletingRoundId', { required: true })
 const cancelingPopoverRoundId = ref<string | null>(null)
 
@@ -59,6 +55,7 @@ const plannedRounds = computed(() =>
       return current.scheduledAt.localeCompare(next.scheduledAt)
     }),
 )
+const overdueRoundCount = computed(() => plannedRounds.value.filter((round) => isInterviewRoundOverdue(round)).length)
 const completedRounds = computed(() =>
   props.opportunity.interviewRounds
     .filter((round) => round.status === 'completed')
@@ -72,6 +69,13 @@ const canceledRounds = computed(() =>
 
 function getInterviewRoundTypeLabel(type: InterviewRoundType) {
   return props.roundTypeOptions.find((item) => item.value === type)?.label ?? '其他'
+}
+
+function isInterviewRoundOverdue(round: InterviewRound) {
+  if (round.status !== 'planned' || !round.scheduledAt) return false
+
+  const scheduledTime = new Date(round.scheduledAt).getTime()
+  return Number.isFinite(scheduledTime) && scheduledTime < Date.now()
 }
 
 function getReviewDocument(roundId: string) {
@@ -206,24 +210,14 @@ function getResultLabel(result: InterviewRoundResult) {
                   :disabled="activeTab === 'schedule' && !canCreateSchedule"
                 />
               </UFormField>
-              <UFormField :label="activeTab === 'schedule' ? '面试时间' : '面试日期'">
-                <UPopover v-model:open="datePopoverOpen" :portal="true" :ui="{ content: '!z-[160]' }">
-                  <UButton
-                    type="button"
-                    color="neutral"
-                    variant="outline"
-                    class="w-full justify-between"
-                    trailing-icon="i-lucide-calendar-days"
-                    :disabled="activeTab === 'schedule' && !canCreateSchedule"
-                  >
-                    {{ dateLabel }}
-                  </UButton>
-                  <template #content>
-                    <div class="p-2">
-                      <UCalendar v-model="calendarDate" @update:model-value="emit('selectDate', $event)" />
-                    </div>
-                  </template>
-                </UPopover>
+              <UFormField label="面试时间">
+                <UInput
+                  v-model="form.scheduledAt"
+                  type="datetime-local"
+                  class="w-full min-w-0"
+                  icon="i-lucide-calendar-clock"
+                  :disabled="activeTab === 'schedule' && !canCreateSchedule"
+                />
               </UFormField>
               <UFormField v-if="activeTab === 'schedule'" label="安排备注">
                 <UTextarea
@@ -269,7 +263,13 @@ function getResultLabel(result: InterviewRoundResult) {
           <section v-if="activeTab === 'schedule'" class="min-w-0">
             <div class="mb-4 flex items-center justify-between gap-3">
               <h3 class="text-sm font-semibold text-highlighted">待进行安排</h3>
-              <span class="text-xs text-muted">按面试时间排序</span>
+              <span class="text-xs text-muted">
+                {{
+                  overdueRoundCount
+                    ? `${plannedRounds.length - overdueRoundCount} 场待进行 · ${overdueRoundCount} 场待补录`
+                    : '按面试时间排序'
+                }}
+              </span>
             </div>
 
             <div class="space-y-3">
@@ -278,12 +278,16 @@ function getResultLabel(result: InterviewRoundResult) {
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
                       <p class="truncate text-sm font-semibold text-highlighted">{{ round.title }}</p>
-                      <UBadge color="primary" variant="subtle" label="待进行" />
+                      <UBadge
+                        :color="isInterviewRoundOverdue(round) ? 'warning' : 'primary'"
+                        variant="subtle"
+                        :label="isInterviewRoundOverdue(round) ? '待补录' : '待进行'"
+                      />
                     </div>
                     <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
                       <span>{{ getInterviewRoundTypeLabel(round.type) }}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{{ formatDateOnly(round.scheduledAt) || '时间待定' }}</span>
+                      <span>{{ formatDateTime(round.scheduledAt) || '时间待定' }}</span>
                     </div>
                     <p v-if="round.note" class="mt-3 whitespace-pre-line text-xs leading-5 text-muted">
                       {{ round.note }}
@@ -375,7 +379,7 @@ function getResultLabel(result: InterviewRoundResult) {
                     class="flex items-center justify-between gap-3 text-xs text-muted"
                   >
                     <span class="min-w-0 truncate"
-                      >{{ round.title }} · {{ formatDateOnly(round.scheduledAt) || '时间待定' }}</span
+                      >{{ round.title }} · {{ formatDateTime(round.scheduledAt) || '时间待定' }}</span
                     >
                     <UPopover
                       :open="deletingRoundId === round.id"
@@ -446,7 +450,7 @@ function getResultLabel(result: InterviewRoundResult) {
                         :label="getReviewStatusLabel(round)"
                       />
                       <span>{{ getResultLabel(round.result) }}</span>
-                      <span v-if="round.scheduledAt">{{ formatDateOnly(round.scheduledAt) }}</span>
+                      <span v-if="round.scheduledAt">{{ formatDateTime(round.scheduledAt) }}</span>
                     </div>
                   </div>
                   <div class="flex shrink-0 items-center gap-1">

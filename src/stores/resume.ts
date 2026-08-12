@@ -10,6 +10,7 @@ import type {
 import { resumeApi, type CreateResumePayload, type SaveResumeVersionResponse } from '@/services/resumes'
 
 const resumeStoreStorageKey = 'agent-seek-employment:resume-store'
+let resumeWorkspaceRequest: Promise<void> | null = null
 
 const currentStatusOptionsByIdentity: Record<JobSearchIdentity, CurrentStatus[]> = {
   experienced: ['employed', 'unemployed'],
@@ -168,27 +169,39 @@ export const useResumeStore = defineStore('resume', {
 
   actions: {
     async loadFromApi() {
-      this.isLoading = true
-      this.loadError = null
+      if (resumeWorkspaceRequest) return resumeWorkspaceRequest
 
+      const request = (async () => {
+        this.isLoading = true
+        this.loadError = null
+
+        try {
+          const { resumes, versions } = await resumeApi.getResumeWorkspace()
+
+          const currentIds = resolveCurrentIds({
+            resumes,
+            versions,
+            currentResumeId: this.currentResumeId,
+            currentVersionId: this.currentVersionId,
+          })
+
+          this.resumes = resumes
+          this.versions = versions
+          this.currentResumeId = currentIds.currentResumeId
+          this.currentVersionId = currentIds.currentVersionId
+          this.persistToStorage()
+        } catch (error) {
+          this.loadError = error instanceof Error ? error.message : 'load resume failed'
+        } finally {
+          this.isLoading = false
+        }
+      })()
+
+      resumeWorkspaceRequest = request
       try {
-        const { resumes, versions } = await resumeApi.getResumeWorkspace()
-
-        const currentIds = resolveCurrentIds({
-          resumes,
-          versions,
-          currentResumeId: this.currentResumeId,
-          currentVersionId: this.currentVersionId,
-        })
-
-        this.resumes = resumes
-        this.versions = versions
-        this.currentResumeId = currentIds.currentResumeId
-        this.currentVersionId = currentIds.currentVersionId
-      } catch (error) {
-        this.loadError = error instanceof Error ? error.message : 'load resume failed'
+        await request
       } finally {
-        this.isLoading = false
+        if (resumeWorkspaceRequest === request) resumeWorkspaceRequest = null
       }
     },
     hydrateFromStorage() {

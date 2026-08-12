@@ -10,6 +10,8 @@ import { backgroundTaskRoute } from './routes/background-task.route'
 import { dashboardRoute } from './routes/dashboard.route'
 import { capabilityProfileRoute } from './routes/capability-profile.route'
 import { actionStrategyRoute } from './routes/action-strategy.route'
+import { chatRoute } from './routes/chat.route'
+import { chatRunDebugRoute } from './routes/chat-run-debug.route'
 import { DuplicateJobOpportunityError, OpportunityNotFoundError } from './services/opportunity.service'
 import { ResumeNotFoundError } from './services/resume.service'
 import { JobAnalysisNotFoundError } from './services/job-analysis.service'
@@ -137,8 +139,10 @@ await app.register(healthRoute, { prefix: '/api' })
 await app.register(opportunityRoute, { prefix: '/api' })
 await app.register(resumeRoute, { prefix: '/api' })
 await app.register(agentRunRoute, { prefix: '/api' })
+await app.register(chatRunDebugRoute, { prefix: '/api' })
 await app.register(interviewRoute, { prefix: '/api' })
 await app.register(backgroundTaskRoute, { prefix: '/api' })
 await app.register(dashboardRoute, { prefix: '/api' })
 await app.register(capabilityProfileRoute, { prefix: '/api' })
 await app.register(actionStrategyRoute, { prefix: '/api' })
+await app.register(chatRoute, { prefix: '/api' })

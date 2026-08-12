@@ -171,8 +171,7 @@ function selectResume(resumes: ResumeRecord[], resumeId?: string) {
   return resumes[0] ?? null
 }
 
-export async function getCapabilityProfile(resumeId?: string): Promise<CapabilityProfile> {
-  const userId = await getCurrentUserId()
+export async function getCapabilityProfileForUser(userId: string, resumeId?: string): Promise<CapabilityProfile> {
   const resumes = await resumeRepository.findResumesByUserId(userId)
   const resume = selectResume(resumes, resumeId)
 
@@ -214,4 +213,8 @@ export async function getCapabilityProfile(resumeId?: string): Promise<Capabilit
     analyses,
     interviewEvidence,
   })
+}
+
+export async function getCapabilityProfile(resumeId?: string): Promise<CapabilityProfile> {
+  return getCapabilityProfileForUser(await getCurrentUserId(), resumeId)
 }

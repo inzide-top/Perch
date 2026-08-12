@@ -13,6 +13,11 @@ function normalizeFingerprintText(value: string) {
     .replace(/[\s\p{P}\p{S}]+/gu, '')
 }
 
+function normalizeFingerprintAddress(value: string) {
+  const normalized = normalizeFingerprintText(value)
+  return normalized.length > 2 ? normalized.replace(/市$/, '') : normalized
+}
+
 /**
  * 只用于识别同一用户录入的规范化精确重复 JD：忽略空格、换行、标点、全半角和英文大小写。
  * 不做公司别名、错别字或语义相似度判断，避免误拦截不同岗位。
@@ -21,7 +26,7 @@ export function createOpportunityFingerprint(input: OpportunityFingerprintInput)
   const source = {
     company: normalizeFingerprintText(input.company),
     jobTitle: normalizeFingerprintText(input.jobTitle),
-    address: [...(input.address ?? [])].map(normalizeFingerprintText).sort(),
+    address: [...(input.address ?? [])].map(normalizeFingerprintAddress).sort(),
     introduction: normalizeFingerprintText(input.introduction),
     description: normalizeFingerprintText(input.description),
   }

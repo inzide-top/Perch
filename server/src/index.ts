@@ -1,17 +1,20 @@
 import 'dotenv/config'
 import { app } from './app'
 import { closeDatabase } from './db/client'
+import { startChatMemoryCompensationWorker } from './services/retrieval/chat-memory-compensation-worker'
 
 const port = Number(process.env.PORT ?? 8787)
 const host = process.env.API_HOST ?? '127.0.0.1'
 
 let isShuttingDown = false
+let stopChatMemoryCompensationWorker: (() => Promise<void>) | null = null
 
 async function shutdown(signal: NodeJS.Signals) {
   if (isShuttingDown) return
   isShuttingDown = true
 
   app.log.info({ signal }, 'Shutting down API')
+  await stopChatMemoryCompensationWorker?.()
   await app.close()
   await closeDatabase()
 }
@@ -28,6 +31,7 @@ try {
     port,
     host,
   })
+  stopChatMemoryCompensationWorker = startChatMemoryCompensationWorker(app.log)
 } catch (error) {
   app.log.error(error)
   process.exit(1)

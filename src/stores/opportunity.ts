@@ -41,6 +41,7 @@ type OpportunityState = {
   isRefreshing: boolean
   opportunitiesLoadedAt: number | null
   opportunityListFilterKey: string
+  opportunityMutationRevision: number
   loadError: string | null
   reviewDocumentsByOpportunity: Record<string, ReviewDocumentSummary[]>
 }
@@ -63,11 +64,17 @@ function canUseLocalStorage() {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined'
 }
 
-function normalizeCityList(value: string[] | string | undefined) {
-  if (Array.isArray(value)) return value.filter((city) => city.trim())
-  if (typeof value === 'string' && value.trim()) return [value.trim()]
+function normalizeCityName(value: string) {
+  const city = value.trim()
+  if (city.length <= 2) return city
 
-  return []
+  return city.replace(/市$/, '')
+}
+
+function normalizeCityList(value: string[] | string | undefined) {
+  const cities = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+
+  return [...new Set(cities.map(normalizeCityName).filter(Boolean))]
 }
 
 function resolveCurrentIds(state: OpportunitySelectionState) {
@@ -254,6 +261,7 @@ export const useOpportunityStore = defineStore('opportunity', {
     isRefreshing: false,
     opportunitiesLoadedAt: null,
     opportunityListFilterKey: '',
+    opportunityMutationRevision: 0,
     loadError: null,
     reviewDocumentsByOpportunity: {},
   }),
@@ -291,6 +299,11 @@ export const useOpportunityStore = defineStore('opportunity', {
   },
 
   actions: {
+    publishOpportunityMutation() {
+      this.opportunityMutationRevision += 1
+      this.opportunitiesLoadedAt = null
+    },
+
     hydrateFromStorage() {
       if (!canUseLocalStorage()) return
 

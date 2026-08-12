@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm'
 import type {
   InterviewAssessmentPlan,
   InterviewEvidenceStatus,
@@ -22,6 +22,15 @@ export type DashboardReviewSourceCounts = {
   interviewReviews: number
 }
 
+export type DashboardInterviewScheduleRecord = {
+  id: string
+  opportunityId: string
+  company: string
+  jobTitle: string
+  title: string
+  scheduledAt: string
+}
+
 function resolveObservedAt(record: { endedAt: string | null; lastActiveAt: string; updatedAt: string }) {
   return record.endedAt ?? record.lastActiveAt ?? record.updatedAt
 }
@@ -31,6 +40,45 @@ function hasText(value: string | null) {
 }
 
 export class DrizzleDashboardRepository {
+  async findInterviewSchedulesByUserId(userId: string): Promise<DashboardInterviewScheduleRecord[]> {
+    const rows = await db
+      .select({
+        id: interviewRounds.id,
+        opportunityId: interviewRounds.opportunityId,
+        company: jobOpportunities.company,
+        jobTitle: jobOpportunities.jobTitle,
+        title: interviewRounds.title,
+        scheduledAt: interviewRounds.scheduledAt,
+      })
+      .from(interviewRounds)
+      .innerJoin(jobOpportunities, eq(interviewRounds.opportunityId, jobOpportunities.id))
+      .where(
+        and(
+          eq(jobOpportunities.userId, userId),
+          ne(jobOpportunities.status, 'closed'),
+          eq(interviewRounds.status, 'planned'),
+          isNotNull(interviewRounds.scheduledAt),
+        ),
+      )
+      .orderBy(asc(interviewRounds.scheduledAt))
+      .limit(100)
+
+    return rows.flatMap((row) =>
+      row.scheduledAt
+        ? [
+            {
+              id: row.id,
+              opportunityId: row.opportunityId,
+              company: row.company,
+              jobTitle: row.jobTitle,
+              title: row.title,
+              scheduledAt: new Date(row.scheduledAt).toISOString(),
+            },
+          ]
+        : [],
+    )
+  }
+
   async findInterviewEvidenceByUserId(userId: string): Promise<DashboardInterviewEvidenceRecord[]> {
     const rows = await db
       .select({

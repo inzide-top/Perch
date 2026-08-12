@@ -48,6 +48,7 @@ export const agentWorkflowTypeSchema = z.enum([
   'interview_final_summary',
   'review_extraction',
   'action_strategy',
+  'chat_turn',
 ])
 
 export const interviewBudgetSchema = z.object({
@@ -55,6 +56,17 @@ export const interviewBudgetSchema = z.object({
   totalQuestionBudget: z.number().int().positive().max(60),
   maxFollowUpsPerRoot: z.number().int().min(0).max(3),
 })
+
+/** 规模到题目额度的唯一确定性映射，前端创建页和 Agent 工具必须共用。 */
+export function getInterviewBudgetForScale(scale: z.output<typeof interviewScaleSchema>) {
+  const budgetByScale = {
+    quick: { mainTopicBudget: 3, totalQuestionBudget: 5 },
+    standard: { mainTopicBudget: 5, totalQuestionBudget: 9 },
+    deep: { mainTopicBudget: 8, totalQuestionBudget: 14 },
+  } as const
+
+  return { ...budgetByScale[scale], maxFollowUpsPerRoot: 3 }
+}
 
 export const interviewConfigurationSchema = z.object({
   type: interviewTypeSchema,

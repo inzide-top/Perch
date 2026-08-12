@@ -31,3 +31,10 @@ test('JD 指纹不会把业务内容不同的岗位误判为重复', () => {
 
   assert.notEqual(createOpportunityFingerprint(baseOpportunity), createOpportunityFingerprint(changedDescription))
 })
+
+test('JD 指纹把城市名称和带市后缀的地址视为同一地点', () => {
+  assert.equal(
+    createOpportunityFingerprint({ ...baseOpportunity, address: ['北京市', '上海市'] }),
+    createOpportunityFingerprint({ ...baseOpportunity, address: ['北京', '上海'] }),
+  )
+})
