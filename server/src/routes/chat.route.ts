@@ -1,12 +1,14 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
   chatConversationParamsSchema,
+  chatMessageParamsSchema,
   chatRunEventsQuerySchema,
   chatRunParamsSchema,
   listChatConversationsQuerySchema,
 } from '../schemas/chat.schema'
 import {
   createChatConversation,
+  completeChatOpportunityImportItems,
   createChatTurn,
   deleteChatConversation,
   getChatConversation,
@@ -34,6 +36,12 @@ export const chatRoute: FastifyPluginAsync = async (app) => {
   app.get('/chat/conversations/:conversationId', async (request, reply) => {
     const { conversationId } = chatConversationParamsSchema.parse(request.params)
     const result = await getChatConversation(conversationId)
+    return reply.status(200).send(result)
+  })
+
+  app.patch('/chat/messages/:messageId/opportunity-imports', async (request, reply) => {
+    const { messageId } = chatMessageParamsSchema.parse(request.params)
+    const result = await completeChatOpportunityImportItems(messageId, request.body)
     return reply.status(200).send(result)
   })
 

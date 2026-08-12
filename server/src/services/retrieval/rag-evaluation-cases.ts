@@ -185,11 +185,23 @@ export const RAG_EVALUATION_DOCUMENTS: RagEvaluationDocument[] = [
 ]
 
 function globalScope(): RetrievalScope {
-  return { userId: USER_ID, conversationScopeType: 'global', boundOpportunityId: null, referencedOpportunityIds: [] }
+  return {
+    userId: USER_ID,
+    currentConversationId: 'evaluation-query-conversation',
+    conversationScopeType: 'global',
+    boundOpportunityId: null,
+    referencedOpportunityIds: [],
+  }
 }
 
 function opportunityScope(boundOpportunityId: string, referencedOpportunityIds: string[] = []): RetrievalScope {
-  return { userId: USER_ID, conversationScopeType: 'opportunity', boundOpportunityId, referencedOpportunityIds }
+  return {
+    userId: USER_ID,
+    currentConversationId: 'evaluation-query-conversation',
+    conversationScopeType: 'opportunity',
+    boundOpportunityId,
+    referencedOpportunityIds,
+  }
 }
 
 export const RAG_EVALUATION_CASES: RagEvaluationFixtureCase[] = [

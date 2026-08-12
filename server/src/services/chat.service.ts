@@ -8,6 +8,7 @@ import {
 import {
   createChatCommandInputSchema,
   createChatConversationInputSchema,
+  completeOpportunityImportItemsInputSchema,
   sendChatMessageInputSchema,
   type ListChatConversationsQuery,
   updateChatConversationInputSchema,
@@ -30,6 +31,11 @@ import {
   resolveChatMessageReferences,
   toReferenceContextMessage,
 } from './chat/chat-message-references'
+import {
+  appendChatConversationSummaryToSystemPrompt,
+  buildChatContextWindow,
+  type ChatContextMessageRecord,
+} from './chat/chat-context-window'
 
 const terminalChatRunStatuses = new Set<ChatRunStatus>(['completed', 'failed', 'cancelled'])
 const chatStreamPollIntervalMs = 250
@@ -184,6 +190,22 @@ export async function getChatConversation(conversationId: string) {
   }
 }
 
+export async function completeChatOpportunityImportItems(messageId: string, input: unknown) {
+  const parsed = completeOpportunityImportItemsInputSchema.parse(input)
+  const userId = await getCurrentUserId()
+
+  for (const item of parsed.items) {
+    await assertOpportunityOwnership(item.opportunityId, userId)
+  }
+
+  return chatRepository.completeOpportunityImportItems({
+    messageId,
+    userId,
+    items: parsed.items,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
 export async function createChatTurn(conversationId: string, input: unknown) {
   const parsed = sendChatMessageInputSchema.parse(input)
   const userId = await getCurrentUserId()
@@ -218,9 +240,10 @@ export async function createChatTurn(conversationId: string, input: unknown) {
   const trustedReferences = resolvedReferences.map((item) => item.reference)
   const referenceContextMessage = toReferenceContextMessage(resolvedReferences)
 
-  const [previousMessages, previousToolActions] = await Promise.all([
+  const [previousMessages, previousToolActions, conversationSummary] = await Promise.all([
     chatRepository.listMessagesByConversationId(conversationId, userId),
     chatRepository.listToolActionsByConversationId(conversationId, userId),
+    chatRepository.findConversationSummary(conversationId, userId),
   ])
   const autoTitle = createChatConversationAutoTitleRequest({
     conversation,
@@ -229,13 +252,24 @@ export async function createChatTurn(conversationId: string, input: unknown) {
     currentUserText: parsed.text,
   })
   const systemPrompt = buildChatSystemPrompt({ scopeType: conversation.scopeType, opportunity })
+  const contextWindow = buildChatContextWindow({
+    messages: previousMessages as ChatContextMessageRecord[],
+    summaryRecord: conversationSummary,
+  })
+  const systemPromptWithReferences = referenceContextMessage
+    ? `${systemPrompt}\n\n${referenceContextMessage.content}`
+    : systemPrompt
   const modelMessages = [
     {
       role: 'system' as const,
       // 维持整次模型请求只有一条首位 System Message，兼容要求 system 必须位于开头的供应商。
-      content: referenceContextMessage ? `${systemPrompt}\n\n${referenceContextMessage.content}` : systemPrompt,
+      content: appendChatConversationSummaryToSystemPrompt({
+        systemPrompt: systemPromptWithReferences,
+        summaryText: contextWindow.summaryText,
+        omittedUnsummarizedMessageCount: contextWindow.omittedUnsummarizedMessageCount,
+      }),
     },
-    ...toProviderMessages(previousMessages, previousToolActions),
+    ...toProviderMessages(contextWindow.recentMessages, previousToolActions),
     { role: 'user' as const, content: parsed.text },
   ]
   const now = new Date().toISOString()

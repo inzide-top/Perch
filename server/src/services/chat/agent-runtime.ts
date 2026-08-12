@@ -8,7 +8,7 @@ import type {
   ModelProviderStreamInput,
   ModelProviderTool,
 } from './model-provider-adapter'
-import { AgentToolRegistry, type AgentToolDefinition } from './agent-tool'
+import { AgentToolRegistry, type AgentToolDefinition, type AgentToolInputPreparation } from './agent-tool'
 import { z } from 'zod'
 
 type CompletedEvent = Extract<ModelProviderStreamEvent, { type: 'completed' }>
@@ -46,7 +46,7 @@ export type AgentRuntimeInput = {
   onEvent?: (event: ModelProviderStreamEvent) => void | Promise<void>
   onToolStarted?: (call: ToolCallEvent) => void | Promise<void>
   onToolResult?: (result: AgentToolResult) => void | Promise<void>
-  onToolFailed?: (input: { call: ToolCallEvent; error: unknown }) => void | Promise<void>
+  onToolFailed?: (input: { call: ToolCallEvent; error: unknown; recoverable: boolean }) => void | Promise<void>
   modelCallObserver?: AgentModelCallObserver
 }
 
@@ -58,6 +58,7 @@ export type AgentRuntimeConfirmationCheckpoint = {
   toolCallsUsed: number
   pendingCall: ToolCallEvent
   toolVersion: string
+  recoveryFingerprints?: string[]
   confirmationPresentation?: ChatJsonObject
   confirmationContext?: ChatJsonObject
 }
@@ -71,6 +72,7 @@ export type AgentRuntimeInputCheckpoint = {
   toolCallsUsed: number
   pendingCall: ToolCallEvent
   toolVersion: string
+  recoveryFingerprints?: string[]
   missingArguments: string[]
   inputPresentation: ChatJsonObject
 }
@@ -117,6 +119,7 @@ const agentRuntimeConfirmationCheckpointSchema = z
     toolCallsUsed: z.number().int().nonnegative(),
     pendingCall: toolCallEventSchema,
     toolVersion: z.string().min(1),
+    recoveryFingerprints: z.array(z.string().min(1)).optional(),
     confirmationPresentation: jsonObjectSchema.optional(),
     confirmationContext: jsonObjectSchema.optional(),
   })
@@ -134,6 +137,7 @@ const agentRuntimeInputCheckpointSchema = z
     toolCallsUsed: z.number().int().nonnegative(),
     pendingCall: toolCallEventSchema,
     toolVersion: z.string().min(1),
+    recoveryFingerprints: z.array(z.string().min(1)).optional(),
     // waiting_input 既可以补缺失字段，也可以让用户核对并修改模型已经填写完整的参数。
     missingArguments: z.array(z.string().min(1)),
     inputPresentation: jsonObjectSchema,
@@ -208,6 +212,107 @@ type RuntimeLoopState = {
   toolResults: AgentToolResult[]
   modelCalls: number
   toolCallsUsed: number
+  recoveryFingerprints: Set<string>
+}
+
+type ToolInputValidationIssue = {
+  path: string
+  message: string
+}
+
+class AgentToolInputValidationError extends Error {
+  constructor(
+    readonly toolName: string,
+    readonly issues: ToolInputValidationIssue[],
+  ) {
+    super(`工具 ${toolName} 参数校验失败：${issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`)
+    this.name = 'AgentToolInputValidationError'
+  }
+}
+
+function toToolInputValidationError(definition: AgentToolDefinition, error: unknown) {
+  if (error instanceof AgentToolInputValidationError) return error
+  if (!(error instanceof z.ZodError)) return null
+
+  return new AgentToolInputValidationError(
+    definition.name,
+    error.issues.map((issue) => ({
+      path: issue.path.join('.') || '<root>',
+      message: issue.message,
+    })),
+  )
+}
+
+function createRecoveryFingerprint(
+  definition: AgentToolDefinition,
+  kind: 'invalid_input' | 'execution_failed',
+  error: unknown,
+) {
+  const details =
+    error instanceof AgentToolInputValidationError
+      ? error.issues
+      : {
+          name: error instanceof Error ? error.name : 'UnknownError',
+          code:
+            error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null,
+        }
+
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ toolName: definition.name, kind, details }))
+    .digest('hex')
+}
+
+function createToolFailureObservation(
+  definition: AgentToolDefinition,
+  kind: 'invalid_input' | 'execution_failed',
+  error: unknown,
+): ChatJsonObject {
+  if (kind === 'invalid_input' && error instanceof AgentToolInputValidationError) {
+    return {
+      status: 'error',
+      error: {
+        code: 'invalid_tool_input',
+        message: `工具 ${definition.name} 的参数未通过校验。`,
+        issues: error.issues,
+      },
+      recoveryInstruction: '根据 issues 修正参数后重新调用合适的工具；不要声称工具已经执行。',
+    }
+  }
+
+  return {
+    status: 'error',
+    error: {
+      code: 'tool_execution_failed',
+      message: `只读工具 ${definition.name} 未能返回结果。`,
+    },
+    recoveryInstruction:
+      '不要重复相同的失败调用，也不要编造查询结果；可以改用其他已注册的只读工具，或者向用户如实说明当前无法取得数据。',
+  }
+}
+
+async function tryReturnToolFailureToModel(
+  input: AgentRuntimeInput,
+  state: RuntimeLoopState,
+  definition: AgentToolDefinition,
+  call: ToolCallEvent,
+  error: unknown,
+  kind: 'invalid_input' | 'execution_failed',
+) {
+  const policyAllowsRecovery = kind === 'invalid_input' || definition.executionFailurePolicy === 'return_to_model'
+  const fingerprint = createRecoveryFingerprint(definition, kind, error)
+  const recoverable = policyAllowsRecovery && !input.signal.aborted && !state.recoveryFingerprints.has(fingerprint)
+
+  await input.onToolFailed?.({ call, error, recoverable })
+  if (!recoverable) return false
+
+  state.recoveryFingerprints.add(fingerprint)
+  state.messages.push({
+    role: 'tool',
+    toolCallId: call.callId,
+    content: JSON.stringify(createToolFailureObservation(definition, kind, error)),
+  })
+  return true
 }
 
 async function consumeModelStream(
@@ -270,14 +375,8 @@ async function executeTool(
 ): Promise<AgentToolResult> {
   const validatedInput = validateToolInput(definition, call.arguments)
   await input.onToolStarted?.(call)
-
-  try {
-    const output = await definition.execute(validatedInput, { signal: input.signal, confirmationContext })
-    return { call, output }
-  } catch (error) {
-    await input.onToolFailed?.({ call, error })
-    throw error
-  }
+  const output = await definition.execute(validatedInput, { signal: input.signal, confirmationContext })
+  return { call, output }
 }
 
 /**
@@ -292,6 +391,7 @@ export class AgentRuntime {
       toolResults: [],
       modelCalls: 0,
       toolCallsUsed: 0,
+      recoveryFingerprints: new Set(),
     })
   }
 
@@ -313,6 +413,7 @@ export class AgentRuntime {
       toolResults: [...checkpoint.toolResults],
       modelCalls: checkpoint.modelCalls,
       toolCallsUsed: checkpoint.toolCallsUsed,
+      recoveryFingerprints: new Set(checkpoint.recoveryFingerprints ?? []),
     }
 
     if (decision === 'rejected') {
@@ -324,7 +425,21 @@ export class AgentRuntime {
       return this.runLoop(input, state)
     }
 
-    const toolResult = await executeTool(input, definition, checkpoint.pendingCall, checkpoint.confirmationContext)
+    let toolResult: AgentToolResult
+    try {
+      toolResult = await executeTool(input, definition, checkpoint.pendingCall, checkpoint.confirmationContext)
+    } catch (error) {
+      const recovered = await tryReturnToolFailureToModel(
+        input,
+        state,
+        definition,
+        checkpoint.pendingCall,
+        error,
+        'execution_failed',
+      )
+      if (recovered) return this.runLoop(input, state)
+      throw error
+    }
     state.toolResults.push(toolResult)
     await input.onToolResult?.(toolResult)
     state.messages.push({
@@ -383,6 +498,7 @@ export class AgentRuntime {
           toolCallsUsed: checkpoint.toolCallsUsed,
           pendingCall: validatedCall,
           toolVersion: checkpoint.toolVersion,
+          ...(checkpoint.recoveryFingerprints?.length ? { recoveryFingerprints: checkpoint.recoveryFingerprints } : {}),
           ...(confirmation?.presentation ? { confirmationPresentation: confirmation.presentation } : {}),
           ...(confirmation?.executionContext ? { confirmationContext: confirmation.executionContext } : {}),
         },
@@ -395,8 +511,23 @@ export class AgentRuntime {
       toolResults: [...checkpoint.toolResults],
       modelCalls: checkpoint.modelCalls,
       toolCallsUsed: checkpoint.toolCallsUsed,
+      recoveryFingerprints: new Set(checkpoint.recoveryFingerprints ?? []),
     }
-    const toolResult = await executeTool(input, definition, validatedCall)
+    let toolResult: AgentToolResult
+    try {
+      toolResult = await executeTool(input, definition, validatedCall)
+    } catch (error) {
+      const recovered = await tryReturnToolFailureToModel(
+        input,
+        state,
+        definition,
+        validatedCall,
+        error,
+        'execution_failed',
+      )
+      if (recovered) return this.runLoop(input, state)
+      throw error
+    }
     state.toolResults.push(toolResult)
     await input.onToolResult?.(toolResult)
     state.messages.push({
@@ -515,9 +646,25 @@ export class AgentRuntime {
           throw new Error(`模型请求了未注册工具：${call.name}`)
         }
 
-        const preparation = definition.prepareInput
-          ? await definition.prepareInput(call.arguments, undefined, { signal: input.signal })
-          : { status: 'ready' as const, input: call.arguments }
+        let preparation: AgentToolInputPreparation
+        try {
+          preparation = definition.prepareInput
+            ? await definition.prepareInput(call.arguments, undefined, { signal: input.signal })
+            : { status: 'ready', input: call.arguments }
+        } catch (error) {
+          const validationError = toToolInputValidationError(definition, error)
+          const normalizedError = validationError ?? error
+          const recovered = await tryReturnToolFailureToModel(
+            input,
+            state,
+            definition,
+            call,
+            normalizedError,
+            validationError ? 'invalid_input' : 'execution_failed',
+          )
+          if (recovered) continue
+          throw normalizedError
+        }
 
         if (preparation.status === 'waiting_input') {
           return {
@@ -531,6 +678,7 @@ export class AgentRuntime {
               toolCallsUsed: state.toolCallsUsed,
               pendingCall: { ...call, arguments: preparation.input },
               toolVersion: definition.version,
+              ...(state.recoveryFingerprints.size > 0 ? { recoveryFingerprints: [...state.recoveryFingerprints] } : {}),
               missingArguments: preparation.missingArguments,
               inputPresentation: preparation.presentation,
             },
@@ -539,11 +687,26 @@ export class AgentRuntime {
         }
 
         const preparedCall = { ...call, arguments: preparation.input }
+        let validatedCall: ToolCallEvent
+        try {
+          validatedCall = { ...preparedCall, arguments: validateToolInput(definition, preparedCall.arguments) }
+        } catch (error) {
+          const validationError = toToolInputValidationError(definition, error) ?? error
+          const recovered = await tryReturnToolFailureToModel(
+            input,
+            state,
+            definition,
+            preparedCall,
+            validationError,
+            'invalid_input',
+          )
+          if (recovered) continue
+          throw validationError
+        }
+
         if (definition.requiresConfirmation) {
           // 先校验模型参数，再生成确认卡片。无效参数不能进入等待用户确认的业务状态。
-          const validatedArguments = validateToolInput(definition, preparedCall.arguments)
-          const validatedCall = { ...preparedCall, arguments: validatedArguments }
-          const confirmation = await definition.prepareConfirmation?.(validatedArguments, {
+          const confirmation = await definition.prepareConfirmation?.(validatedCall.arguments, {
             signal: input.signal,
           })
 
@@ -557,6 +720,7 @@ export class AgentRuntime {
               toolCallsUsed: state.toolCallsUsed,
               pendingCall: validatedCall,
               toolVersion: definition.version,
+              ...(state.recoveryFingerprints.size > 0 ? { recoveryFingerprints: [...state.recoveryFingerprints] } : {}),
               ...(confirmation?.presentation ? { confirmationPresentation: confirmation.presentation } : {}),
               ...(confirmation?.executionContext ? { confirmationContext: confirmation.executionContext } : {}),
             },
@@ -564,12 +728,26 @@ export class AgentRuntime {
           }
         }
 
-        const toolResult = await executeTool(input, definition, preparedCall)
+        let toolResult: AgentToolResult
+        try {
+          toolResult = await executeTool(input, definition, validatedCall)
+        } catch (error) {
+          const recovered = await tryReturnToolFailureToModel(
+            input,
+            state,
+            definition,
+            validatedCall,
+            error,
+            'execution_failed',
+          )
+          if (recovered) continue
+          throw error
+        }
         state.toolResults.push(toolResult)
         await input.onToolResult?.(toolResult)
         state.messages.push({
           role: 'tool',
-          toolCallId: preparedCall.callId,
+          toolCallId: validatedCall.callId,
           content: JSON.stringify(toolResult.output),
         })
       }
@@ -582,14 +760,19 @@ export class AgentRuntime {
 function validateToolInput(definition: AgentToolDefinition, input: ChatJsonObject): ChatJsonObject {
   const result = definition.inputValidator.safeParse(input)
   if (!result.success) {
-    const details = result.error.issues
-      .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
-      .join('; ')
-    throw new Error(`工具 ${definition.name} 参数校验失败：${details}`)
+    throw new AgentToolInputValidationError(
+      definition.name,
+      result.error.issues.map((issue) => ({
+        path: issue.path.join('.') || '<root>',
+        message: issue.message,
+      })),
+    )
   }
 
   if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
-    throw new Error(`工具 ${definition.name} 参数校验结果必须是 JSON 对象`)
+    throw new AgentToolInputValidationError(definition.name, [
+      { path: '<root>', message: '参数校验结果必须是 JSON 对象' },
+    ])
   }
 
   return result.data as ChatJsonObject

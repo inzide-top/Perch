@@ -167,6 +167,8 @@ const chatOpportunityImportResultItemSchema = z.discriminatedUnion('status', [
       sourceLabel: requiredText.max(300),
       sourceUrl: z.string().trim().url().max(2_048).nullable(),
       preview: chatOpportunityImportPreviewSchema,
+      createdOpportunityId: z.string().uuid().nullable().default(null),
+      createdAt: z.string().trim().min(1).max(80).nullable().default(null),
     })
     .strict(),
   z

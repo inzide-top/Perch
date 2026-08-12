@@ -26,6 +26,8 @@ export type RetrievalDocumentScope =
 /** 当前问题允许访问的记忆边界，由后端会话信息和可信引用共同生成。 */
 export type RetrievalScope = {
   userId: string
+  /** 当前会话已有原始消息单独参与上下文装配，RAG 必须排除它以避免重复注入。 */
+  currentConversationId: string
   conversationScopeType: ChatConversationScopeType
   boundOpportunityId: string | null
   referencedOpportunityIds: string[]

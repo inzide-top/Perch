@@ -15,7 +15,10 @@ export type ChatMemoryChunk = {
 
 function truncateText(text: string, maxChars: number) {
   if (text.length <= maxChars) return text
-  return `${text.slice(0, maxChars - 1)}…`
+
+  const tailChars = Math.floor((maxChars * 5) / 12)
+  const headChars = maxChars - tailChars
+  return `${text.slice(0, headChars)}…${text.slice(-tailChars)}`
 }
 
 function createContentHash(content: string) {
@@ -30,9 +33,9 @@ export function chunkChatMemoryTurn(
     maxQuestionChars?: number
   } = {},
 ): ChatMemoryChunk[] {
-  const maxChars = options.maxChars ?? 1400
+  const maxChars = options.maxChars ?? 1600
   const overlapChars = options.overlapChars ?? 160
-  const maxQuestionChars = options.maxQuestionChars ?? 400
+  const maxQuestionChars = options.maxQuestionChars ?? 600
 
   const userText = input.userText.trim()
   const assistantText = toUserVisibleChatText(input.assistantText).trim()

@@ -4,12 +4,14 @@ import type { Project, ProjectErrors, ProjectForm, ProjectRequiredField } from '
 
 const props = defineProps<{
   projects: Project[]
+  pendingImportedProjects: Project[]
   projectErrors: ProjectErrors
   projectEditErrors: ProjectErrors
   expandedProjectIndexes: Set<number>
   pendingDeleteProjectIndex: number | null
   isProjectCreateOpen: boolean
   isProjectEditOpen: boolean
+  isImportedProjectEditOpen: boolean
 }>()
 
 const projectForm = defineModel<ProjectForm>('projectForm', { required: true })
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   clearProjectError: [field: ProjectRequiredField]
   toggleProject: [index: number]
   openProjectEdit: [index: number]
+  openImportedProjectEdit: [index: number]
+  ignoreImportedProject: [index: number]
   requestRemoveProject: [index: number]
   cancelRemoveProject: []
   confirmRemoveProject: []
@@ -30,15 +34,24 @@ const emit = defineEmits<{
   saveProjectEdit: []
 }>()
 
-const isProjectDrawerOpen = computed(() => props.isProjectCreateOpen || props.isProjectEditOpen)
+const isProjectDrawerOpen = computed(
+  () => props.isProjectCreateOpen || props.isProjectEditOpen || props.isImportedProjectEditOpen,
+)
 const isCreatingProject = computed(() => props.isProjectCreateOpen)
+const isReviewingImportedProject = computed(() => props.isImportedProjectEditOpen)
 const drawerForm = computed(() => (isCreatingProject.value ? projectForm.value : projectEditForm.value))
 const drawerErrors = computed(() => (isCreatingProject.value ? props.projectErrors : props.projectEditErrors))
-const drawerTitle = computed(() => (isCreatingProject.value ? '添加项目经历' : '编辑项目经历'))
+const drawerTitle = computed(() => {
+  if (isCreatingProject.value) return '添加项目经历'
+  if (isReviewingImportedProject.value) return '核对 PDF 项目经历'
+  return '编辑项目经历'
+})
 const drawerDescription = computed(() =>
   isCreatingProject.value
     ? '补充完整项目经历后，它会加入当前简历的项目列表。'
-    : '修改后点击保存，才会同步到已添加项目列表。',
+    : isReviewingImportedProject.value
+      ? 'AI 识别结果可能存在偏差，确认后才会加入正式项目列表。'
+      : '修改后点击保存，才会同步到已添加项目列表。',
 )
 
 function closeProjectDrawer() {
@@ -90,9 +103,64 @@ function clearDrawerError(field: ProjectRequiredField) {
           </UButton>
         </div>
 
+        <div v-if="pendingImportedProjects.length" class="mt-4 rounded-xl border border-warning/30 bg-warning/5 p-4">
+          <div class="flex items-start gap-3">
+            <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+              <UIcon name="i-lucide-scan-text" class="size-4" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-highlighted">PDF 识别待确认</p>
+              <p class="mt-1 text-xs leading-5 text-muted">逐条核对后加入正式项目；不需要的结果可以忽略。</p>
+            </div>
+          </div>
+          <div class="mt-3 space-y-2">
+            <div
+              v-for="(project, index) in pendingImportedProjects"
+              :key="project.id"
+              class="flex items-center justify-between gap-3 rounded-lg border border-default bg-default/70 px-3 py-2.5"
+            >
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium text-highlighted">
+                  {{ project.name || `待确认项目 ${index + 1}` }}
+                </p>
+                <p class="mt-0.5 truncate text-xs text-muted">
+                  {{ project.techStack || project.description || '请打开后补充项目内容' }}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-1">
+                <UButton
+                  type="button"
+                  size="xs"
+                  color="primary"
+                  variant="solid"
+                  icon="i-lucide-list-checks"
+                  class="shadow-sm"
+                  @click="emit('openImportedProjectEdit', index)"
+                  >核对</UButton
+                >
+                <UButton
+                  type="button"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-x"
+                  :aria-label="`忽略 ${project.name || '待确认项目'}`"
+                  @click="emit('ignoreImportedProject', index)"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div v-if="projects.length === 0" class="app-panel-muted mt-4 px-5 py-9 text-center">
           <UIcon name="i-lucide-folder-plus" class="mx-auto size-5 text-muted" />
-          <p class="mt-3 text-sm text-muted">还没有项目经历，从第一段项目开始补充吧</p>
+          <p class="mt-3 text-sm text-muted">
+            {{
+              pendingImportedProjects.length
+                ? '尚无已确认项目，请先核对上方识别结果'
+                : '还没有项目经历，从第一段项目开始补充吧'
+            }}
+          </p>
         </div>
 
         <div v-else class="mt-4 space-y-3">
@@ -305,7 +373,7 @@ function clearDrawerError(field: ProjectRequiredField) {
             <footer class="flex shrink-0 justify-end gap-2 border-t border-default px-6 py-4">
               <UButton type="button" color="neutral" variant="ghost" @click="closeProjectDrawer">取消</UButton>
               <UButton type="button" icon="i-lucide-check" @click="saveProjectDrawer">
-                {{ isCreatingProject ? '添加项目' : '保存项目' }}
+                {{ isCreatingProject ? '添加项目' : isReviewingImportedProject ? '确认加入' : '保存项目' }}
               </UButton>
             </footer>
           </section>

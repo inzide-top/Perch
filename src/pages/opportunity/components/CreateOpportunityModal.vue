@@ -18,6 +18,7 @@ type BatchItemStatus = 'processing' | 'ready' | 'failed'
 
 type BatchImportItem = {
   id: string
+  sourceItemIndex: number | null
   url: string
   status: BatchItemStatus
   preview: OpportunityImportPreview | null
@@ -28,7 +29,7 @@ type BatchImportItem = {
 }
 
 type BatchCreateRequest = {
-  items: Array<{ id: string; payload: CreateOpportunityPayload }>
+  items: Array<{ id: string; sourceItemIndex: number | null; payload: CreateOpportunityPayload }>
   closeWhenDone: boolean
 }
 
@@ -49,7 +50,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  submit: [payload: CreateOpportunityPayload]
+  submit: [request: { payload: CreateOpportunityPayload; sourceItemIndex: number | null }]
   submitBatch: [request: BatchCreateRequest]
 }>()
 
@@ -70,6 +71,7 @@ const importResult = ref<{
 const batchItems = ref<BatchImportItem[]>([])
 const activeBatchItemId = ref('')
 const reviewModeActive = ref(false)
+const assistantSourceItemIndex = ref<number | null>(null)
 let importAbortController: AbortController | null = null
 const retryAbortControllers = new Map<string, AbortController>()
 const form = reactive<MockJobDraft>({
@@ -128,6 +130,7 @@ function resetForm() {
   batchItems.value = []
   activeBatchItemId.value = ''
   reviewModeActive.value = false
+  assistantSourceItemIndex.value = null
   clearAllErrors()
 }
 
@@ -203,6 +206,7 @@ function toDraft(preview: OpportunityImportPreview): MockJobDraft {
 function createProcessingBatchItem(url: string, index: number): BatchImportItem {
   return {
     id: `${Date.now()}-${index}`,
+    sourceItemIndex: null,
     url,
     status: 'processing',
     preview: null,
@@ -358,30 +362,36 @@ function hydrateAssistantReview(payload: ChatOpportunityImportResultPart) {
       .map((item) => item.sourceUrl)
       .filter((url): url is string => Boolean(url))
       .join('\n')
-    batchItems.value = payload.items.map((item, index): BatchImportItem => {
+    batchItems.value = payload.items.flatMap((item, index): BatchImportItem[] => {
+      if (item.status === 'ready' && item.createdOpportunityId) return []
       const base = {
         id: `assistant-import-${props.reviewRevision ?? 0}-${index}`,
+        sourceItemIndex: index,
         url: item.sourceUrl ?? '',
         creationError: '',
       }
       if (item.status === 'ready') {
-        return {
+        return [
+          {
+            ...base,
+            status: 'ready',
+            preview: item.preview,
+            draft: toDraft(item.preview),
+            error: '',
+            selected: true,
+          },
+        ]
+      }
+      return [
+        {
           ...base,
-          status: 'ready',
-          preview: item.preview,
-          draft: toDraft(item.preview),
-          error: '',
-          selected: true,
-        }
-      }
-      return {
-        ...base,
-        status: 'failed',
-        preview: null,
-        draft: null,
-        error: item.error,
-        selected: false,
-      }
+          status: 'failed',
+          preview: null,
+          draft: null,
+          error: item.error,
+          selected: false,
+        },
+      ]
     })
     activeBatchItemId.value = batchReadyItems.value[0]?.id ?? ''
     if (batchReadyItems.value.length === 0) {
@@ -390,8 +400,9 @@ function hydrateAssistantReview(payload: ChatOpportunityImportResultPart) {
     return
   }
 
-  const readyItem = payload.items.find((item) => item.status === 'ready')
+  const readyItem = payload.items.find((item) => item.status === 'ready' && !item.createdOpportunityId)
   if (readyItem?.status === 'ready') {
+    assistantSourceItemIndex.value = payload.items.indexOf(readyItem)
     applyImportPreview(readyItem.preview)
     return
   }
@@ -571,6 +582,7 @@ function submit() {
     emit('submitBatch', {
       items: selectedBatchItems.value.map((item) => ({
         id: item.id,
+        sourceItemIndex: item.sourceItemIndex,
         payload: {
           company: item.draft!.company.trim(),
           jobTitle: item.draft!.jobTitle.trim(),
@@ -589,11 +601,14 @@ function submit() {
   if (!validateForm()) return
 
   emit('submit', {
-    company: editableForm.value.company.trim(),
-    jobTitle: editableForm.value.jobTitle.trim(),
-    address: [...editableForm.value.address],
-    introduction: editableForm.value.introduction.trim(),
-    description: editableForm.value.description.trim(),
+    sourceItemIndex: assistantSourceItemIndex.value,
+    payload: {
+      company: editableForm.value.company.trim(),
+      jobTitle: editableForm.value.jobTitle.trim(),
+      address: [...editableForm.value.address],
+      introduction: editableForm.value.introduction.trim(),
+      description: editableForm.value.description.trim(),
+    },
   })
 }
 

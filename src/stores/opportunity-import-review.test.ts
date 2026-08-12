@@ -15,6 +15,8 @@ test('响应式聊天结果可以安全转交给岗位审核工作台', () => {
         status: 'ready',
         sourceLabel: 'jobs.example.com',
         sourceUrl: 'https://jobs.example.com/frontend',
+        createdOpportunityId: null,
+        createdAt: null,
         preview: {
           source: {
             type: 'url',
@@ -41,8 +43,17 @@ test('响应式聊天结果可以安全转交给岗位审核工作台', () => {
   })
   const store = useOpportunityImportReviewStore()
 
-  assert.doesNotThrow(() => store.open(payload))
+  assert.doesNotThrow(() => store.open(payload, '00000000-0000-4000-8000-000000000001'))
   assert.equal(store.revision, 1)
   assert.equal(store.payload?.items.length, 2)
   assert.notEqual(store.payload, payload)
+
+  store.markCreated('00000000-0000-4000-8000-000000000001', [
+    { itemIndex: 0, opportunityId: '11111111-1111-4111-8111-111111111111' },
+  ])
+  const createdItem = store.payload?.items[0]
+  assert.equal(
+    createdItem?.status === 'ready' ? createdItem.createdOpportunityId : null,
+    '11111111-1111-4111-8111-111111111111',
+  )
 })

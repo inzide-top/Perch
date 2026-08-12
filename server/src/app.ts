@@ -1,4 +1,5 @@
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import Fastify from 'fastify'
 import { ZodError } from 'zod'
 import { healthRoute } from './routes/health.route'
@@ -133,6 +134,15 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://1
 await app.register(cors, {
   origin: corsOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+})
+
+await app.register(multipart, {
+  limits: {
+    files: 1,
+    fields: 1,
+    parts: 2,
+    fileSize: 8 * 1024 * 1024,
+  },
 })
 
 await app.register(healthRoute, { prefix: '/api' })

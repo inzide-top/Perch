@@ -166,6 +166,12 @@ export const chatApi = {
     return request.get<ChatConversationDetail>(`/chat/conversations/${encodeURIComponent(conversationId)}`)
   },
 
+  completeOpportunityImportItems(messageId: string, items: Array<{ itemIndex: number; opportunityId: string }>) {
+    return request.patch<ChatMessageRecord>(`/chat/messages/${encodeURIComponent(messageId)}/opportunity-imports`, {
+      items,
+    })
+  },
+
   sendMessage(conversationId: string, input: SendChatMessageOptions) {
     return request.post<ChatTurnResult>(`/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
       commandId: crypto.randomUUID(),

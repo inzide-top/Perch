@@ -28,9 +28,11 @@ import { getConfiguredChatMemoryIndexer, getConfiguredChatMemoryRetriever } from
 import { collectChatMemoryOpportunityIds } from '../retrieval/chat-memory-opportunity-ids'
 import { appendChatMemoryContext } from '../retrieval/chat-memory-context'
 import type { ChatMemoryRetriever } from '../retrieval/chat-memory-retriever'
+import { shouldRetrieveChatMemory } from '../retrieval/chat-memory-retrieval-policy'
 import type { AgentToolResult } from './agent-runtime'
 import type { AgentModelCallObserver } from './agent-runtime'
 import { createChatModelAgentRunObserver } from './chat-model-agent-run'
+import { compactCompletedChatConversation } from './chat-context-compactor'
 
 type ActiveChatRun = {
   controller: AbortController
@@ -93,11 +95,20 @@ export type ChatWorkerDependencies = {
   memoryIndexer?: Pick<ChatMemoryIndexer, 'indexCompletedTurn'> | null
   memoryRetriever?: Pick<ChatMemoryRetriever, 'retrieve'> | null
   modelCallObserver?: AgentModelCallObserver | null
+  contextCompactor?:
+    | ((input: {
+        userId: string
+        conversationId: string
+        modelConnection: ModelConnection
+        adapter: ModelProviderAdapter
+        signal: AbortSignal
+      }) => Promise<unknown>)
+    | null
   logError?: (
     error: unknown,
     context: {
       runId: string
-      stage: 'run' | 'auto_title' | 'memory_index' | 'memory_retrieval' | 'model_call_recording'
+      stage: 'run' | 'auto_title' | 'memory_index' | 'memory_retrieval' | 'context_compaction' | 'model_call_recording'
     },
   ) => void
 }
@@ -190,7 +201,8 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
       backgroundError: unknown,
       context: {
         runId: string
-        stage: 'run' | 'auto_title' | 'memory_index' | 'memory_retrieval' | 'model_call_recording'
+        stage:
+          'run' | 'auto_title' | 'memory_index' | 'memory_retrieval' | 'context_compaction' | 'model_call_recording'
       },
     ) => {
       console.error('ChatRun 后台任务失败', context, backgroundError)
@@ -218,7 +230,10 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
 
   try {
     let runMessages = input.messages
-    if (!input.continuation && input.memoryIndex) {
+    if (
+      input.memoryIndex &&
+      shouldRetrieveChatMemory({ userText: input.memoryIndex.userText, isContinuation: Boolean(input.continuation) })
+    ) {
       try {
         const memoryRetriever =
           dependencies.memoryRetriever === undefined ? getConfiguredChatMemoryRetriever() : dependencies.memoryRetriever
@@ -226,6 +241,7 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
           queryText: input.memoryIndex.userText,
           scope: {
             userId: input.userId,
+            currentConversationId: input.conversationId,
             conversationScopeType: input.scopeType,
             boundOpportunityId: input.opportunity?.id ?? null,
             referencedOpportunityIds: input.memoryIndex.relatedOpportunityIds,
@@ -290,6 +306,33 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
       } catch (error) {
         // 历史记忆是旁路增强；索引失败不能把已经完成并展示的主回答改成 failed。
         logError(error, { runId: input.runId, stage: 'memory_index' })
+      }
+    }
+    if (result.status === 'completed') {
+      try {
+        const contextCompactor =
+          dependencies.contextCompactor === undefined
+            ? persistence === chatRepository
+              ? (record: {
+                  userId: string
+                  conversationId: string
+                  modelConnection: ModelConnection
+                  adapter: ModelProviderAdapter
+                  signal: AbortSignal
+                }) => compactCompletedChatConversation(record, { adapter: record.adapter })
+              : null
+            : dependencies.contextCompactor
+
+        await contextCompactor?.({
+          userId: input.userId,
+          conversationId: input.conversationId,
+          modelConnection: input.modelConnection,
+          adapter,
+          signal: controller.signal,
+        })
+      } catch (error) {
+        // 上下文摘要只是下一轮的派生缓存；失败不能反向修改已完成的 ChatRun。
+        if (!controller.signal.aborted) logError(error, { runId: input.runId, stage: 'context_compaction' })
       }
     }
   } catch (error) {

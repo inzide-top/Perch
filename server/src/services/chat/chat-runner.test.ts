@@ -384,6 +384,52 @@ test('工具执行失败会记录 tool_call_failed，并不会伪造结果卡片
   )
 })
 
+test('只读工具的可恢复失败会继续调用模型，而不会把 ChatRun 标记为失败', async () => {
+  const persistence = new FakePersistence()
+  const adapter = new FakeAdapter([
+    [
+      {
+        type: 'tool_call',
+        callId: 'call-read-failed',
+        name: 'search_opportunities',
+        arguments: {},
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      { type: 'text_delta', text: '暂时无法读取机会数据，请稍后再试。' },
+      { type: 'completed', finishReason: 'stop', tokenUsage: null },
+    ],
+  ])
+  const toolRegistry = new AgentToolRegistry([
+    {
+      name: 'search_opportunities',
+      version: '1',
+      description: '搜索机会',
+      inputSchema: { type: 'object' },
+      inputValidator: z.object({}),
+      executionFailurePolicy: 'return_to_model',
+      requiresConfirmation: false,
+      execute: async () => {
+        throw new Error('数据库暂时不可用')
+      },
+    },
+  ])
+
+  const result = await executeChatRun(createInput(persistence, toolRegistry), { adapter, persistence })
+
+  assert.equal(result.status, 'completed')
+  assert.equal(persistence.status, 'completed')
+  const failureEvent = persistence.events.find((event) => event.eventType === 'tool_call_failed')
+  assert.equal(failureEvent?.payload.recoverable, true)
+  assert.equal(
+    persistence.events.some((event) => event.eventType === 'run_failed'),
+    false,
+  )
+  assert.equal(persistence.messages[0]?.status, 'completed')
+  assert.equal(persistence.messages[0]?.text, '暂时无法读取机会数据，请稍后再试。')
+})
+
 test('模型请求失败会持久化助手失败消息并绑定为 Run 输出', async () => {
   const persistence = new FakePersistence()
   const adapter: ModelProviderAdapter = {

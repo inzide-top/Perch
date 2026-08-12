@@ -42,6 +42,7 @@ describe('ChatMemoryRetriever', () => {
 
     const scope = {
       userId: 'user-1',
+      currentConversationId: 'conversation-current',
       conversationScopeType: 'opportunity' as const,
       boundOpportunityId: 'opportunity-a',
       referencedOpportunityIds: ['opportunity-b'],
@@ -91,6 +92,7 @@ describe('ChatMemoryRetriever', () => {
       queryText: '   ',
       scope: {
         userId: 'user-1',
+        currentConversationId: 'conversation-current',
         conversationScopeType: 'global',
         boundOpportunityId: null,
         referencedOpportunityIds: [],
@@ -126,6 +128,7 @@ describe('ChatMemoryRetriever', () => {
         queryText: '测试',
         scope: {
           userId: 'user-1',
+          currentConversationId: 'conversation-current',
           conversationScopeType: 'global',
           boundOpportunityId: null,
           referencedOpportunityIds: [],
