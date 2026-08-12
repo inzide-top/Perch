@@ -262,6 +262,49 @@ test('首轮回答完成后触发自动命名，命名失败也不会回滚已�
   assert.deepEqual(loggedStages, ['auto_title'])
 })
 
+test('主回答完成后才执行上下文压缩，压缩失败不回滚 ChatRun', async () => {
+  process.env.DATABASE_URL ??= 'postgresql://test:test@127.0.0.1:5432/test'
+  const { launchChatRunInBackground } = await import('./chat-worker')
+  const persistence = new WorkerPersistence()
+  const loggedStages: string[] = []
+  let compactionCount = 0
+  const adapter: ModelProviderAdapter = {
+    async *stream() {
+      yield { type: 'text_delta', text: '主回答已经完成。' }
+      yield { type: 'completed', finishReason: 'stop', tokenUsage: null }
+    },
+  }
+
+  await launchChatRunInBackground(
+    {
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      scopeType: 'global',
+      runId: 'run-context-compaction-test',
+      expectedRevision: 1,
+      modelConnection: { baseUrl: 'https://example.com/v1', modelName: 'test-model', apiKey: 'test-key' },
+      messages: [{ role: 'user', content: '继续聊' }],
+      maxModelCalls: 1,
+      maxToolCalls: 0,
+    },
+    {
+      persistence,
+      adapter,
+      toolRegistry: new AgentToolRegistry([]),
+      contextCompactor: async () => {
+        compactionCount += 1
+        assert.equal(persistence.status, 'completed')
+        throw new Error('摘要服务暂时不可用')
+      },
+      logError: (_error, context) => loggedStages.push(context.stage),
+    },
+  )
+
+  assert.equal(compactionCount, 1)
+  assert.equal(persistence.status, 'completed')
+  assert.deepEqual(loggedStages, ['context_compaction'])
+})
+
 test('回答完成后才建立记忆索引，并合并显式引用与可信工具参数中的机会 ID', async () => {
   process.env.DATABASE_URL ??= 'postgresql://test:test@127.0.0.1:5432/test'
   const { launchChatRunInBackground } = await import('./chat-worker')
@@ -403,6 +446,7 @@ test('首次模型调用前按当前对话边界召回历史记忆并合并进 S
   assert.equal(retrievalInputs.length, 1)
   assert.deepEqual(retrievalInputs[0]?.scope, {
     userId: 'user-1',
+    currentConversationId: 'conversation-1',
     conversationScopeType: 'opportunity',
     boundOpportunityId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     referencedOpportunityIds: [referencedOpportunityId],
@@ -452,6 +496,49 @@ test('历史记忆召回失败时继续正常模型回答并只记录旁路错�
 
   assert.equal(persistence.status, 'completed')
   assert.deepEqual(loggedStages, ['memory_retrieval'])
+})
+
+test('完全匹配确认词时跳过历史记忆检索但仍正常完成回答', async () => {
+  process.env.DATABASE_URL ??= 'postgresql://test:test@127.0.0.1:5432/test'
+  const { launchChatRunInBackground } = await import('./chat-worker')
+  const persistence = new WorkerPersistence()
+  let retrievalCount = 0
+  const adapter: ModelProviderAdapter = {
+    async *stream(input) {
+      assert.deepEqual(input.messages, [{ role: 'user', content: '好的。' }])
+      yield { type: 'text_delta', text: '好的，我们继续。' }
+      yield { type: 'completed', finishReason: 'stop', tokenUsage: null }
+    },
+  }
+
+  await launchChatRunInBackground(
+    {
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      scopeType: 'global',
+      runId: 'run-memory-retrieval-acknowledgement-test',
+      expectedRevision: 1,
+      modelConnection: { baseUrl: 'https://example.com/v1', modelName: 'test-model', apiKey: 'test-key' },
+      messages: [{ role: 'user', content: '好的。' }],
+      maxModelCalls: 1,
+      maxToolCalls: 0,
+      memoryIndex: { userText: '好的。', relatedOpportunityIds: [] },
+    },
+    {
+      persistence,
+      adapter,
+      toolRegistry: new AgentToolRegistry([]),
+      memoryRetriever: createMemoryRetriever(async () => {
+        retrievalCount += 1
+        return []
+      }),
+      memoryIndexer: null,
+      logError: () => undefined,
+    },
+  )
+
+  assert.equal(retrievalCount, 0)
+  assert.equal(persistence.status, 'completed')
 })
 
 test('等待用户确认时不会提前建立记忆索引', async () => {

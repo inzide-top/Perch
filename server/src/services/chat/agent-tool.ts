@@ -33,6 +33,11 @@ export type AgentToolDefinition = ModelProviderTool & {
   version: string
   /** false 时只用于恢复历史 checkpoint，不再暴露给模型生成新的调用。 */
   exposeToModel?: boolean
+  /**
+   * 只有明确无副作用的读取工具才能把执行错误作为 Observation 交回模型。
+   * 写入工具默认终止 Run，避免在副作用结果不确定时重复执行或改走其他写入路径。
+   */
+  executionFailurePolicy?: 'fail_run' | 'return_to_model'
   requiresConfirmation: boolean
   inputValidator: ZodType<unknown>
   /**

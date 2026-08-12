@@ -30,9 +30,10 @@ export function createRetrievalDocumentScope(input: {
  */
 export function canRetrieveDocument(
   queryScope: RetrievalScope,
-  document: { userId: string; scope: RetrievalDocumentScope },
+  document: { userId: string; conversationId: string; scope: RetrievalDocumentScope },
 ) {
   if (queryScope.userId !== document.userId) return false
+  if (queryScope.currentConversationId === document.conversationId) return false
 
   if (queryScope.conversationScopeType === 'global') return true
   if (document.scope.type === 'global') return true

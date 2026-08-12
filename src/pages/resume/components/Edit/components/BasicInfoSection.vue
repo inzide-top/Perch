@@ -18,12 +18,13 @@ import type {
   WorkExperienceRequiredField,
 } from '../types'
 
-defineProps<{
+const props = defineProps<{
   resumeErrors: ResumeErrors
   educationLevelOptions: EducationLevelOption[]
   currentStatusOptions: CurrentStatusOption[]
   jobSearchIdentityOptions: JobSearchIdentityOption[]
   languageLevelOptions: LanguageLevelOption[]
+  pdfImportedFields?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -74,6 +75,11 @@ const availableLanguageOptions = computed(() => {
 
   return allLanguageOptions.filter((language) => !selectedLanguageSet.has(language.value))
 })
+const pdfImportedFieldSet = computed(() => new Set(props.pdfImportedFields ?? []))
+
+function isPdfImported(field: string) {
+  return pdfImportedFieldSet.value.has(field)
+}
 const canAddLanguage = computed(
   () => Boolean(languageForm.language.trim()) && availableLanguageOptions.value.length > 0,
 )
@@ -266,6 +272,13 @@ onBeforeUnmount(() => {
         <h2 class="app-section-title">基础信息</h2>
         <p class="app-section-kicker mt-1">用于后续 JD 匹配、简历建议和面试追问</p>
       </div>
+      <UBadge
+        v-if="pdfImportedFields?.length"
+        color="primary"
+        variant="subtle"
+        icon="i-lucide-file-scan"
+        label="PDF 导入字段，修改后标识消失"
+      />
     </div>
 
     <div class="grid gap-x-5 gap-y-3 md:grid-cols-2">
@@ -273,7 +286,7 @@ onBeforeUnmount(() => {
         <UInput
           v-model="form.title"
           class="w-full"
-          :class="{ 'form-control-error': resumeErrors.title }"
+          :class="{ 'form-control-error': resumeErrors.title, 'pdf-imported-control': isPdfImported('title') }"
           placeholder="前端开发简历"
           @update:model-value="clearResumeError('title')"
         />
@@ -288,7 +301,10 @@ onBeforeUnmount(() => {
         <UInput
           v-model="form.targetDirection"
           class="w-full"
-          :class="{ 'form-control-error': resumeErrors.targetDirection }"
+          :class="{
+            'form-control-error': resumeErrors.targetDirection,
+            'pdf-imported-control': isPdfImported('targetDirection'),
+          }"
           placeholder="前端开发工程师"
           @update:model-value="clearResumeError('targetDirection')"
         />
@@ -303,7 +319,7 @@ onBeforeUnmount(() => {
         <UInput
           v-model="form.name"
           class="w-full"
-          :class="{ 'form-control-error': resumeErrors.name }"
+          :class="{ 'form-control-error': resumeErrors.name, 'pdf-imported-control': isPdfImported('name') }"
           placeholder="请输入姓名"
           @update:model-value="clearResumeError('name')"
         />
@@ -312,18 +328,28 @@ onBeforeUnmount(() => {
         </p>
       </UFormField>
       <UFormField label="意向城市">
-        <CityPicker v-model="form.address" />
+        <div :class="{ 'pdf-imported-control': isPdfImported('address') }"><CityPicker v-model="form.address" /></div>
         <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
       </UFormField>
     </div>
 
     <div class="grid gap-x-5 gap-y-3 md:grid-cols-2">
       <UFormField label="毕业/在读学校">
-        <UInput v-model="form.school" class="w-full" placeholder="例如：武汉大学" />
+        <UInput
+          v-model="form.school"
+          class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('school') }"
+          placeholder="例如：武汉大学"
+        />
         <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
       </UFormField>
       <UFormField label="专业">
-        <UInput v-model="form.major" class="w-full" placeholder="例如：计算机科学与技术" />
+        <UInput
+          v-model="form.major"
+          class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('major') }"
+          placeholder="例如：计算机科学与技术"
+        />
         <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
       </UFormField>
       <UFormField label="毕业时间">
@@ -333,6 +359,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             class="w-full justify-between"
+            :class="{ 'pdf-imported-control': isPdfImported('graduationYear') }"
             trailing-icon="i-lucide-calendar-days"
           >
             {{ graduationTimeLabel }}
@@ -354,6 +381,7 @@ onBeforeUnmount(() => {
         <USelect
           v-model="form.educationLevel"
           class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('educationLevel') }"
           :items="educationLevelOptions"
           value-key="value"
           placeholder="选择学历"
@@ -364,7 +392,10 @@ onBeforeUnmount(() => {
         <USelect
           v-model="form.jobSearchIdentity"
           class="w-full"
-          :class="{ 'form-control-error': resumeErrors.jobSearchIdentity }"
+          :class="{
+            'form-control-error': resumeErrors.jobSearchIdentity,
+            'pdf-imported-control': isPdfImported('jobSearchIdentity'),
+          }"
           :items="jobSearchIdentityOptions"
           value-key="value"
           placeholder="选择求职身份"
@@ -381,6 +412,7 @@ onBeforeUnmount(() => {
         <USelect
           v-model="form.currentStatus"
           class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('currentStatus') }"
           :items="currentStatusOptions"
           value-key="value"
           placeholder="选择当前状态"
@@ -394,6 +426,7 @@ onBeforeUnmount(() => {
         <div class="flex min-w-0 items-center gap-2">
           <h3 class="text-sm font-semibold text-highlighted">过往工作经历</h3>
           <UBadge color="neutral" variant="subtle" :label="`${workExperiences.length} 段`" />
+          <UBadge v-if="isPdfImported('workExperiences')" color="primary" variant="subtle" label="PDF 导入" />
         </div>
         <UButton
           type="button"
@@ -477,6 +510,7 @@ onBeforeUnmount(() => {
         <UTextarea
           v-model="portfolioLinksText"
           class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('portfolioLinks') }"
           :rows="3"
           placeholder="一行一个链接，例如：https://github.com/your-name/project"
         />
@@ -485,7 +519,10 @@ onBeforeUnmount(() => {
 
       <div>
         <div class="mb-2 flex items-center justify-between gap-3">
-          <label class="block text-sm font-medium text-highlighted">语言能力</label>
+          <div class="flex items-center gap-2">
+            <label class="block text-sm font-medium text-highlighted">语言能力</label>
+            <UBadge v-if="isPdfImported('languages')" color="primary" variant="subtle" label="PDF 导入" />
+          </div>
           <span v-if="languages.length" class="text-xs text-muted">已添加 {{ languages.length }} 项</span>
         </div>
 
@@ -563,7 +600,7 @@ onBeforeUnmount(() => {
         <UTextarea
           v-model="form.skills"
           class="w-full"
-          :class="{ 'form-control-error': resumeErrors.skills }"
+          :class="{ 'form-control-error': resumeErrors.skills, 'pdf-imported-control': isPdfImported('skills') }"
           :rows="5"
           placeholder="例如：Vue 3、TypeScript、Vite、前端工程化"
           @update:model-value="clearResumeError('skills')"
@@ -576,7 +613,13 @@ onBeforeUnmount(() => {
         </p>
       </UFormField>
       <UFormField label="自我评价">
-        <UTextarea v-model="form.comment" class="w-full" :rows="5" placeholder="用几句话介绍你的工作方向、经验和优势" />
+        <UTextarea
+          v-model="form.comment"
+          class="w-full"
+          :class="{ 'pdf-imported-control': isPdfImported('comment') }"
+          :rows="5"
+          placeholder="用几句话介绍你的工作方向、经验和优势"
+        />
         <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
       </UFormField>
     </div>
@@ -713,5 +756,15 @@ onBeforeUnmount(() => {
   min-height: 32px !important;
   border-color: var(--ui-border-accented);
   border-radius: calc(var(--ui-radius) * 1.5);
+}
+
+:deep(.pdf-imported-control input),
+:deep(.pdf-imported-control textarea),
+:deep(button.pdf-imported-control),
+:deep(.pdf-imported-control .city-picker-trigger),
+:deep(.pdf-imported-control button) {
+  border-color: color-mix(in srgb, var(--app-accent) 62%, var(--ui-border)) !important;
+  background: color-mix(in srgb, var(--app-accent) 7%, var(--app-surface)) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 8%, transparent);
 }
 </style>

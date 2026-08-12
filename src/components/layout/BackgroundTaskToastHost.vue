@@ -7,12 +7,14 @@ import {
   type BackgroundTaskEntry,
   type BackgroundTaskUpdateKind,
 } from '@/stores/background-tasks'
+import { useResumePdfImportReviewStore } from '@/stores'
 import { useInterviewStore } from '@/stores/interview'
 import { useOpportunityStore } from '@/stores/opportunity'
 import { useResumeStore } from '@/stores/resume'
 import { useSettingsStore } from '@/stores/settings'
 import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import { actionStrategyApi } from '@/services/action-strategy'
+import { resumeApi } from '@/services/resumes'
 import AnswerReviewDrawer from '@/pages/opportunity/detail/interview/components/AnswerReviewDrawer.vue'
 
 type ToastItem = {
@@ -35,6 +37,7 @@ const opportunityStore = useOpportunityStore()
 const interviewStore = useInterviewStore()
 const resumeStore = useResumeStore()
 const settingsStore = useSettingsStore()
+const resumePdfImportReviewStore = useResumePdfImportReviewStore()
 const toastItems = ref<ToastItem[]>([])
 const activeReviewTarget = ref<{ sessionId: string; turnId: string } | null>(null)
 const toastTimers = new Map<string, ToastTimer>()
@@ -63,6 +66,7 @@ function isCurrentTaskContext(task: BackgroundTaskEntry) {
   }
 
   if (task.type === 'answer_deep_evaluation') return route.path.includes(`/interviews/${task.sessionId}`)
+  if (task.type === 'resume_pdf_import') return route.path === '/resumes'
   return route.path === '/strategy/actions'
 }
 
@@ -136,6 +140,7 @@ function taskContextLabel(task: BackgroundTaskEntry) {
   }
 
   if (task.type === 'action_strategy') return '求职策略'
+  if (task.type === 'resume_pdf_import') return task.resumePdfImport?.fileName ?? 'PDF 简历'
 
   const session = interviewStore.session(task.sessionId)
   const opportunity = session ? opportunityStore.opportunities.find((item) => item.id === session.opportunityId) : null
@@ -155,7 +160,9 @@ function taskStatusDescription(item: ToastItem) {
       ? 'JD 匹配分析'
       : item.task.type === 'answer_deep_evaluation'
         ? '深度点评'
-        : '求职策略'
+        : item.task.type === 'action_strategy'
+          ? '求职策略'
+          : 'PDF 简历识别'
   if (item.kind !== 'failed') return `${taskName}已经完成。`
   return getAiTaskErrorPresentation(taskError(item.task)).description
 }
@@ -163,6 +170,7 @@ function taskStatusDescription(item: ToastItem) {
 function taskError(task: BackgroundTaskEntry) {
   if (task.type === 'job_analysis') return task.analysis?.error
   if (task.type === 'answer_deep_evaluation') return task.evaluation?.error
+  if (task.type === 'resume_pdf_import') return task.resumePdfImport?.error
   return task.strategy?.error
 }
 
@@ -203,6 +211,13 @@ async function openTask(item: ToastItem) {
     return
   }
 
+  if (item.task.type === 'resume_pdf_import') {
+    if (item.task.resumePdfImport?.result) resumePdfImportReviewStore.open(item.task.resumePdfImport)
+    dismissToast(item.id)
+    await router.push('/resumes')
+    return
+  }
+
   dismissToast(item.id)
   await router.push('/strategy/actions')
 }
@@ -240,6 +255,19 @@ async function retryTask(item: ToastItem) {
       }
     } catch {
       // 失败状态由统一后台轮询再次反馈。
+    }
+    return
+  }
+
+  if (item.task.type === 'resume_pdf_import') {
+    try {
+      const result = await resumeApi.retryResumePdfImportTask(item.task.taskId, settingsStore.llm)
+      backgroundTaskStore.register(
+        { type: 'resume_pdf_import', taskId: result.id },
+        { primary: result.fileName, secondary: 'PDF 简历识别' },
+      )
+    } catch {
+      await router.push('/resumes')
     }
     return
   }
@@ -300,7 +328,15 @@ onBeforeUnmount(() => {
               {{
                 item.kind === 'failed'
                   ? taskFailurePresentation(item.task).title
-                  : `${item.task.type === 'job_analysis' ? 'JD 分析' : item.task.type === 'answer_deep_evaluation' ? '深度点评' : '求职策略'}已完成`
+                  : `${
+                      item.task.type === 'job_analysis'
+                        ? 'JD 分析'
+                        : item.task.type === 'answer_deep_evaluation'
+                          ? '深度点评'
+                          : item.task.type === 'action_strategy'
+                            ? '求职策略'
+                            : 'PDF 简历识别'
+                    }已完成`
               }}
             </p>
             <p class="mt-1 text-xs leading-5 text-muted">
@@ -324,7 +360,9 @@ onBeforeUnmount(() => {
               item.kind === 'failed'
                 ? taskFailurePresentation(item.task).requiresModelAttention
                   ? '检查模型'
-                  : '重新生成'
+                  : item.task.type === 'resume_pdf_import'
+                    ? '重新识别'
+                    : '重新生成'
                 : '打开'
             }}
           </UButton>

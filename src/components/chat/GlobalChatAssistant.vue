@@ -190,6 +190,7 @@ const toast = useToast()
 const { opportunities } = storeToRefs(opportunityStore)
 const chat = useChatConversation()
 
+const chatDraftStorageKey = 'agent-seek-employment:chat-drafts:v1'
 const draft = ref('')
 const draftReferences = ref<ChatMessageReference[]>([])
 const optimisticReferences = ref<ChatMessageReference[]>([])
@@ -227,6 +228,7 @@ let historySearchDebounceTimer: number | null = null
 let copiedMessageTimer: number | null = null
 let scrollToLatestTimer: number | null = null
 let toolSkeletonTimer: number | null = null
+let draftPersistTimer: number | null = null
 let presentedToolCallId: string | null = null
 let isScrollingToLatest = false
 const refreshedMutationToolCallIds = new Set<string>()
@@ -235,6 +237,64 @@ const currentOpportunityId = computed(() => {
   const id = route.params.id
   return typeof id === 'string' && id.length > 0 ? id : null
 })
+
+type StoredChatDraft = {
+  text: string
+  references: ChatMessageReference[]
+  updatedAt: string
+}
+
+function readStoredChatDrafts() {
+  if (typeof sessionStorage === 'undefined') return {} as Record<string, StoredChatDraft>
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(chatDraftStorageKey) ?? '{}') as Record<string, StoredChatDraft>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    sessionStorage.removeItem(chatDraftStorageKey)
+    return {}
+  }
+}
+
+function getActiveDraftKey() {
+  if (chatStore.selectedConversationId) return `conversation:${chatStore.selectedConversationId}`
+  return draftOpportunityId.value ? `new:opportunity:${draftOpportunityId.value}` : 'new:global'
+}
+
+function persistDraft(key = getActiveDraftKey()) {
+  if (typeof sessionStorage === 'undefined') return
+  const drafts = readStoredChatDrafts()
+  if (!draft.value && draftReferences.value.length === 0) delete drafts[key]
+  else {
+    drafts[key] = {
+      text: draft.value,
+      references: [...draftReferences.value],
+      updatedAt: new Date().toISOString(),
+    }
+  }
+  sessionStorage.setItem(chatDraftStorageKey, JSON.stringify(drafts))
+}
+
+function restoreDraft(key = getActiveDraftKey()) {
+  const stored = readStoredChatDrafts()[key]
+  draft.value = stored?.text ?? ''
+  draftReferences.value = stored?.references ?? []
+}
+
+function clearStoredDraft(key = getActiveDraftKey()) {
+  if (typeof sessionStorage === 'undefined') return
+  const drafts = readStoredChatDrafts()
+  delete drafts[key]
+  sessionStorage.setItem(chatDraftStorageKey, JSON.stringify(drafts))
+}
+
+function scheduleDraftPersist() {
+  if (draftPersistTimer !== null) window.clearTimeout(draftPersistTimer)
+  const key = getActiveDraftKey()
+  draftPersistTimer = window.setTimeout(() => {
+    persistDraft(key)
+    draftPersistTimer = null
+  }, 180)
+}
 const currentOpportunity = computed(() => {
   if (!currentOpportunityId.value) return null
   return opportunities.value.find((item) => item.id === currentOpportunityId.value) ?? null
@@ -374,6 +434,13 @@ const activeToolNotice = computed(() => {
   }
 
   if (activity.status === 'failed') {
+    if (activity.recoverable) {
+      return {
+        label: `${toolLabel}未完成，正在调整方案`,
+        icon: 'i-lucide-loader-circle',
+        status: 'running' as const,
+      }
+    }
     return {
       label: `${toolLabel}失败`,
       icon: 'i-lucide-circle-alert',
@@ -394,6 +461,9 @@ const activeToolNotice = computed(() => {
 })
 const streamStatusLabel = computed(() => {
   if (isPreparingConversation.value || chat.isSending.value) return '正在准备回答'
+  if (latestToolActivity.value?.status === 'failed' && latestToolActivity.value.recoverable) {
+    return '正在调整工具调用方案'
+  }
 
   if (latestToolActivity.value?.name === 'search_opportunities') {
     if (latestToolActivity.value.status === 'requested' || latestToolActivity.value.status === 'running') {
@@ -934,7 +1004,9 @@ function formatConversationTime(value: string | null) {
 
 function selectConversation(conversationId: string) {
   if (isConversationMutationPending.value) return
+  persistDraft()
   chatStore.selectConversation(conversationId)
+  restoreDraft(`conversation:${conversationId}`)
   historyOpen.value = false
 }
 
@@ -1253,9 +1325,9 @@ async function openSelectedConversation() {
   const conversationId = chatStore.selectedConversationId
   optimisticText.value = null
   optimisticReferences.value = []
-  draftReferences.value = []
   if (!conversationId) {
     chat.clear()
+    restoreDraft()
     return false
   }
 
@@ -1278,6 +1350,9 @@ async function openSelectedConversation() {
     if (recovery.status === 'not_accepted') {
       draft.value = recovery.draftText
       draftReferences.value = recovery.references
+      persistDraft(`conversation:${conversationId}`)
+    } else {
+      restoreDraft(`conversation:${conversationId}`)
     }
     return true
   } catch {
@@ -1318,11 +1393,11 @@ function createGlobalConversation() {
 }
 
 function resetToNewConversationDraft() {
+  persistDraft()
   chatStore.selectConversation(null)
   chat.clear()
-  draft.value = ''
-  draftReferences.value = []
   draftOpportunityId.value = null
+  restoreDraft('new:global')
   optimisticText.value = null
   optimisticReferences.value = []
   optimisticSentAt.value = null
@@ -1422,6 +1497,7 @@ async function sendMessage() {
   const text = draft.value.trim()
   if (!text || isBusy.value || !isModelConfigured.value || isConversationArchived.value) return
 
+  const draftKeyBeforeSend = getActiveDraftKey()
   if (!selectedConversation.value) {
     isPreparingConversation.value = true
     try {
@@ -1448,6 +1524,8 @@ async function sendMessage() {
   }
 
   const references = [...draftReferences.value]
+  clearStoredDraft(draftKeyBeforeSend)
+  clearStoredDraft()
   draft.value = ''
   optimisticText.value = text
   optimisticReferences.value = references
@@ -1467,6 +1545,8 @@ async function sendMessage() {
     void loadHistory(true)
   } catch {
     draft.value = text
+    draftReferences.value = references
+    persistDraft()
     optimisticText.value = null
     optimisticReferences.value = []
     optimisticSentAt.value = null
@@ -1653,6 +1733,7 @@ watch(draft, (value, previousValue) => {
   draft.value = value.slice(0, -1)
   void nextTick(() => referencePicker.value?.show())
 })
+watch([draft, draftReferences], scheduleDraftPersist, { deep: true })
 watch([() => chat.messages.value.length, chatUiStatus], () => void nextTick(updateBackToLatestVisibility))
 onMounted(() => {
   if (chatStore.isOpen) void ensureConversation()
@@ -1661,6 +1742,8 @@ onBeforeUnmount(() => {
   if (historySearchDebounceTimer !== null) window.clearTimeout(historySearchDebounceTimer)
   if (copiedMessageTimer !== null) window.clearTimeout(copiedMessageTimer)
   if (scrollToLatestTimer !== null) window.clearTimeout(scrollToLatestTimer)
+  if (draftPersistTimer !== null) window.clearTimeout(draftPersistTimer)
+  persistDraft()
   clearToolSkeletonTimer()
   chat.stop()
   stopResize()
@@ -1897,7 +1980,11 @@ onBeforeUnmount(() => {
                       :streaming="isStreamingTextPart(message, index)"
                     />
                     <OpportunitySearchResultCard v-else-if="part.type === 'opportunity_search_result'" :part="part" />
-                    <OpportunityImportResultCard v-else-if="part.type === 'opportunity_import_result'" :part="part" />
+                    <OpportunityImportResultCard
+                      v-else-if="part.type === 'opportunity_import_result'"
+                      :part="part"
+                      :message-id="message.id"
+                    />
                     <OpportunitySearchResultSkeleton v-else-if="part.type === 'opportunity_search_placeholder'" />
                     <OpportunityTargetInputCard
                       v-else-if="part.type === 'opportunity_target_input_action'"

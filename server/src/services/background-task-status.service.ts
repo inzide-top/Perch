@@ -3,6 +3,8 @@ import { getJobAnalyses } from './job-analysis.service'
 import { getAnswerDeepEvaluationStatus, InterviewNotFoundError } from './interview.service'
 import { getActionStrategySnapshotStatus } from './action-strategy.service'
 import { backgroundTaskStatusInputSchema, type BackgroundTaskReference } from '../schemas/background-task.schema'
+import { getResumePdfImportTask } from './resume-pdf-import-task.service'
+import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
 
 type JobAnalysisStatusSummary = Omit<JobAnalysisProgress, 'result'> & { result: null }
 
@@ -39,6 +41,11 @@ export type BackgroundTaskStatus =
         completedAt: string | null
       } | null
     }
+  | {
+      type: 'resume_pdf_import'
+      taskId: string
+      importTask: ResumePdfImportTaskRecord | null
+    }
 
 async function getDeepEvaluationStatus(
   reference: Extract<BackgroundTaskReference, { type: 'answer_deep_evaluation' }>,
@@ -68,8 +75,12 @@ export async function getBackgroundTaskStatuses(input: unknown): Promise<Backgro
   const strategyReferences = parsedInput.tasks.filter(
     (task): task is Extract<BackgroundTaskReference, { type: 'action_strategy' }> => task.type === 'action_strategy',
   )
+  const resumePdfReferences = parsedInput.tasks.filter(
+    (task): task is Extract<BackgroundTaskReference, { type: 'resume_pdf_import' }> =>
+      task.type === 'resume_pdf_import',
+  )
 
-  const [jobItems, deepItems, strategyItems] = await Promise.all([
+  const [jobItems, deepItems, strategyItems, resumePdfItems] = await Promise.all([
     jobReferences.length
       ? getJobAnalyses(
           jobReferences.map((task) => task.opportunityId),
@@ -88,6 +99,12 @@ export async function getBackgroundTaskStatuses(input: unknown): Promise<Backgro
         strategy: await getActionStrategySnapshotStatus(reference.snapshotId),
       })),
     ),
+    Promise.all(
+      resumePdfReferences.map(async (reference) => ({
+        reference,
+        importTask: await getResumePdfImportTask(reference.taskId).catch(() => null),
+      })),
+    ),
   ])
 
   const jobByOpportunityId = new Map(
@@ -95,6 +112,7 @@ export async function getBackgroundTaskStatuses(input: unknown): Promise<Backgro
   )
   const deepByTurnId = new Map(deepItems.map((item) => [item.reference.turnId, item.evaluation]))
   const strategyById = new Map(strategyItems.map((item) => [item.reference.snapshotId, item.strategy]))
+  const resumePdfById = new Map(resumePdfItems.map((item) => [item.reference.taskId, item.importTask]))
 
   return parsedInput.tasks.map((task) => {
     if (task.type === 'job_analysis') {
@@ -110,6 +128,14 @@ export async function getBackgroundTaskStatuses(input: unknown): Promise<Backgro
         type: task.type,
         snapshotId: task.snapshotId,
         strategy: strategyById.get(task.snapshotId) ?? null,
+      }
+    }
+
+    if (task.type === 'resume_pdf_import') {
+      return {
+        type: task.type,
+        taskId: task.taskId,
+        importTask: resumePdfById.get(task.taskId) ?? null,
       }
     }
 

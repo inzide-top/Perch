@@ -5,6 +5,7 @@ import {
   agentRuns,
   chatArtifacts,
   chatCommands,
+  chatConversationSummaries,
   chatConversations,
   chatMemoryDocuments,
   chatMessages,
@@ -103,4 +104,17 @@ test('RAG 记忆表固定向量维度、幂等键、范围索引和级联删除'
   assert.ok(hasIndex(config, 'chat_memory_documents_opportunity_ids_index'))
   assert.ok(hasIndex(config, 'chat_memory_documents_embedding_hnsw_index'))
   assert.ok(config.checks.some((constraint) => constraint.name === 'chat_memory_documents_scope_check'))
+})
+
+test('聊天上下文摘要独立保存游标，并随会话删除', () => {
+  const config = getTableConfig(chatConversationSummaries)
+  const conversationForeignKey = config.foreignKeys.find(
+    (foreignKey) => foreignKey.getName() === 'chat_conversation_summaries_conversation_id_chat_conversations_id_fk',
+  )
+
+  assert.equal(config.name, 'chat_conversation_summaries')
+  assert.equal(conversationForeignKey?.onDelete, 'cascade')
+  assert.ok(columnNames(config).includes('summarized_through_sequence'))
+  assert.ok(columnNames(config).includes('revision'))
+  assert.ok(config.checks.some((constraint) => constraint.name === 'chat_conversation_summaries_sequence_check'))
 })

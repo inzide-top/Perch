@@ -11,6 +11,26 @@ const requiredText = z.string().trim().min(1)
 
 export const chatConversationParamsSchema = z.object({ conversationId: uuidSchema })
 export const chatRunParamsSchema = z.object({ runId: uuidSchema })
+export const chatMessageParamsSchema = z.object({ messageId: uuidSchema })
+
+export const completeOpportunityImportItemsInputSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            itemIndex: z.number().int().nonnegative(),
+            opportunityId: uuidSchema,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(5),
+  })
+  .strict()
+  .refine((input) => new Set(input.items.map((item) => item.itemIndex)).size === input.items.length, {
+    message: '同一个导入结果不能重复提交',
+  })
 
 const chatConversationCursorPayloadSchema = z
   .object({

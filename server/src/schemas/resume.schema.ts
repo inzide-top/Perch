@@ -81,6 +81,10 @@ export const resumeIdParamsSchema = z.object({
   resumeId: z.string().uuid(),
 })
 
+export const resumePdfImportTaskParamsSchema = z.object({
+  taskId: z.string().uuid(),
+})
+
 export type CreateResumeInput = z.input<typeof createResumeInputSchema>
 
 export const saveResumeVersionInputSchema = createResumeInputSchema.extend({

@@ -1,18 +1,22 @@
 import type { AnswerDeepEvaluationResult } from '@/shared/interview/schemas'
 import type { JobAnalysisProgress } from '@/types/opportunity'
+import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
 import { request } from './http'
 
 export type BackgroundTaskReference =
   | { type: 'job_analysis'; opportunityId: string }
   | { type: 'answer_deep_evaluation'; sessionId: string; turnId: string }
   | { type: 'action_strategy'; snapshotId: string }
+  | { type: 'resume_pdf_import'; taskId: string }
 
 function toBackgroundTaskReference(task: BackgroundTaskReference): BackgroundTaskReference {
   return task.type === 'job_analysis'
     ? { type: task.type, opportunityId: task.opportunityId }
     : task.type === 'answer_deep_evaluation'
       ? { type: task.type, sessionId: task.sessionId, turnId: task.turnId }
-      : { type: task.type, snapshotId: task.snapshotId }
+      : task.type === 'action_strategy'
+        ? { type: task.type, snapshotId: task.snapshotId }
+        : { type: task.type, taskId: task.taskId }
 }
 
 export type BackgroundTaskStatus = BackgroundTaskReference &
@@ -39,6 +43,10 @@ export type BackgroundTaskStatus = BackgroundTaskReference &
           updatedAt: string
           completedAt: string | null
         } | null
+      }
+    | {
+        type: 'resume_pdf_import'
+        importTask: ResumePdfImportTaskRecord | null
       }
   )
 
@@ -67,5 +75,9 @@ export const backgroundTaskApi = {
       updatedAt: string
       completedAt: string | null
     }>(`/interview-sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/deep-evaluation`)
+  },
+
+  getCompletedResumePdfImport(taskId: string) {
+    return request.get<ResumePdfImportTaskRecord>(`/resumes/import-pdf/${encodeURIComponent(taskId)}`)
   },
 }
