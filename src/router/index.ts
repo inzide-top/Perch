@@ -60,7 +60,13 @@ const router = createRouter({
       path: '/developer/agent-runs',
       name: 'agent-runs',
       component: () => import('@/pages/developer/agent-runs/index.vue'),
-      meta: { title: 'AgentRun 调试台' },
+      meta: { title: 'AgentRun 调试台', developerPage: true },
+    },
+    {
+      path: '/developer/chat-runs',
+      name: 'chat-runs',
+      component: () => import('@/pages/developer/chat-runs/index.vue'),
+      meta: { title: 'Chat Run 调试台', developerPage: true },
     },
   ],
 })

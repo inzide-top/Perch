@@ -260,7 +260,8 @@ function openReviewReference(turnId: string) {
 }
 
 function getTypeLabel() {
-  return session.value?.config.type === 'project' ? '项目面' : '基础面'
+  if (!session.value) return '模拟面试'
+  return session.value.config.type === 'project' ? '项目面' : '基础面'
 }
 
 function getDifficultyLabel() {
@@ -800,7 +801,8 @@ onBeforeUnmount(() => {
               <h1 class="text-xl font-semibold tracking-tight text-highlighted">
                 {{ opportunity?.jobTitle ?? '模拟面试' }}
               </h1>
-              <span class="interview-session-type">{{ getTypeLabel() }}</span>
+              <span v-if="session" class="interview-session-type">{{ getTypeLabel() }}</span>
+              <USkeleton v-else class="h-6 w-14 rounded-lg" aria-label="正在加载面试类型" />
               <UBadge v-if="session" :color="getStatusColor()" variant="subtle" :label="getStatusLabel()" />
             </div>
             <div v-if="session" class="interview-session-config mt-1">
@@ -832,7 +834,8 @@ onBeforeUnmount(() => {
             <span class="truncate text-sm font-medium text-highlighted"
               >{{ opportunity?.company ?? '当前机会' }} · {{ opportunity?.jobTitle ?? getTypeLabel() }}</span
             >
-            <span class="interview-session-type">{{ getTypeLabel() }}</span>
+            <span v-if="session" class="interview-session-type">{{ getTypeLabel() }}</span>
+            <USkeleton v-else class="h-5 w-12 rounded-md" aria-label="正在加载面试类型" />
             <UBadge v-if="session" :color="getStatusColor()" variant="subtle" :label="getStatusLabel()" />
           </div>
         </Transition>

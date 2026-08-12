@@ -43,6 +43,7 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-panel: cubic-bezier(0.22, 1, 0.36, 1);
+  --app-z-assistant: 35;
   --app-z-dropdown: 40;
   --app-z-popover: 60;
   --app-z-overlay: 80;
@@ -331,6 +332,18 @@ button:disabled,
 
 .app-popover-layer {
   z-index: var(--app-z-popover) !important;
+}
+
+.app-overlay-layer {
+  z-index: var(--app-z-overlay) !important;
+}
+
+.app-drawer-layer {
+  z-index: var(--app-z-drawer) !important;
+}
+
+.app-modal-layer {
+  z-index: var(--app-z-modal) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

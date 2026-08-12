@@ -36,6 +36,62 @@ export type CreateJobOpportunityRecord = {
 
 export type JobOpportunityDetail = JobOpportunity
 
+export type OpportunityProfilePatch = Partial<
+  Pick<
+    JobOpportunityRecord,
+    'intentionLevel' | 'industry' | 'address' | 'note' | 'includeWrittenTest' | 'dedupeFingerprint'
+  >
+>
+
+export type UpdateOpportunityProfileForUserRecord = {
+  opportunityId: string
+  userId: string
+  expectedUpdatedAt: string
+  patch: OpportunityProfilePatch
+  updatedAt: string
+}
+
+export type UpdateWrittenTestReviewForUserRecord = {
+  opportunityId: string
+  userId: string
+  expectedUpdatedAt: string
+  scheduledAt: string | null
+  reviewNote: string
+  updatedAt: string
+}
+
+export type UpdateInterviewReviewForUserRecord = {
+  opportunityId: string
+  roundId: string
+  userId: string
+  expectedRoundUpdatedAt: string
+  scheduledAt: string | null
+  result: Exclude<InterviewRound['result'], 'pending'>
+  reviewNote: string
+  updatedAt: string
+}
+
+export type UpdateOpportunityProfileWithStatusHistoryForUserRecord = UpdateOpportunityProfileForUserRecord & {
+  nextStatus: JobOpportunityRecord['status']
+  statusHistory: OpportunityStatusChange & { opportunityId: string }
+}
+
+export type BatchUpdateOpportunityProfileForUserRecord = UpdateOpportunityProfileForUserRecord &
+  (
+    | {
+        nextStatus: JobOpportunityRecord['status']
+        statusHistory: OpportunityStatusChange & { opportunityId: string }
+      }
+    | { nextStatus?: never; statusHistory?: never }
+  )
+
+export class OpportunityRepositoryConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OpportunityRepositoryConflictError'
+  }
+}
+
 type OpportunityStatusHistoryRecord = OpportunityStatusChange & { opportunityId: string }
 type InterviewRoundRecord = InterviewRound & { opportunityId: string }
 type TerminationRecord = OpportunityTermination
@@ -172,6 +228,101 @@ export class DrizzleOpportunityRepository {
       .update(jobOpportunities)
       .set(toJobOpportunityUpdateValues(opportunity))
       .where(eq(jobOpportunities.id, opportunity.id))
+  }
+
+  /** AI 工具专用写入边界：只有确认时看到的机会版本仍然有效时才应用资料 patch。 */
+  async updateOpportunityProfileForUser(record: UpdateOpportunityProfileForUserRecord) {
+    const [updated] = await db
+      .update(jobOpportunities)
+      .set({ ...record.patch, updatedAt: record.updatedAt })
+      .where(
+        and(
+          eq(jobOpportunities.id, record.opportunityId),
+          eq(jobOpportunities.userId, record.userId),
+          eq(jobOpportunities.updatedAt, record.expectedUpdatedAt),
+        ),
+      )
+      .returning()
+
+    return updated ? toJobOpportunityRecord(updated) : null
+  }
+
+  /** AI 工具专用写入边界：只更新笔试复盘字段，并拒绝覆盖确认后已经变化的机会。 */
+  async updateWrittenTestReviewForUser(record: UpdateWrittenTestReviewForUserRecord) {
+    const [updated] = await db
+      .update(jobOpportunities)
+      .set({
+        writtenTestScheduledAt: record.scheduledAt,
+        writtenTestReviewNote: record.reviewNote,
+        writtenTestReviewedAt: record.updatedAt,
+        updatedAt: record.updatedAt,
+      })
+      .where(
+        and(
+          eq(jobOpportunities.id, record.opportunityId),
+          eq(jobOpportunities.userId, record.userId),
+          eq(jobOpportunities.updatedAt, record.expectedUpdatedAt),
+        ),
+      )
+      .returning()
+
+    return updated ? toJobOpportunityRecord(updated) : null
+  }
+
+  /** 关闭笔试流程并回退阶段必须原子提交，不能出现开关已关但阶段仍是“笔试中”的中间状态。 */
+  async updateOpportunityProfileWithStatusHistoryForUser(
+    record: UpdateOpportunityProfileWithStatusHistoryForUserRecord,
+  ) {
+    return db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(jobOpportunities)
+        .set({ ...record.patch, status: record.nextStatus, updatedAt: record.updatedAt })
+        .where(
+          and(
+            eq(jobOpportunities.id, record.opportunityId),
+            eq(jobOpportunities.userId, record.userId),
+            eq(jobOpportunities.updatedAt, record.expectedUpdatedAt),
+          ),
+        )
+        .returning()
+
+      if (!updated) return null
+      await tx.insert(opportunityStatusHistory).values(record.statusHistory)
+      return toJobOpportunityRecord(updated)
+    })
+  }
+
+  /** 批量资料修改必须原子提交：任意一条版本失效时，整批更新全部回滚。 */
+  async batchUpdateOpportunityProfilesForUser(records: BatchUpdateOpportunityProfileForUserRecord[]) {
+    return db.transaction(async (tx) => {
+      const updatedOpportunities: JobOpportunityRecord[] = []
+
+      for (const record of records) {
+        const [updated] = await tx
+          .update(jobOpportunities)
+          .set({
+            ...record.patch,
+            ...(record.nextStatus ? { status: record.nextStatus } : {}),
+            updatedAt: record.updatedAt,
+          })
+          .where(
+            and(
+              eq(jobOpportunities.id, record.opportunityId),
+              eq(jobOpportunities.userId, record.userId),
+              eq(jobOpportunities.updatedAt, record.expectedUpdatedAt),
+            ),
+          )
+          .returning()
+
+        if (!updated) {
+          throw new OpportunityRepositoryConflictError('批量修改期间机会信息已发生变化')
+        }
+        if (record.statusHistory) await tx.insert(opportunityStatusHistory).values(record.statusHistory)
+        updatedOpportunities.push(toJobOpportunityRecord(updated))
+      }
+
+      return updatedOpportunities
+    })
   }
 
   async deleteOpportunityForUser(opportunityId: string, userId: string): Promise<string | null> {
@@ -324,6 +475,16 @@ export class DrizzleOpportunityRepository {
     return row ? toInterviewRound(row) : null
   }
 
+  async findInterviewRoundsByOpportunityId(opportunityId: string): Promise<InterviewRound[]> {
+    const rows = await db
+      .select()
+      .from(interviewRounds)
+      .where(eq(interviewRounds.opportunityId, opportunityId))
+      .orderBy(desc(interviewRounds.updatedAt), desc(interviewRounds.sequence))
+
+    return rows.map(toInterviewRound)
+  }
+
   /** 读取真实笔试复盘和面试轮次复盘，供模拟面试计划生成使用。 */
   async findInterviewHistoryByOpportunityId(opportunityId: string, existingOpportunity?: JobOpportunityRecord) {
     const [opportunity, roundRows, reviewDocumentRows] = await Promise.all([
@@ -399,6 +560,40 @@ export class DrizzleOpportunityRepository {
         .update(jobOpportunities)
         .set(toJobOpportunityUpdateValues(opportunity))
         .where(eq(jobOpportunities.id, opportunity.id))
+    })
+  }
+
+  /** AI 工具专用写入边界：复盘、轮次完成状态与机会更新时间在同一事务中提交。 */
+  async updateInterviewReviewForUser(record: UpdateInterviewReviewForUserRecord) {
+    return db.transaction(async (tx) => {
+      const [updatedRound] = await tx
+        .update(interviewRounds)
+        .set({
+          scheduledAt: record.scheduledAt,
+          status: 'completed',
+          result: record.result,
+          reviewNote: record.reviewNote,
+          updatedAt: record.updatedAt,
+        })
+        .where(
+          and(
+            eq(interviewRounds.id, record.roundId),
+            eq(interviewRounds.opportunityId, record.opportunityId),
+            eq(interviewRounds.updatedAt, record.expectedRoundUpdatedAt),
+          ),
+        )
+        .returning()
+
+      if (!updatedRound) return null
+
+      const [ownedOpportunity] = await tx
+        .update(jobOpportunities)
+        .set({ updatedAt: record.updatedAt })
+        .where(and(eq(jobOpportunities.id, record.opportunityId), eq(jobOpportunities.userId, record.userId)))
+        .returning({ id: jobOpportunities.id })
+
+      if (!ownedOpportunity) throw new Error('岗位机会不存在或不属于当前用户')
+      return toInterviewRound(updatedRound)
     })
   }
 

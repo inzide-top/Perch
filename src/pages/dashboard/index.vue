@@ -7,6 +7,7 @@ import type { DashboardOverview, DashboardWidgetKey, DashboardWidgetVisibility }
 import type { JobOpportunityStatus } from '@/types/opportunity'
 import DashboardAbilityCard from './components/DashboardAbilityCard.vue'
 import DashboardActivityCard from './components/DashboardActivityCard.vue'
+import DashboardInterviewCalendar from './components/DashboardInterviewCalendar.vue'
 import DashboardRingChart from './components/DashboardRingChart.vue'
 
 const resumeStore = useResumeStore()
@@ -23,6 +24,7 @@ const dashboardWidgetStorageKey = 'agent-seek-employment:dashboard-widgets'
 
 const defaultWidgetVisibility: DashboardWidgetVisibility = {
   ability_insights: true,
+  interview_calendar: true,
   opportunity_pipeline: true,
   match_distribution: true,
   recent_activities: true,
@@ -30,6 +32,7 @@ const defaultWidgetVisibility: DashboardWidgetVisibility = {
 
 const widgetOptions: Array<{ key: DashboardWidgetKey; label: string }> = [
   { key: 'ability_insights', label: '能力证据摘要' },
+  { key: 'interview_calendar', label: '面试日历' },
   { key: 'opportunity_pipeline', label: '求职流程分布' },
   { key: 'match_distribution', label: 'JD 匹配分布' },
   { key: 'recent_activities', label: '最近动态' },
@@ -262,6 +265,14 @@ onMounted(() => {
       </div>
 
       <div v-else-if="isDashboardLoading" class="grid gap-4 lg:grid-cols-2">
+        <div class="app-card min-h-[310px] p-5 lg:col-span-2">
+          <USkeleton class="h-5 w-28 rounded" />
+          <USkeleton class="mt-3 h-4 w-72 max-w-full rounded" />
+          <div class="mt-6 grid gap-5 lg:grid-cols-[20rem_minmax(0,1fr)]">
+            <USkeleton class="h-52 rounded-2xl" />
+            <USkeleton class="h-40 rounded-2xl" />
+          </div>
+        </div>
         <div class="app-card min-h-[280px] p-5">
           <USkeleton class="h-5 w-32 rounded" /><USkeleton class="mt-3 h-4 w-64 rounded" /><USkeleton
             class="mt-8 h-36 rounded-2xl"
@@ -276,6 +287,11 @@ onMounted(() => {
 
       <template v-else-if="dashboardOverview">
         <DashboardAbilityCard v-if="widgetVisibility.ability_insights" :ability="dashboardOverview.ability" />
+
+        <DashboardInterviewCalendar
+          v-if="widgetVisibility.interview_calendar"
+          :events="dashboardOverview.interviewCalendar.events"
+        />
 
         <div
           v-if="widgetVisibility.opportunity_pipeline || widgetVisibility.match_distribution"

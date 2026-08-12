@@ -55,7 +55,6 @@ const props = defineProps<{
   canCreateInterviewSchedule: boolean
   terminationRoundOptions: { label: string; value: string }[]
   availableInterviewRoundTypeOptions: { label: string; value: InterviewRoundType }[]
-  interviewRoundDateLabel: string
   writtenTestDateLabel: string
   reviewDocuments: ReviewDocumentSummary[]
   retryingReviewDocumentId: string | null
@@ -78,11 +77,9 @@ const emit = defineEmits<{
   addInterviewRound: [mode: InterviewManagementTab]
   completeInterviewRound: [round: InterviewRound]
   cancelInterviewRound: [round: InterviewRound]
-  handleRoundDateSelect: [value: unknown]
   openRoundEditDrawer: [round: InterviewRound]
   confirmDeleteRound: [roundId: string]
   closeRoundEditDrawer: []
-  handleEditRoundDateSelect: [value: unknown]
   handleWrittenTestDateSelect: [value: unknown]
   saveRoundEdit: []
   retryReviewDocument: [document: ReviewDocumentSummary]
@@ -102,13 +99,9 @@ const writtenTestCalendarDate = defineModel<unknown>('writtenTestCalendarDate', 
 const isInterviewReviewDrawerOpen = defineModel<boolean>('isInterviewReviewDrawerOpen', { required: true })
 const interviewManagementTab = defineModel<InterviewManagementTab>('interviewManagementTab', { required: true })
 const roundForm = defineModel<InterviewRoundForm>('roundForm', { required: true })
-const roundDatePopoverOpen = defineModel<boolean>('roundDatePopoverOpen', { required: true })
-const roundCalendarDate = defineModel<unknown>('roundCalendarDate', { required: true })
 const deletingRoundId = defineModel<string | null>('deletingRoundId', { required: true })
 const isRoundEditDrawerOpen = defineModel<boolean>('isRoundEditDrawerOpen', { required: true })
 const roundEditForm = defineModel<InterviewRoundForm>('roundEditForm', { required: true })
-const editRoundDatePopoverOpen = defineModel<boolean>('editRoundDatePopoverOpen', { required: true })
-const editRoundCalendarDate = defineModel<unknown>('editRoundCalendarDate', { required: true })
 
 const industrySelectItems = industryOptions.map((industry) => ({ label: industry, value: industry }))
 const drawerSelectContent = {
@@ -179,7 +172,7 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
           >
             {{ nextStatus ? '前往下一阶段' : '已到最终阶段' }}
           </UButton>
-          <UPopover v-model:open="isTerminatePopoverOpen">
+          <UPopover v-model:open="isTerminatePopoverOpen" :ui="{ content: 'app-popover-layer' }">
             <UButton
               type="button"
               color="error"
@@ -576,14 +569,15 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
     </div>
 
     <WrittenTestReviewDrawer
-      v-model:form="writtenTestReviewForm"
       v-model:date-popover-open="writtenTestDatePopoverOpen"
       v-model:calendar-date="writtenTestCalendarDate"
+      :form="writtenTestReviewForm"
       :open="isWrittenTestReviewDrawerOpen"
       :saving="isSavingWrittenTestReview"
       :date-label="writtenTestDateLabel"
       :review-document="reviewDocuments.find((document) => document.sourceType === 'written_test') ?? null"
       :retrying-document-id="retryingReviewDocumentId"
+      @update:form="Object.assign(writtenTestReviewForm, $event)"
       @close="emit('closeWrittenTestReviewDrawer')"
       @save="emit('saveWrittenTestReview')"
       @retry="emit('retryReviewDocument', $event)"
@@ -591,15 +585,12 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
     />
 
     <InterviewReviewDrawer
-      v-model:form="roundForm"
       v-model:active-tab="interviewManagementTab"
-      v-model:date-popover-open="roundDatePopoverOpen"
-      v-model:calendar-date="roundCalendarDate"
       v-model:deleting-round-id="deletingRoundId"
+      :form="roundForm"
       :open="isInterviewReviewDrawerOpen"
       :opportunity="opportunity"
       :round-type-options="availableInterviewRoundTypeOptions"
-      :date-label="interviewRoundDateLabel"
       :adding="isAddingInterviewRound"
       :completing-round-id="completingInterviewRoundId"
       :canceling-round-id="cancelingInterviewRoundId"
@@ -607,28 +598,26 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
       :deleting-round-action-id="deletingRoundActionId"
       :review-documents="reviewDocuments"
       :retrying-document-id="retryingReviewDocumentId"
+      @update:form="Object.assign(roundForm, $event)"
       @close="emit('closeInterviewReviewDrawer')"
       @add="emit('addInterviewRound', $event)"
       @complete="emit('completeInterviewRound', $event)"
       @cancel="emit('cancelInterviewRound', $event)"
-      @select-date="emit('handleRoundDateSelect', $event)"
       @edit="emit('openRoundEditDrawer', $event)"
       @delete="emit('confirmDeleteRound', $event)"
       @retry="emit('retryReviewDocument', $event)"
     />
 
     <RoundEditDrawer
-      v-model:form="roundEditForm"
-      v-model:date-popover-open="editRoundDatePopoverOpen"
-      v-model:calendar-date="editRoundCalendarDate"
+      :form="roundEditForm"
       :open="isRoundEditDrawerOpen"
       :saving="isSavingRoundEdit"
       :changed="hasRoundEditChanged"
       :round-type-options="availableInterviewRoundTypeOptions"
       :round="editingInterviewRound"
+      @update:form="Object.assign(roundEditForm, $event)"
       @close="emit('closeRoundEditDrawer')"
       @save="emit('saveRoundEdit')"
-      @select-date="emit('handleEditRoundDateSelect', $event)"
     />
   </section>
 </template>

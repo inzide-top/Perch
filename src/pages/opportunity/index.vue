@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import type { JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/opportunity'
-import { useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
+import { useOpportunityImportReviewStore, useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import {
   getDuplicateOpportunityConflict,
   type CreateOpportunityPayload,
@@ -41,8 +41,10 @@ const recommendationOptions: Array<{ label: string; value: AnalysisRecommendatio
 ]
 
 const opportunityStore = useOpportunityStore()
+const opportunityImportReviewStore = useOpportunityImportReviewStore()
 const resumeStore = useResumeStore()
 const settingsStore = useSettingsStore()
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { opportunities, analysisTasks, isInitialLoading, isRefreshing, loadError } = storeToRefs(opportunityStore)
@@ -50,6 +52,9 @@ const isFiltering = ref(false)
 
 const selectedStatus = ref<JobOpportunityStatus | ''>('')
 const selectedIntentionLevel = ref<OpportunityIntentionLevel | ''>('')
+const routeStatusFilters = ref<JobOpportunityStatus[]>([])
+const routeIntentionFilters = ref<OpportunityIntentionLevel[]>([])
+let isApplyingRouteFilters = false
 const selectedRecommendation = ref<AnalysisRecommendation | ''>('')
 const selectedRegion = ref<OpportunityRegion | ''>('')
 const isCreateModalOpen = ref(false)
@@ -59,14 +64,30 @@ const deleteOpportunityId = ref<string | null>(null)
 const isDeletingOpportunity = ref(false)
 const duplicateOpportunityConflict = ref<DuplicateOpportunityConflict | null>(null)
 const isResolvingDuplicateOpportunity = ref(false)
+const batchCreationOutcome = ref<{
+  revision: number
+  succeededIds: string[]
+  failures: Array<{ id: string; error: string }>
+} | null>(null)
+let batchCreationRevision = 0
 const detailPrefetchTimers = new Map<string, number>()
 let filterDebounceTimer: number | null = null
 let filterRequestSequence = 0
 
 const listFilters = computed(() => {
   return {
-    statuses: selectedStatus.value ? [selectedStatus.value] : [],
-    intentionLevels: selectedIntentionLevel.value ? [selectedIntentionLevel.value] : [],
+    statuses:
+      routeStatusFilters.value.length > 1
+        ? routeStatusFilters.value
+        : selectedStatus.value
+          ? [selectedStatus.value]
+          : [],
+    intentionLevels:
+      routeIntentionFilters.value.length > 1
+        ? routeIntentionFilters.value
+        : selectedIntentionLevel.value
+          ? [selectedIntentionLevel.value]
+          : [],
     recommendations: selectedRecommendation.value ? [selectedRecommendation.value] : [],
     regions: selectedRegion.value ? [selectedRegion.value] : [],
   }
@@ -82,22 +103,61 @@ const deleteTargetOpportunity = computed(() => {
 })
 
 function openCreateModal() {
+  opportunityImportReviewStore.clear()
+  batchCreationOutcome.value = null
   isCreateModalOpen.value = true
 }
 
 function closeCreateModal() {
   isCreateModalOpen.value = false
+  opportunityImportReviewStore.clear()
+}
+
+watch(
+  () => opportunityImportReviewStore.revision,
+  () => {
+    if (!opportunityImportReviewStore.payload) return
+    batchCreationOutcome.value = null
+    isCreateModalOpen.value = true
+  },
+  { immediate: true },
+)
+
+async function resolveResumeAnalysisContext() {
+  if (!resumeStore.currentResume || !resumeStore.currentVersion) {
+    await resumeStore.loadFromApi()
+  }
+
+  const resume = resumeStore.currentResume
+  const version =
+    resumeStore.currentVersion ??
+    resumeStore.versions.find((candidate) => candidate.id === resume?.currentVersionId) ??
+    null
+
+  if (resume && version) return { resume, version }
+
+  if (resumeStore.loadError) {
+    toast.add({
+      title: '简历信息读取失败',
+      description: resumeStore.loadError,
+      color: 'error',
+      icon: 'i-lucide-circle-alert',
+    })
+    return null
+  }
+
+  toast.add({
+    title: resume ? '当前简历还没有可用版本' : '请先创建并保存一份简历',
+    description: resume ? '请先在简历管理中保存一个版本，再生成 JD 分析。' : undefined,
+    color: 'error',
+    icon: 'i-lucide-circle-alert',
+  })
+  return null
 }
 
 async function createOpportunity(payload: CreateOpportunityPayload) {
   if (isCreatingOpportunity.value) return
 
-  const currentResume = resumeStore.currentResume
-  const currentVersion = resumeStore.currentVersion
-  if (!currentResume || !currentVersion) {
-    toast.add({ title: '请先创建并保存一份简历', color: 'error', icon: 'i-lucide-circle-alert' })
-    return
-  }
   if (!settingsStore.llm.apiKey.trim()) {
     toast.add({ title: '请先在系统设置中填写 API Key', color: 'error', icon: 'i-lucide-circle-alert' })
     return
@@ -105,6 +165,10 @@ async function createOpportunity(payload: CreateOpportunityPayload) {
 
   isCreatingOpportunity.value = true
   try {
+    const resumeContext = await resolveResumeAnalysisContext()
+    if (!resumeContext) return
+    const { resume: currentResume, version: currentVersion } = resumeContext
+
     const opportunity = await opportunityStore.createOpportunity(payload)
     const task = await opportunityStore.startJobAnalysis(opportunity.id, {
       resumeId: currentResume.id,
@@ -126,6 +190,102 @@ async function createOpportunity(payload: CreateOpportunityPayload) {
       title: '创建 JD 分析失败',
       description: error instanceof Error ? error.message : '请稍后重试。',
       color: 'error',
+      icon: 'i-lucide-circle-alert',
+    })
+  } finally {
+    isCreatingOpportunity.value = false
+  }
+}
+
+async function createOpportunities(request: {
+  items: Array<{ id: string; payload: CreateOpportunityPayload }>
+  closeWhenDone: boolean
+}) {
+  if (isCreatingOpportunity.value || request.items.length === 0) return
+
+  if (!settingsStore.llm.apiKey.trim()) {
+    toast.add({ title: '请先在系统设置中填写 API Key', color: 'error', icon: 'i-lucide-circle-alert' })
+    return
+  }
+
+  isCreatingOpportunity.value = true
+  try {
+    const resumeContext = await resolveResumeAnalysisContext()
+    if (!resumeContext) return
+    const { resume: currentResume, version: currentVersion } = resumeContext
+
+    const activeAnalysisCount = analysisTasks.value.filter(
+      (task) => task.status === 'pending' || task.status === 'processing',
+    ).length
+    const availableAnalysisSlots = Math.max(0, 5 - activeAnalysisCount)
+    if (request.items.length > availableAnalysisSlots) {
+      toast.add({
+        title: '当前 JD 分析并发额度不足',
+        description:
+          availableAnalysisSlots > 0
+            ? `当前还可启动 ${availableAnalysisSlots} 个分析任务，请移除部分岗位或等待已有任务完成。`
+            : '当前已有 5 个 JD 分析任务正在执行，请稍后再批量创建。',
+        color: 'warning',
+        icon: 'i-lucide-circle-alert',
+      })
+      return
+    }
+
+    const results = await Promise.allSettled(
+      request.items.map(async (item) => {
+        const opportunity = await opportunityStore.createOpportunity(item.payload)
+        const task = await opportunityStore.startJobAnalysis(opportunity.id, {
+          resumeId: currentResume.id,
+          resumeVersionId: currentVersion.id,
+          modelConnection: settingsStore.llm,
+        })
+        return { id: item.id, opportunity, task }
+      }),
+    )
+
+    const succeededIds: string[] = []
+    const failures: Array<{ id: string; error: string }> = []
+    for (const [index, result] of results.entries()) {
+      const requestItem = request.items[index]
+      if (!requestItem) continue
+
+      if (result.status === 'fulfilled') {
+        succeededIds.push(result.value.id)
+        opportunityStore.publishCreatedOpportunity(result.value.opportunity, result.value.task)
+      } else {
+        failures.push({
+          id: requestItem.id,
+          error: result.reason instanceof Error ? result.reason.message : '创建失败，请稍后重试',
+        })
+      }
+    }
+
+    if (request.closeWhenDone && failures.length === 0) {
+      closeCreateModal()
+      await nextTick()
+    } else {
+      batchCreationRevision += 1
+      batchCreationOutcome.value = {
+        revision: batchCreationRevision,
+        succeededIds,
+        failures,
+      }
+    }
+
+    if (failures.length === 0) {
+      toast.add({
+        title: `已创建 ${succeededIds.length} 条 JD，正在生成分析`,
+        color: 'success',
+        icon: 'i-lucide-wand-sparkles',
+      })
+      return
+    }
+
+    toast.add({
+      title:
+        succeededIds.length > 0 ? `已创建 ${succeededIds.length} 条，${failures.length} 条失败` : '批量创建 JD 失败',
+      description: failures[0]?.error ?? '请检查失败项后重试。',
+      color: succeededIds.length > 0 ? 'warning' : 'error',
       icon: 'i-lucide-circle-alert',
     })
   } finally {
@@ -248,12 +408,6 @@ function getOpportunityActionItems(opportunityId: string) {
 async function retryJobAnalysis(opportunityId: string) {
   if (retryingOpportunityId.value) return false
 
-  const currentResume = resumeStore.currentResume
-  const currentVersion = resumeStore.currentVersion
-  if (!currentResume || !currentVersion) {
-    toast.add({ title: '请先创建并保存一份简历', color: 'error', icon: 'i-lucide-circle-alert' })
-    return false
-  }
   if (!settingsStore.llm.apiKey.trim()) {
     toast.add({ title: '请先在系统设置中填写 API Key', color: 'error', icon: 'i-lucide-circle-alert' })
     return false
@@ -261,6 +415,10 @@ async function retryJobAnalysis(opportunityId: string) {
 
   retryingOpportunityId.value = opportunityId
   try {
+    const resumeContext = await resolveResumeAnalysisContext()
+    if (!resumeContext) return false
+    const { resume: currentResume, version: currentVersion } = resumeContext
+
     await opportunityStore.retryJobAnalysis(opportunityId, {
       resumeId: currentResume.id,
       resumeVersionId: currentVersion.id,
@@ -355,12 +513,57 @@ function scheduleFilteredOpportunityLoad(filters: OpportunityListFilters) {
   }, 220)
 }
 
+function applyOpportunityRouteFilters() {
+  const readQueryList = (value: unknown) => {
+    if (typeof value === 'string')
+      return value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    if (Array.isArray(value)) {
+      return value
+        .flatMap((item) => (typeof item === 'string' ? item.split(',') : []))
+        .map((item) => item.trim())
+        .filter(Boolean)
+    }
+    return []
+  }
+
+  const statusValues = readQueryList(route.query.statuses ?? route.query.status).filter(
+    (value): value is JobOpportunityStatus => statusOptions.some((option) => option.value === value),
+  )
+  const intentionValues = readQueryList(route.query.intentions ?? route.query.intention).filter(
+    (value): value is OpportunityIntentionLevel => intentionOptions.some((option) => option.value === value),
+  )
+
+  isApplyingRouteFilters = true
+  routeStatusFilters.value = statusValues
+  routeIntentionFilters.value = intentionValues
+  selectedStatus.value = statusValues.length === 1 ? statusValues[0]! : ''
+  selectedIntentionLevel.value = intentionValues.length === 1 ? intentionValues[0]! : ''
+  isApplyingRouteFilters = false
+}
+
 onMounted(async () => {
+  applyOpportunityRouteFilters()
   try {
     await opportunityStore.loadOpportunities({ filters: listFilters.value })
   } finally {
     isListBootstrapping.value = false
   }
+})
+
+watch(
+  () => [route.query.status, route.query.statuses, route.query.intention, route.query.intentions],
+  () => applyOpportunityRouteFilters(),
+)
+
+watch(selectedStatus, () => {
+  if (!isApplyingRouteFilters && routeStatusFilters.value.length > 1) routeStatusFilters.value = []
+})
+
+watch(selectedIntentionLevel, () => {
+  if (!isApplyingRouteFilters && routeIntentionFilters.value.length > 1) routeIntentionFilters.value = []
 })
 
 onBeforeUnmount(() => {
@@ -374,6 +577,11 @@ onBeforeUnmount(() => {
 watch(listFilters, (filters) => {
   scheduleFilteredOpportunityLoad(filters)
 })
+
+watch(
+  () => opportunityStore.opportunityMutationRevision,
+  () => scheduleFilteredOpportunityLoad(listFilters.value),
+)
 </script>
 
 <template>
@@ -612,7 +820,10 @@ watch(listFilters, (filters) => {
       :open="Boolean(deleteOpportunityId)"
       :dismissible="!isDeletingOpportunity"
       :close="false"
-      :ui="{ overlay: 'bg-black/55', content: 'app-panel w-[calc(100%-2rem)] max-w-sm p-5 shadow-xl' }"
+      :ui="{
+        overlay: 'app-overlay-layer bg-black/55',
+        content: 'app-modal-layer app-panel w-[calc(100%-2rem)] max-w-sm p-5 shadow-xl',
+      }"
       @update:open="(nextOpen: boolean) => !nextOpen && closeDeleteOpportunityConfirm()"
     >
       <template #content>
@@ -661,7 +872,10 @@ watch(listFilters, (filters) => {
       :open="Boolean(duplicateOpportunityConflict)"
       :dismissible="!isResolvingDuplicateOpportunity"
       :close="false"
-      :ui="{ overlay: 'bg-black/55', content: 'app-panel w-[calc(100%-2rem)] max-w-md p-5 shadow-xl' }"
+      :ui="{
+        overlay: 'app-overlay-layer bg-black/55',
+        content: 'app-modal-layer app-panel w-[calc(100%-2rem)] max-w-md p-5 shadow-xl',
+      }"
       @update:open="(nextOpen: boolean) => !nextOpen && closeDuplicateOpportunityDialog()"
     >
       <template #content>
@@ -743,8 +957,13 @@ watch(listFilters, (filters) => {
     <CreateOpportunityModal
       :open="isCreateModalOpen"
       :loading="isCreatingOpportunity"
+      :model-connection="settingsStore.llm"
+      :batch-creation-outcome="batchCreationOutcome"
+      :review-payload="opportunityImportReviewStore.payload"
+      :review-revision="opportunityImportReviewStore.revision"
       @close="closeCreateModal"
       @submit="createOpportunity"
+      @submit-batch="createOpportunities"
     />
   </section>
 </template>

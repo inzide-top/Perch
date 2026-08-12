@@ -68,8 +68,9 @@ watch(
     :dismissible="!loading"
     :close="false"
     :ui="{
-      overlay: 'bg-black/55 backdrop-blur-[2px]',
-      content: 'app-panel interview-create-modal w-[calc(100%-2rem)] max-w-2xl overflow-hidden shadow-2xl',
+      overlay: 'app-overlay-layer bg-black/55 backdrop-blur-[2px]',
+      content:
+        'app-modal-layer app-panel interview-create-modal w-[calc(100%-2rem)] max-w-2xl overflow-hidden shadow-2xl',
     }"
     @update:open="(nextOpen: boolean) => !nextOpen && close()"
   >

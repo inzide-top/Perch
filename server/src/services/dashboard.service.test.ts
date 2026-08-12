@@ -4,7 +4,10 @@ process.env.DATABASE_URL ??= 'postgresql://test:test@127.0.0.1:5432/test'
 
 import type { JobAnalysisListSummary } from '@/types/opportunity'
 import type { InterviewSessionEvaluation } from '@/shared/interview/schemas'
-import type { DashboardInterviewEvidenceRecord } from '../repositories/dashboard.repository'
+import type {
+  DashboardInterviewEvidenceRecord,
+  DashboardInterviewScheduleRecord,
+} from '../repositories/dashboard.repository'
 import type { JobOpportunityRecord } from '../repositories/opportunity.repository'
 
 const { buildDashboardOverview } = await import('./dashboard.service')
@@ -96,6 +99,17 @@ function createInterviewEvidence(): DashboardInterviewEvidenceRecord {
   }
 }
 
+function createInterviewSchedule(id: string, scheduledAt: string): DashboardInterviewScheduleRecord {
+  return {
+    id,
+    opportunityId: 'opportunity-1',
+    company: '公司 opportunity-1',
+    jobTitle: '前端开发工程师',
+    title: '技术二面',
+    scheduledAt,
+  }
+}
+
 test('buildDashboardOverview aggregates pipeline, match buckets, and structured ability evidence', () => {
   const opportunities = [
     createOpportunity('opportunity-1', 'pending_apply'),
@@ -112,6 +126,10 @@ test('buildDashboardOverview aggregates pipeline, match buckets, and structured 
     analysisByOpportunityId,
     interviewEvidence: [createInterviewEvidence()],
     reviewSourceCounts: { writtenTestReviews: 1, interviewReviews: 1 },
+    interviewSchedules: [
+      createInterviewSchedule('round-overdue', '2026-08-04T08:00:00.000Z'),
+      createInterviewSchedule('round-upcoming', '2026-08-06T08:00:00.000Z'),
+    ],
     generatedAt: now,
   })
 
@@ -138,6 +156,10 @@ test('buildDashboardOverview aggregates pipeline, match buckets, and structured 
     writtenTestReviews: 1,
     interviewReviews: 1,
   })
+  assert.equal(result.interviewCalendar.overdueCount, 1)
+  assert.equal(result.interviewCalendar.upcomingCount, 1)
+  assert.equal(result.interviewCalendar.events[0]?.timing, 'overdue')
+  assert.equal(result.interviewCalendar.events[1]?.timing, 'upcoming')
 })
 
 test('ability insights prioritize repeatedly mentioned evidence before one-off higher scores', () => {
@@ -218,4 +240,5 @@ test('dashboard keeps a stable empty state when there are no opportunities or ev
   assert.equal(result.matchDistribution.failedCount, 0)
   assert.equal(result.matchDistribution.withoutAnalysisCount, 0)
   assert.deepEqual(result.recentActivities, [])
+  assert.deepEqual(result.interviewCalendar, { events: [], upcomingCount: 0, overdueCount: 0 })
 })

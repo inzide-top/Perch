@@ -100,6 +100,7 @@ function workflowLabel(workflowType: AgentWorkflowType) {
     interview_final_summary: '整场复盘',
     review_extraction: '真实复盘提取',
     action_strategy: '求职策略',
+    chat_turn: 'AI 对话',
   }[workflowType]
 }
 
@@ -126,6 +127,7 @@ function processingTitle(workflowType: AgentWorkflowType) {
     interview_final_summary: '模型正在生成整场面试复盘',
     review_extraction: '模型正在提取真实复盘文本',
     action_strategy: '模型正在生成求职策略文案',
+    chat_turn: '模型正在处理 AI 对话',
   }[workflowType]
 }
 
@@ -337,13 +339,39 @@ watch([selectedStatus, selectedModel, selectedTimeRange], async () => {
 })
 
 let refreshTimer: number | null = null
+let visibilityHandler: (() => void) | null = null
+
+function clearRefreshTimer() {
+  if (refreshTimer !== null) window.clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+function startRefreshTimer() {
+  clearRefreshTimer()
+  if (document.hidden) return
+  // 调试台不是业务轮询，15 秒足够观察状态，也避免长时间打开页面造成高频 Egress。
+  refreshTimer = window.setInterval(() => void loadRuns(), 15_000)
+}
+
 onMounted(() => {
   void loadRuns({ initial: true })
-  refreshTimer = window.setInterval(() => void loadRuns(), 3_000)
+  visibilityHandler = () => {
+    if (document.hidden) {
+      clearRefreshTimer()
+      return
+    }
+
+    void loadRuns()
+    startRefreshTimer()
+  }
+  document.addEventListener('visibilitychange', visibilityHandler)
+  startRefreshTimer()
 })
 onBeforeUnmount(() => {
   isAgentRunPageUnmounted = true
-  if (refreshTimer) window.clearInterval(refreshTimer)
+  clearRefreshTimer()
+  if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
+  visibilityHandler = null
   if (localFilterTransitionTimer) window.clearTimeout(localFilterTransitionTimer)
 })
 </script>
@@ -356,13 +384,16 @@ onBeforeUnmount(() => {
           <p class="text-xs font-medium uppercase tracking-[0.18em] text-primary">PERCH / developer</p>
           <h1 class="mt-1 text-xl font-semibold tracking-tight text-highlighted">AgentRun 调试台</h1>
           <p class="mt-1 text-sm text-muted">
-            独立观察模型调用、重试、结构化输出与失败原因。每 3 秒刷新轻量状态，详情按需加载。
+            独立观察后台 AI 任务、重试、结构化输出与失败原因。每 15 秒刷新轻量状态，详情按需加载。
           </p>
         </div>
         <div class="flex items-center gap-2">
           <span class="hidden text-xs text-muted sm:inline">{{
             lastUpdatedAt ? `更新于 ${formatTime(lastUpdatedAt.toISOString())}` : ''
           }}</span>
+          <UButton to="/developer/chat-runs" color="neutral" variant="outline" icon="i-lucide-message-square-more">
+            Chat Run
+          </UButton>
           <UButton
             color="neutral"
             variant="outline"

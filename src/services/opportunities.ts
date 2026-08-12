@@ -38,6 +38,21 @@ export type CreateOpportunityPayload = {
   description: string
 }
 
+export type ImportedOpportunityRequiredField = 'company' | 'jobTitle' | 'description'
+
+export type OpportunityImportPreview = CreateOpportunityPayload & {
+  source: { type: 'url'; label: string; url: string } | { type: 'text'; label: string; url: null }
+  sourceUrl: string | null
+  address: string[]
+  introduction: string
+  missingRequiredFields: ImportedOpportunityRequiredField[]
+  warning: string | null
+}
+
+export type OpportunityBatchImportItem =
+  | { url: string; status: 'ready'; preview: OpportunityImportPreview }
+  | { url: string; status: 'failed'; error: string; statusCode: number }
+
 export type DuplicateOpportunityConflict = {
   code: 'duplicate_opportunity'
   details: {
@@ -126,6 +141,18 @@ export const opportunityApi = {
       ...payload,
       address: normalizeCityList(payload.address),
     })
+  },
+
+  importOpportunityFromUrl(url: string, options: RequestOptions = {}) {
+    return request.post<OpportunityImportPreview>('/opportunities/import-url', { url }, options)
+  },
+
+  importOpportunitiesFromUrls(urls: string[], options: RequestOptions = {}) {
+    return request.post<{ items: OpportunityBatchImportItem[] }>('/opportunities/import-urls', { urls }, options)
+  },
+
+  importOpportunityFromText(text: string, modelConnection: LlmConnectionSettings, options: RequestOptions = {}) {
+    return request.post<OpportunityImportPreview>('/opportunities/import-text', { text, modelConnection }, options)
   },
 
   deleteOpportunity(opportunityId: string) {

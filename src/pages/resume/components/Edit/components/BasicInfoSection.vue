@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
         <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
       </UFormField>
       <UFormField label="毕业时间">
-        <UPopover v-model:open="graduationDatePopoverOpen">
+        <UPopover v-model:open="graduationDatePopoverOpen" :ui="{ content: 'app-popover-layer' }">
           <UButton
             type="button"
             color="neutral"

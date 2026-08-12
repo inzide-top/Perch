@@ -689,22 +689,23 @@ onBeforeUnmount(() => {
     <div class="grid items-start gap-6 xl:grid-cols-2">
       <div class="app-panel p-5">
         <BasicInfoSection
-          v-model:form="form"
           v-model:work-experiences="workExperiences"
           v-model:portfolio-links-text="portfolioLinksText"
           v-model:languages="languages"
+          :form="form"
           :resume-errors="resumeErrors"
           :education-level-options="educationLevelOptions"
           :current-status-options="filteredCurrentStatusOptions"
           :job-search-identity-options="jobSearchIdentityOptions"
           :language-level-options="languageLevelOptions"
+          @update:form="Object.assign(form, $event)"
           @clear-resume-error="clearResumeError"
         />
       </div>
 
       <ProjectSection
-        v-model:project-form="projectForm"
-        v-model:project-edit-form="projectEditForm"
+        :project-form="projectForm"
+        :project-edit-form="projectEditForm"
         :projects="projects"
         :project-errors="projectErrors"
         :project-edit-errors="projectEditErrors"
@@ -712,6 +713,8 @@ onBeforeUnmount(() => {
         :pending-delete-project-index="pendingDeleteProjectIndex"
         :is-project-create-open="isProjectCreateOpen"
         :is-project-edit-open="isProjectEditOpen"
+        @update:project-form="Object.assign(projectForm, $event)"
+        @update:project-edit-form="Object.assign(projectEditForm, $event)"
         @open-project-create="openProjectCreate"
         @close-project-create="closeProjectCreate"
         @save-project-create="addProject"
