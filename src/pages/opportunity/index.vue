@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { getAiTaskErrorPresentation } from '@/services/ai-errors'
+import { chatApi } from '@/services/chat-api'
 import type { JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/opportunity'
 import { useOpportunityImportReviewStore, useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import {
@@ -155,7 +156,24 @@ async function resolveResumeAnalysisContext() {
   return null
 }
 
-async function createOpportunity(payload: CreateOpportunityPayload) {
+async function persistAssistantImportCompletion(items: Array<{ itemIndex: number; opportunityId: string }>) {
+  const messageId = opportunityImportReviewStore.sourceMessageId
+  if (!messageId || items.length === 0) return
+
+  opportunityImportReviewStore.markCreated(messageId, items)
+  try {
+    await chatApi.completeOpportunityImportItems(messageId, items)
+  } catch (error) {
+    toast.add({
+      title: '机会已创建，但聊天卡片状态同步失败',
+      description: error instanceof Error ? error.message : '重新打开对话前可稍后再试。',
+      color: 'warning',
+      icon: 'i-lucide-refresh-cw',
+    })
+  }
+}
+
+async function createOpportunity(request: { payload: CreateOpportunityPayload; sourceItemIndex: number | null }) {
   if (isCreatingOpportunity.value) return
 
   if (!settingsStore.llm.apiKey.trim()) {
@@ -169,12 +187,15 @@ async function createOpportunity(payload: CreateOpportunityPayload) {
     if (!resumeContext) return
     const { resume: currentResume, version: currentVersion } = resumeContext
 
-    const opportunity = await opportunityStore.createOpportunity(payload)
+    const opportunity = await opportunityStore.createOpportunity(request.payload)
     const task = await opportunityStore.startJobAnalysis(opportunity.id, {
       resumeId: currentResume.id,
       resumeVersionId: currentVersion.id,
       modelConnection: settingsStore.llm,
     })
+    if (request.sourceItemIndex !== null) {
+      await persistAssistantImportCompletion([{ itemIndex: request.sourceItemIndex, opportunityId: opportunity.id }])
+    }
     closeCreateModal()
     await nextTick()
     opportunityStore.publishCreatedOpportunity(opportunity, task)
@@ -198,7 +219,7 @@ async function createOpportunity(payload: CreateOpportunityPayload) {
 }
 
 async function createOpportunities(request: {
-  items: Array<{ id: string; payload: CreateOpportunityPayload }>
+  items: Array<{ id: string; sourceItemIndex: number | null; payload: CreateOpportunityPayload }>
   closeWhenDone: boolean
 }) {
   if (isCreatingOpportunity.value || request.items.length === 0) return
@@ -239,11 +260,12 @@ async function createOpportunities(request: {
           resumeVersionId: currentVersion.id,
           modelConnection: settingsStore.llm,
         })
-        return { id: item.id, opportunity, task }
+        return { id: item.id, sourceItemIndex: item.sourceItemIndex, opportunity, task }
       }),
     )
 
     const succeededIds: string[] = []
+    const completedImportItems: Array<{ itemIndex: number; opportunityId: string }> = []
     const failures: Array<{ id: string; error: string }> = []
     for (const [index, result] of results.entries()) {
       const requestItem = request.items[index]
@@ -251,6 +273,12 @@ async function createOpportunities(request: {
 
       if (result.status === 'fulfilled') {
         succeededIds.push(result.value.id)
+        if (result.value.sourceItemIndex !== null) {
+          completedImportItems.push({
+            itemIndex: result.value.sourceItemIndex,
+            opportunityId: result.value.opportunity.id,
+          })
+        }
         opportunityStore.publishCreatedOpportunity(result.value.opportunity, result.value.task)
       } else {
         failures.push({
@@ -259,6 +287,8 @@ async function createOpportunities(request: {
         })
       }
     }
+
+    await persistAssistantImportCompletion(completedImportItems)
 
     if (request.closeWhenDone && failures.length === 0) {
       closeCreateModal()

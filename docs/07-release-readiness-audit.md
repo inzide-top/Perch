@@ -21,16 +21,20 @@
 
 会话历史的搜索、范围筛选、归档切换、分页、重命名和删除确认已从 `GlobalChatAssistant.vue` 抽到 `ChatConversationHistoryPanel.vue`。主组件仍负责聊天运行、流式输出、停止恢复和工具卡片编排，避免把具有共同状态机的逻辑机械拆散。
 
-当前仍超过 1000 行、但不属于本轮新增主链路或不适合机械拆分的文件包括：
+本次复查中仍超过 1000 行、但不适合在发布前机械拆分的生产文件包括：
 
 - `server/src/services/interview.service.ts`
+- `src/components/chat/GlobalChatAssistant.vue`
 - `server/src/repositories/interview.repository.ts`
 - `server/src/repositories/chat.repository.ts`
 - `src/pages/opportunity/detail/interview/pages/InterviewSessionPage.vue`
+- `server/src/services/opportunity.service.ts`
 - `src/pages/opportunity/detail/index.vue`
+- `src/pages/opportunity/components/CreateOpportunityModal.vue`
 - `src/stores/interview.ts`
+- `src/pages/opportunity/index.vue`
 
-这些文件应在对应模块再次发生业务改动时，按“状态机、数据访问、展示组件”边界逐个拆分，不建议在发布前一次性重写。
+这些文件行数较大，但当前分别承载了连续的面试状态机、聊天流生命周期、聚合数据访问或高度耦合的页面交互。它们应在对应模块再次发生业务改动时，按“状态机、数据访问、流式连接、工具卡片、展示组件”边界逐个拆分，不建议为了行数在发布前一次性重写。当前 TypeScript、Lint、核心测试和生产构建已经为后续渐进拆分提供回归保护。
 
 ## 2. 环境变量
 
@@ -80,19 +84,19 @@
 
 ## 5. 真实求职数据检查
 
-### 高风险：已存在于 Git 历史的个人简历样例
+### 已处理当前版本：个人简历样例已匿名化
 
-`src/pages/resume/mocks/resumeDraft.ts` 包含可关联到个人的姓名、学校、任职公司、时间范围、技能与项目经历。该文件已经出现在历史提交中，因此仅修改当前文件不能从 GitHub 历史中彻底移除。
+`src/pages/resume/mocks/resumeDraft.ts` 当前已替换为完全虚构的候选人、公司与项目；`src/pages/opportunity/mocks/jobDraft.ts` 也已改为虚构岗位。历史提交仍可能包含修改前的内容，因此仅修改当前文件不能从 GitHub 历史中彻底移除。
 
 公开发布前建议：
 
-1. 先把当前样例替换为完全虚构的人物、公司、时间和项目描述。
-2. 如果仓库已经公开，再使用 `git filter-repo` 或 BFG 清理历史并强制推送；该操作会改写提交历史，需要单独确认后执行。
+1. 如果仓库尚未公开，发布前评估是否使用 `git filter-repo` 或 BFG 清理历史。
+2. 如果仓库已经公开，清理历史并强制推送会影响现有克隆与分支，需要单独确认后执行。
 3. 清理后轮换任何曾经一同暴露的联系方式或私密链接。
 
-### 中风险：真实公司与岗位样例
+### 已处理当前版本：默认岗位样例已匿名化
 
-`src/pages/opportunity/mocks/jobDraft.ts`、部分测试和表单 placeholder 使用真实公司或公开岗位名称。这些内容通常不是个人隐私，但会让公开仓库显得像真实求职记录。建议将默认 Mock 改为“示例科技 / 前端工程师”，测试中只保留验证业务所需的虚构公司名。
+默认岗位 Mock 已改为“示例科技 / AI 前端工程师”。部分测试仍使用公司名验证多机会匹配和作用域隔离，这些是固定测试数据，不包含个人求职记录。
 
 ### 未发现进入 Git 的数据库业务记录
 
@@ -105,4 +109,4 @@
 - 用无数据的新账号走一次：首页 → 创建简历 → 导入 JD → 查看详情 → 模拟面试 → 能力画像。
 - 断开 API 后检查：首页、简历、机会、策略与两个调试台的失败态和重试。
 - 在 iOS Safari 和 Android Chrome 检查抽屉、模态框、日期时间选择、AI 助手输入和软键盘。
-- 在公开 GitHub 前处理个人简历 Mock；如果仓库已公开，评估是否改写历史。
+- 如果需要彻底清除历史版本中的个人简历 Mock，单独评估是否改写 Git 历史。

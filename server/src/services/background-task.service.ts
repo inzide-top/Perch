@@ -1,14 +1,22 @@
 import { and, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { actionStrategySnapshots, answerDeepEvaluations, jobAnalyses, reviewDocuments } from '../db/schema'
+import {
+  actionStrategySnapshots,
+  answerDeepEvaluations,
+  jobAnalyses,
+  resumePdfImportTasks,
+  reviewDocuments,
+} from '../db/schema'
 
-export type BackgroundTaskType = 'job_analysis' | 'answer_deep_evaluation' | 'review_extraction' | 'action_strategy'
+export type BackgroundTaskType =
+  'job_analysis' | 'answer_deep_evaluation' | 'review_extraction' | 'action_strategy' | 'resume_pdf_import'
 
 export const backgroundTaskLimits = {
   job_analysis: 5,
   answer_deep_evaluation: 5,
   review_extraction: 5,
   action_strategy: 1,
+  resume_pdf_import: 2,
   total: 10,
 } as const
 
@@ -17,6 +25,7 @@ export type BackgroundTaskCounts = {
   deepEvaluation: number
   reviewExtraction: number
   actionStrategy: number
+  resumePdfImport: number
   total: number
 }
 
@@ -35,7 +44,9 @@ export class BackgroundTaskCapacityError extends Error {
           ? `当前最多同时执行 ${backgroundTaskLimits.answer_deep_evaluation} 个深度点评任务，请等待已有任务完成。`
           : taskType === 'review_extraction'
             ? `当前最多同时执行 ${backgroundTaskLimits.review_extraction} 个真实复盘提取任务，请等待已有任务完成。`
-            : `当前最多同时生成 ${backgroundTaskLimits.action_strategy} 个求职策略，请等待当前任务完成。`,
+            : taskType === 'action_strategy'
+              ? `当前最多同时生成 ${backgroundTaskLimits.action_strategy} 个求职策略，请等待当前任务完成。`
+              : `当前最多同时识别 ${backgroundTaskLimits.resume_pdf_import} 份 PDF 简历，请等待已有任务完成。`,
     )
     this.name = 'BackgroundTaskCapacityError'
   }
@@ -59,7 +70,7 @@ async function withAdmissionLock<T>(operation: () => Promise<T>) {
 }
 
 async function countActiveTasks(): Promise<BackgroundTaskCounts> {
-  const [jobResult, deepResult, reviewResult, strategyResult] = await Promise.all([
+  const [jobResult, deepResult, reviewResult, strategyResult, resumePdfResult] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)` })
       .from(jobAnalyses)
@@ -76,19 +87,25 @@ async function countActiveTasks(): Promise<BackgroundTaskCounts> {
       .select({ count: sql<number>`count(*)` })
       .from(actionStrategySnapshots)
       .where(inArray(actionStrategySnapshots.status, ['pending', 'processing'])),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(resumePdfImportTasks)
+      .where(inArray(resumePdfImportTasks.status, ['pending', 'processing'])),
   ])
 
   const jobAnalysis = Number(jobResult[0]?.count ?? 0)
   const deepEvaluation = Number(deepResult[0]?.count ?? 0)
   const reviewExtraction = Number(reviewResult[0]?.count ?? 0)
   const actionStrategy = Number(strategyResult[0]?.count ?? 0)
+  const resumePdfImport = Number(resumePdfResult[0]?.count ?? 0)
 
   return {
     jobAnalysis,
     deepEvaluation,
     reviewExtraction,
     actionStrategy,
-    total: jobAnalysis + deepEvaluation + reviewExtraction + actionStrategy,
+    resumePdfImport,
+    total: jobAnalysis + deepEvaluation + reviewExtraction + actionStrategy + resumePdfImport,
   }
 }
 
@@ -106,7 +123,9 @@ export async function withBackgroundTaskCapacity<T>(taskType: BackgroundTaskType
           ? counts.deepEvaluation
           : taskType === 'review_extraction'
             ? counts.reviewExtraction
-            : counts.actionStrategy
+            : taskType === 'action_strategy'
+              ? counts.actionStrategy
+              : counts.resumePdfImport
     const typeLimit = backgroundTaskLimits[taskType]
 
     if (typeCount >= typeLimit || counts.total >= backgroundTaskLimits.total) {

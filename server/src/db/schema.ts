@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import type { ResumeContent, VersionDiffItem } from '@/types/resume'
+import type { ResumePdfImportResponse, ResumePdfImportTaskStatus } from '@/shared/resume/pdf-import'
 import type { ReviewDocumentKind, ReviewDocumentResult, ReviewDocumentStatus } from '@/types/review'
 import type { ActionStrategyAiSummary, ActionStrategySnapshotStatus } from '@/types/action-strategy'
 import type {
@@ -99,6 +100,27 @@ export const resumeVersions = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [uniqueIndex('resume_versions_resume_id_version_number_unique').on(table.resumeId, table.versionNumber)],
+)
+
+/** PDF 文本提取后异步结构化；结果独立于正式简历，必须经用户审核才会进入版本链。 */
+export const resumePdfImportTasks = pgTable(
+  'resume_pdf_import_tasks',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    status: text('status').$type<ResumePdfImportTaskStatus>().notNull(),
+    fileName: text('file_name').notNull(),
+    pageCount: integer('page_count').notNull(),
+    characterCount: integer('character_count').notNull(),
+    extractedText: text('extracted_text'),
+    result: jsonb('result').$type<ResumePdfImportResponse>(),
+    error: jsonb('error').$type<{ code: string; message: string; retryable: boolean }>(),
+    modelName: text('model_name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
+  },
+  (table) => [index('resume_pdf_import_tasks_user_id_updated_at_index').on(table.userId, table.updatedAt)],
 )
 
 /** 一条岗位机会，同时保存 JD 原文和当前求职流程状态。 */
@@ -326,6 +348,32 @@ export const chatConversations = pgTable(
     ),
     index('chat_conversations_user_id_updated_at_index').on(table.userId, table.updatedAt),
     index('chat_conversations_opportunity_id_index').on(table.opportunityId),
+  ],
+)
+
+/**
+ * 当前会话较早消息的增量摘要。原始消息仍完整保留在 chat_messages；
+ * 这里只保存可重建的派生缓存和已摘要游标，用来限制模型上下文长度。
+ */
+export const chatConversationSummaries = pgTable(
+  'chat_conversation_summaries',
+  {
+    conversationId: uuid('conversation_id')
+      .primaryKey()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    summary: jsonb('summary').$type<ChatJsonObject>().notNull(),
+    summarizedThroughSequence: integer('summarized_through_sequence').notNull(),
+    revision: integer('revision').notNull().default(1),
+    modelName: text('model_name').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    check(
+      'chat_conversation_summaries_sequence_check',
+      sql`${table.summarizedThroughSequence} > 0 AND ${table.revision} > 0`,
+    ),
   ],
 )
 

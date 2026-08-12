@@ -221,7 +221,7 @@ test('缺少工具参数时先等待用户补充，再进入确认并沿用同�
   assert.deepEqual(restored, secondWaiting.checkpoint)
 })
 
-test('需要确认的工具参数会在展示确认前校验', async () => {
+test('需要确认的工具参数错误时会先让模型修正，再展示确认卡片', async () => {
   const adapter = new FakeAdapter([
     [
       {
@@ -232,10 +232,32 @@ test('需要确认的工具参数会在展示确认前校验', async () => {
       },
       { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
     ],
+    [
+      {
+        type: 'tool_call',
+        callId: 'call-corrected-confirmation',
+        name: 'search_opportunities',
+        arguments: { status: 'interviewing' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
   ])
-  const registry = new AgentToolRegistry([createSearchTool(true, { value: 0 })])
+  const executeCount = { value: 0 }
+  const registry = new AgentToolRegistry([createSearchTool(true, executeCount)])
 
-  await assert.rejects(new AgentRuntime(adapter).run(createInput(registry)), /参数校验失败/)
+  const result = await new AgentRuntime(adapter).run(createInput(registry))
+
+  assert.equal(result.status, 'waiting_confirmation')
+  if (result.status !== 'waiting_confirmation') return
+  assert.equal(result.modelCalls, 2)
+  assert.equal(executeCount.value, 0)
+  assert.deepEqual(result.checkpoint.pendingCall.arguments, { status: 'interviewing' })
+  assert.equal(result.checkpoint.recoveryFingerprints?.length, 1)
+
+  const observation = adapter.inputs[1]?.messages.at(-1)
+  assert.equal(observation?.role, 'tool')
+  if (observation?.role !== 'tool') return
+  assert.equal(JSON.parse(observation.content).error.code, 'invalid_tool_input')
 })
 
 test('确认 checkpoint 可以序列化并从 runtimeState 恢复', async () => {
@@ -267,7 +289,7 @@ test('无效 checkpoint 不能恢复工具执行', () => {
   )
 })
 
-test('Runtime 拒绝不符合工具 Zod Schema 的参数，且不会执行工具', async () => {
+test('Runtime 把无效工具参数作为 Observation 交回模型，并只执行修正后的参数', async () => {
   let executeCount = 0
   const adapter = new FakeAdapter([
     [
@@ -278,6 +300,19 @@ test('Runtime 拒绝不符合工具 Zod Schema 的参数，且不会执行工具
         arguments: { status: '' },
       },
       { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_2',
+        name: 'search_opportunities',
+        arguments: { status: 'interviewing' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      { type: 'text_delta', text: '已找到面试中的机会。' },
+      { type: 'completed', finishReason: 'stop', tokenUsage: null },
     ],
   ])
   const registry = new AgentToolRegistry([
@@ -290,8 +325,150 @@ test('Runtime 拒绝不符合工具 Zod Schema 的参数，且不会执行工具
     },
   ])
 
-  await assert.rejects(new AgentRuntime(adapter).run(createInput(registry)), /工具 search_opportunities 参数校验失败/)
-  assert.equal(executeCount, 0)
+  const result = await new AgentRuntime(adapter).run(createInput(registry))
+
+  assert.equal(result.status, 'completed')
+  assert.equal(result.text, '已找到面试中的机会。')
+  assert.equal(executeCount, 1)
+  const observation = adapter.inputs[1]?.messages.at(-1)
+  assert.equal(observation?.role, 'tool')
+  if (observation?.role !== 'tool') return
+  assert.deepEqual(JSON.parse(observation.content).error.issues, [
+    { path: 'status', message: 'Too small: expected string to have >=1 characters' },
+  ])
+})
+
+test('相同的无效参数只允许模型修正一次，避免无限自愈循环', async () => {
+  const executeCount = { value: 0 }
+  const adapter = new FakeAdapter([
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_invalid_1',
+        name: 'search_opportunities',
+        arguments: { status: '' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_invalid_2',
+        name: 'search_opportunities',
+        arguments: { status: '' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+  ])
+
+  await assert.rejects(
+    new AgentRuntime(adapter).run(createInput(new AgentToolRegistry([createSearchTool(false, executeCount)]))),
+    /参数校验失败/,
+  )
+  assert.equal(executeCount.value, 0)
+  assert.equal(adapter.inputs.length, 2)
+})
+
+test('只读工具执行失败后，模型可以改用另一个只读工具完成回答', async () => {
+  let primaryExecuteCount = 0
+  let fallbackExecuteCount = 0
+  const adapter = new FakeAdapter([
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_primary',
+        name: 'primary_lookup',
+        arguments: { keyword: '前端' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_fallback',
+        name: 'fallback_lookup',
+        arguments: { keyword: '前端' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+    [
+      { type: 'text_delta', text: '已通过备用数据源找到结果。' },
+      { type: 'completed', finishReason: 'stop', tokenUsage: null },
+    ],
+  ])
+  const inputValidator = z.object({ keyword: z.string().min(1) }).strict()
+  const registry = new AgentToolRegistry([
+    {
+      name: 'primary_lookup',
+      version: '1',
+      description: '主要只读查询',
+      inputSchema: { type: 'object', properties: { keyword: { type: 'string' } } },
+      inputValidator,
+      executionFailurePolicy: 'return_to_model',
+      requiresConfirmation: false,
+      execute: async () => {
+        primaryExecuteCount += 1
+        throw new Error('主要数据源暂时不可用')
+      },
+    },
+    {
+      name: 'fallback_lookup',
+      version: '1',
+      description: '备用只读查询',
+      inputSchema: { type: 'object', properties: { keyword: { type: 'string' } } },
+      inputValidator,
+      executionFailurePolicy: 'return_to_model',
+      requiresConfirmation: false,
+      execute: async () => {
+        fallbackExecuteCount += 1
+        return { matchedCount: 1 }
+      },
+    },
+  ])
+
+  const result = await new AgentRuntime(adapter).run(createInput(registry))
+
+  assert.equal(result.status, 'completed')
+  assert.equal(result.text, '已通过备用数据源找到结果。')
+  assert.equal(primaryExecuteCount, 1)
+  assert.equal(fallbackExecuteCount, 1)
+  const observation = adapter.inputs[1]?.messages.at(-1)
+  assert.equal(observation?.role, 'tool')
+  if (observation?.role !== 'tool') return
+  assert.equal(JSON.parse(observation.content).error.code, 'tool_execution_failed')
+})
+
+test('写入工具执行失败时不会让模型换方案或重复执行', async () => {
+  let executeCount = 0
+  const adapter = new FakeAdapter([
+    [
+      {
+        type: 'tool_call',
+        callId: 'call_write',
+        name: 'update_profile',
+        arguments: { note: '优先跟进' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+  ])
+  const registry = new AgentToolRegistry([
+    {
+      name: 'update_profile',
+      version: '1',
+      description: '修改机会资料',
+      inputSchema: { type: 'object', properties: { note: { type: 'string' } } },
+      inputValidator: z.object({ note: z.string().min(1) }).strict(),
+      requiresConfirmation: false,
+      execute: async () => {
+        executeCount += 1
+        throw new Error('数据库连接中断')
+      },
+    },
+  ])
+
+  await assert.rejects(new AgentRuntime(adapter).run(createInput(registry)), /数据库连接中断/)
+  assert.equal(executeCount, 1)
+  assert.equal(adapter.inputs.length, 1)
 })
 
 test('Runtime 拒绝没有 completed 事件的异常流', async () => {

@@ -402,7 +402,7 @@ export async function executeChatRun(
       // 分隔符写入持久化 delta，确保实时展示、取消截断和刷新恢复使用同一份文本。
       shouldSeparateNextText = Boolean(streamedText.trim())
     },
-    onToolFailed: async ({ call, error }) => {
+    onToolFailed: async ({ call, error, recoverable }) => {
       if (continuationToolActionId && call.callId === input.continuation?.checkpoint.pendingCall.callId) {
         await dependencies.persistence.updateToolActionExecution?.({
           userId: input.userId,
@@ -413,11 +413,17 @@ export async function executeChatRun(
           patch: { status: 'failed', error: toError(error), completedAt: now() },
         })
       }
-      await appendEvent('tool_call_failed', {
-        callId: call.callId,
-        name: call.name,
-        error: toError(error),
-      })
+      await appendEvent(
+        'tool_call_failed',
+        {
+          callId: call.callId,
+          name: call.name,
+          error: toError(error),
+          recoverable,
+        },
+        recoverable ? { phase: 'calling_model' } : undefined,
+      )
+      if (recoverable) shouldSeparateNextText = Boolean(streamedText.trim())
     },
   }
 

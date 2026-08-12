@@ -1,6 +1,7 @@
 import { useBackgroundTaskStore } from '@/stores/background-tasks'
 import { useInterviewStore } from '@/stores/interview'
 import { useOpportunityStore } from '@/stores/opportunity'
+import { useResumePdfImportReviewStore } from '@/stores/resume-pdf-import-review'
 
 let cleanup: (() => void) | null = null
 
@@ -11,9 +12,13 @@ export function setupBackgroundTaskSync() {
   const backgroundTaskStore = useBackgroundTaskStore()
   const opportunityStore = useOpportunityStore()
   const interviewStore = useInterviewStore()
+  const resumePdfImportReviewStore = useResumePdfImportReviewStore()
   cleanup = backgroundTaskStore.subscribe((task) => {
     if (task.type === 'job_analysis') opportunityStore.applyBackgroundAnalysisTask(task)
     if (task.type === 'answer_deep_evaluation') interviewStore.applyBackgroundDeepEvaluation(task)
+    if (task.type === 'resume_pdf_import' && task.status === 'completed' && task.resumePdfImport?.result) {
+      resumePdfImportReviewStore.open(task.resumePdfImport)
+    }
   })
 
   return cleanup

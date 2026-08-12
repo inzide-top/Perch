@@ -189,6 +189,7 @@ export function createSearchOpportunitiesTool(
       },
     },
     inputValidator: searchOpportunitiesInputSchema,
+    executionFailurePolicy: 'return_to_model',
     requiresConfirmation: false,
     execute: async (input, context): Promise<ChatJsonObject> => {
       const parsed = searchOpportunitiesInputSchema.parse(input)
@@ -277,6 +278,7 @@ export function createGetOpportunityContextTool(
       },
     },
     inputValidator: opportunityContextInputSchema,
+    executionFailurePolicy: 'return_to_model',
     requiresConfirmation: false,
     prepareInput: async (input, providedValue, context) => {
       const providedOpportunityId =
@@ -554,6 +556,7 @@ export function createGetCapabilityProfileTool(
       },
     },
     inputValidator: capabilityProfileInputSchema,
+    executionFailurePolicy: 'return_to_model',
     requiresConfirmation: false,
     prepareInput: async (input, providedValue, context) => {
       const selectedResumeId = readProvidedResumeId(providedValue)
@@ -697,6 +700,7 @@ export function createGetActionStrategyTool(
       '读取当前用户跨机会的行动策略，包括待跟进机会、待投递任务、临近笔试面试准备、待补记录和能力训练任务。用户询问今天做什么、下一步求职安排、哪些机会需要跟进时使用。该工具只读，只返回当前确定性策略和已有 AI 快照的新鲜度，不会触发新的付费策略生成。',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     inputValidator: actionStrategyInputSchema,
+    executionFailurePolicy: 'return_to_model',
     requiresConfirmation: false,
     execute: async (input, context) => {
       actionStrategyInputSchema.parse(input)

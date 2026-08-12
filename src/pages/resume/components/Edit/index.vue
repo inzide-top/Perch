@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import type { CurrentStatus, JobSearchIdentity, ResumeDraft } from '@/types/resume'
+import type { ResumePdfImportResponse } from '@/services/resumes'
 import BasicInfoSection from './components/BasicInfoSection.vue'
 import ProjectSection from './components/ProjectSection.vue'
+import ResumePdfImportDialog from './components/ResumePdfImportDialog.vue'
 import type {
   CurrentStatusOption,
   EducationLevelOption,
@@ -66,8 +69,12 @@ const emit = defineEmits<{
   mockImported: []
   unchangedSave: []
 }>()
+const toast = useToast()
 
 const projects = ref<Project[]>([])
+const pendingImportedProjects = ref<Project[]>([])
+const pdfImportBaseline = ref<Record<string, string> | null>(null)
+const pdfImportedFieldValues = ref<Record<string, string>>({})
 const workExperiences = ref<WorkExperience[]>([])
 const portfolioLinksText = ref('')
 const languages = ref<LanguageAbility[]>([])
@@ -78,11 +85,15 @@ const isResettingDraft = ref(false)
 const isProjectDraftConfirmOpen = ref(false)
 const projectDraftConfirmIntent = ref<'save' | 'cancel' | null>(null)
 const editingProjectIndex = ref<number | null>(null)
+const editingImportedProjectIndex = ref<number | null>(null)
 const pendingDeleteProjectIndex = ref<number | null>(null)
 const originalBodyOverflow = ref('')
 const isProjectCreateOpen = ref(false)
 const isProjectEditOpen = computed(() => editingProjectIndex.value !== null)
-const isProjectDrawerOpen = computed(() => isProjectCreateOpen.value || isProjectEditOpen.value)
+const isImportedProjectEditOpen = computed(() => editingImportedProjectIndex.value !== null)
+const isProjectDrawerOpen = computed(
+  () => isProjectCreateOpen.value || isProjectEditOpen.value || isImportedProjectEditOpen.value,
+)
 
 const resumeErrors = reactive<ResumeErrors>({
   title: '',
@@ -144,7 +155,7 @@ const projectEditForm = reactive<ProjectForm>({
 
 const editorTitle = computed(() => (props.mode === 'edit' ? '编辑简历' : '新建简历'))
 const hasPendingProjectDraft = computed(() => {
-  return Object.values(projectForm).some((value) => value.trim())
+  return Object.values(projectForm).some((value) => value.trim()) || pendingImportedProjects.value.length > 0
 })
 
 function cloneProjects(sourceProjects: Project[]) {
@@ -228,6 +239,7 @@ function createEditorSnapshot() {
   return JSON.stringify({
     form: { ...form },
     projects: cloneProjects(projects.value),
+    pendingImportedProjects: cloneProjects(pendingImportedProjects.value),
     workExperiences: cloneWorkExperiences(workExperiences.value),
     portfolioLinksText: portfolioLinksText.value,
     languages: cloneLanguages(languages.value),
@@ -266,6 +278,8 @@ function normalizeCityList(value: ResumeDraft['address'] | string) {
 function fillDraft(draft: ResumeDraft | null) {
   isResettingDraft.value = true
   resetErrors()
+  pdfImportBaseline.value = null
+  pdfImportedFieldValues.value = {}
 
   Object.assign(form, {
     title: draft?.title ?? '',
@@ -284,6 +298,7 @@ function fillDraft(draft: ResumeDraft | null) {
   syncCurrentStatusWithIdentity()
 
   projects.value = draft ? cloneProjects(draft.projects) : []
+  pendingImportedProjects.value = []
   workExperiences.value = draft ? cloneWorkExperiences(draft.workExperiences) : []
   portfolioLinksText.value = stringifyPortfolioLinks(draft?.portfolioLinks)
   languages.value = cloneLanguages(draft?.languages)
@@ -348,6 +363,94 @@ function importMockResumeDraft() {
   initialSavedDraft.value = props.initialDraft ? props.initialDraft : null
   emit('dirtyChange', createEditorSnapshot() !== initialEditorSnapshot.value)
   emit('mockImported')
+}
+
+function serializePdfImportValue(value: unknown) {
+  return JSON.stringify(value)
+}
+
+function createPdfImportFieldSnapshot(): Record<string, string> {
+  return {
+    title: serializePdfImportValue(form.title),
+    targetDirection: serializePdfImportValue(form.targetDirection),
+    name: serializePdfImportValue(form.name),
+    address: serializePdfImportValue(form.address),
+    educationLevel: serializePdfImportValue(form.educationLevel),
+    school: serializePdfImportValue(form.school),
+    major: serializePdfImportValue(form.major),
+    graduationYear: serializePdfImportValue(form.graduationYear),
+    currentStatus: serializePdfImportValue(form.currentStatus),
+    jobSearchIdentity: serializePdfImportValue(form.jobSearchIdentity),
+    portfolioLinks: serializePdfImportValue(portfolioLinksText.value),
+    languages: serializePdfImportValue(languages.value),
+    workExperiences: serializePdfImportValue(workExperiences.value),
+    comment: serializePdfImportValue(form.comment),
+    skills: serializePdfImportValue(form.skills),
+  }
+}
+
+function capturePdfImportBaseline() {
+  pdfImportBaseline.value = createPdfImportFieldSnapshot()
+}
+
+function applyPdfImport(result: ResumePdfImportResponse) {
+  const draft = result.draft
+  const baseline = pdfImportBaseline.value ?? createPdfImportFieldSnapshot()
+  const beforeApply = createPdfImportFieldSnapshot()
+  const appliedFields: string[] = []
+  const preservedFields: string[] = []
+
+  function applyField(field: string, hasValue: boolean, apply: () => void) {
+    if (!hasValue || !result.recognizedFields.includes(field)) return
+    if (beforeApply[field] !== baseline[field]) {
+      preservedFields.push(field)
+      return
+    }
+    apply()
+    appliedFields.push(field)
+  }
+
+  applyField('title', draft.title !== null, () => (form.title = draft.title!))
+  applyField('targetDirection', draft.targetDirection !== null, () => (form.targetDirection = draft.targetDirection!))
+  applyField('name', draft.name !== null, () => (form.name = draft.name!))
+  applyField('address', draft.address.length > 0, () => (form.address = [...draft.address]))
+  applyField('educationLevel', draft.educationLevel !== null, () => (form.educationLevel = draft.educationLevel!))
+  applyField('school', draft.school !== null, () => (form.school = draft.school!))
+  applyField('major', draft.major !== null, () => (form.major = draft.major!))
+  applyField('graduationYear', draft.graduationYear !== null, () => (form.graduationYear = draft.graduationYear!))
+  applyField('currentStatus', draft.currentStatus !== null, () => (form.currentStatus = draft.currentStatus!))
+  applyField(
+    'jobSearchIdentity',
+    draft.jobSearchIdentity !== null,
+    () => (form.jobSearchIdentity = draft.jobSearchIdentity!),
+  )
+  applyField('comment', draft.comment !== null, () => (form.comment = draft.comment!))
+  applyField('skills', draft.skills !== null, () => (form.skills = draft.skills!))
+  applyField('portfolioLinks', draft.portfolioLinks.length > 0, () => {
+    portfolioLinksText.value = stringifyPortfolioLinks(draft.portfolioLinks)
+  })
+  applyField('languages', draft.languages.length > 0, () => {
+    languages.value = cloneLanguages(draft.languages)
+  })
+  applyField('workExperiences', draft.workExperiences.length > 0, () => {
+    workExperiences.value = cloneWorkExperiences(draft.workExperiences)
+  })
+  pendingImportedProjects.value = cloneProjects(draft.projects)
+  syncCurrentStatusWithIdentity()
+  resetErrors()
+
+  const afterApply = createPdfImportFieldSnapshot()
+  pdfImportedFieldValues.value = Object.fromEntries(appliedFields.map((field) => [field, afterApply[field]!]))
+  pdfImportBaseline.value = null
+
+  if (preservedFields.length) {
+    toast.add({
+      title: '已保留识别期间的手动修改',
+      description: `${preservedFields.length} 个字段未被 PDF 结果覆盖。`,
+      color: 'warning',
+      icon: 'i-lucide-shield-check',
+    })
+  }
 }
 
 function validateResumeForm() {
@@ -456,8 +559,32 @@ function openProjectEdit(index: number) {
   projectEditErrors.content = ''
 }
 
+function openImportedProjectEdit(index: number) {
+  const project = pendingImportedProjects.value[index]
+  if (!project) return
+
+  editingImportedProjectIndex.value = index
+  Object.assign(projectEditForm, {
+    name: project.name,
+    role: project.role,
+    techStack: project.techStack,
+    description: project.description,
+    content: project.content,
+    outcomes: project.outcomes ?? '',
+  })
+  projectEditErrors.name = ''
+  projectEditErrors.description = ''
+  projectEditErrors.content = ''
+}
+
+function ignoreImportedProject(index: number) {
+  pendingImportedProjects.value.splice(index, 1)
+  if (editingImportedProjectIndex.value === index) closeProjectEdit()
+}
+
 function closeProjectEdit() {
   editingProjectIndex.value = null
+  editingImportedProjectIndex.value = null
   resetProjectEditForm()
   projectEditErrors.name = ''
   projectEditErrors.description = ''
@@ -465,6 +592,27 @@ function closeProjectEdit() {
 }
 
 function saveProjectEdit() {
+  if (editingImportedProjectIndex.value !== null) {
+    if (!validateProjectEditForm()) return
+    const importedIndex = editingImportedProjectIndex.value
+    const importedProject = pendingImportedProjects.value[importedIndex]
+    if (!importedProject) return closeProjectEdit()
+
+    projects.value.push({
+      id: importedProject.id,
+      name: projectEditForm.name.trim(),
+      role: projectEditForm.role.trim(),
+      techStack: projectEditForm.techStack.trim(),
+      description: projectEditForm.description.trim(),
+      content: projectEditForm.content.trim(),
+      outcomes: projectEditForm.outcomes?.trim() ?? '',
+    })
+    pendingImportedProjects.value.splice(importedIndex, 1)
+    expandedProjectIndexes.value = new Set(expandedProjectIndexes.value).add(projects.value.length - 1)
+    closeProjectEdit()
+    return
+  }
+
   if (editingProjectIndex.value === null || !validateProjectEditForm()) return
 
   const project = projects.value[editingProjectIndex.value]
@@ -623,6 +771,19 @@ watch(createEditorSnapshot, (snapshot) => {
   emit('dirtyChange', snapshot !== initialEditorSnapshot.value)
 })
 
+watch(createPdfImportFieldSnapshot, (snapshot) => {
+  const next = { ...pdfImportedFieldValues.value }
+  let changed = false
+
+  for (const [field, importedValue] of Object.entries(next)) {
+    if (snapshot[field] === importedValue) continue
+    delete next[field]
+    changed = true
+  }
+
+  if (changed) pdfImportedFieldValues.value = next
+})
+
 watch(
   () => form.jobSearchIdentity,
   () => {
@@ -647,13 +808,19 @@ onBeforeUnmount(() => {
 
 <template>
   <form class="w-full" @submit.prevent>
-    <div class="app-toolbar mb-6 flex items-center justify-between gap-4 px-5 py-4">
-      <div>
+    <div class="app-toolbar mb-6 flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="min-w-0">
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">{{ editorTitle }}</h1>
         <p class="mt-1 text-xs text-muted">正式保存后才会进入版本链，编辑过程不会污染历史快照。</p>
       </div>
 
-      <div class="flex shrink-0 items-center gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
+        <ResumePdfImportDialog
+          v-if="mode === 'create'"
+          :disabled="isSaving"
+          @import-started="capturePdfImportBaseline"
+          @apply="applyPdfImport"
+        />
         <UButton
           type="button"
           color="neutral"
@@ -698,6 +865,7 @@ onBeforeUnmount(() => {
           :current-status-options="filteredCurrentStatusOptions"
           :job-search-identity-options="jobSearchIdentityOptions"
           :language-level-options="languageLevelOptions"
+          :pdf-imported-fields="Object.keys(pdfImportedFieldValues)"
           @update:form="Object.assign(form, $event)"
           @clear-resume-error="clearResumeError"
         />
@@ -707,12 +875,14 @@ onBeforeUnmount(() => {
         :project-form="projectForm"
         :project-edit-form="projectEditForm"
         :projects="projects"
+        :pending-imported-projects="pendingImportedProjects"
         :project-errors="projectErrors"
         :project-edit-errors="projectEditErrors"
         :expanded-project-indexes="expandedProjectIndexes"
         :pending-delete-project-index="pendingDeleteProjectIndex"
         :is-project-create-open="isProjectCreateOpen"
         :is-project-edit-open="isProjectEditOpen"
+        :is-imported-project-edit-open="isImportedProjectEditOpen"
         @update:project-form="Object.assign(projectForm, $event)"
         @update:project-edit-form="Object.assign(projectEditForm, $event)"
         @open-project-create="openProjectCreate"
@@ -721,6 +891,8 @@ onBeforeUnmount(() => {
         @clear-project-error="clearProjectError"
         @toggle-project="toggleProject"
         @open-project-edit="openProjectEdit"
+        @open-imported-project-edit="openImportedProjectEdit"
+        @ignore-imported-project="ignoreImportedProject"
         @request-remove-project="requestRemoveProject"
         @cancel-remove-project="cancelRemoveProject"
         @confirm-remove-project="confirmRemoveProject"
@@ -741,9 +913,11 @@ onBeforeUnmount(() => {
               <UIcon name="i-lucide-circle-alert" class="size-4" />
             </div>
             <div class="min-w-0">
-              <h2 class="text-base font-semibold text-highlighted">添加项目中有未完成内容</h2>
+              <h2 class="text-base font-semibold text-highlighted">项目经历中有未确认内容</h2>
               <p class="mt-2 text-sm leading-6 text-muted">
-                当前“添加项目”区域还有未添加到项目列表的内容。继续操作会忽略这部分草稿。
+                当前还有未添加到正式项目列表的内容<span v-if="pendingImportedProjects.length"
+                  >，其中包含 {{ pendingImportedProjects.length }} 段 PDF 识别项目</span
+                >。继续操作会忽略这部分草稿。
               </p>
             </div>
           </div>

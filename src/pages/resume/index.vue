@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
@@ -12,7 +12,7 @@ import type {
   ResumeDraft,
   ResumeVersion,
 } from '@/types/resume'
-import { useResumeStore } from '@/stores'
+import { useResumePdfImportReviewStore, useResumeStore } from '@/stores'
 import ResumeEdit from './components/Edit/index.vue'
 import ResumeWorkspaceSkeleton from './components/ResumeWorkspaceSkeleton.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
@@ -24,6 +24,7 @@ type EditorMode = 'create' | 'edit'
 const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
 
 const resumeStore = useResumeStore()
+const resumePdfImportReviewStore = useResumePdfImportReviewStore()
 const toast = useToast()
 const { resumes, versions, currentResume, currentVersion, currentResumeVersions, isLoading, loadError } =
   storeToRefs(resumeStore)
@@ -236,6 +237,15 @@ function openCreateEditor() {
   editorInitialDraft.value = null
   isEditorDirty.value = false
 }
+
+watch(
+  () => resumePdfImportReviewStore.revision,
+  () => {
+    if (!resumePdfImportReviewStore.result || editorMode.value !== null) return
+    openCreateEditor()
+  },
+  { immediate: true },
+)
 
 function startEditCurrentResume() {
   if (!currentResume.value || !currentVersion.value) return

@@ -162,6 +162,20 @@
       "when": 1786461729616,
       "tag": "0022_amusing_multiple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786510863539,
+      "tag": "0023_closed_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786512060959,
+      "tag": "0024_solid_stellaris",
+      "breakpoints": true
     }
   ]
 }

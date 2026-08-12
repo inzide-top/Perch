@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm'
 import { cosineDistance } from 'drizzle-orm/sql/functions/vector'
 import { db } from '../db/client'
 import { chatConversations, chatMemoryDocuments, chatMessages, chatRuns, chatToolActions } from '../db/schema'
@@ -170,6 +170,7 @@ export class DrizzleChatMemoryRepository implements ChatMemoryPersistence {
       .where(
         and(
           eq(chatMemoryDocuments.userId, input.scope.userId),
+          ne(chatMemoryDocuments.conversationId, input.scope.currentConversationId),
           eq(chatMemoryDocuments.embeddingModel, input.embeddingModel),
           createRetrievalScopeFilter(input.scope),
           sql`${score} >= ${input.minScore}`,
