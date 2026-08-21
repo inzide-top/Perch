@@ -9,8 +9,10 @@ import type { JobOpportunityStatus, OpportunityIntentionLevel } from '@/types/op
 import { useOpportunityImportReviewStore, useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import {
   getDuplicateOpportunityConflict,
+  getOpportunityInterviewHistoryConflict,
   type CreateOpportunityPayload,
   type DuplicateOpportunityConflict,
+  type OpportunityInterviewHistoryConflict,
   type OpportunityListFilters,
 } from '@/services/opportunities'
 import { getScoreClass, type AnalysisRecommendation } from '@/shared/opportunity/analysisPresentation'
@@ -28,6 +30,15 @@ const statusOptions: { label: string; value: JobOpportunityStatus }[] = [
   { label: '已 Offer', value: 'offered' },
   { label: '流程终止', value: 'closed' },
 ]
+const statusBadgeClasses: Record<JobOpportunityStatus, string> = {
+  pending_apply: 'border-[#BFBFBF]/55 bg-[#BFBFBF]/15 text-[#747474] dark:text-[#D0D0D0]',
+  applied: 'border-[#5E83F5]/40 bg-[#5E83F5]/12 text-[#4169DC] dark:text-[#8FA8FF]',
+  written_test: 'border-[#ffa235]/45 bg-[#ffa235]/12 text-[#C66F00] dark:text-[#FFB85C]',
+  interviewing: 'border-[#8A5EED]/40 bg-[#8A5EED]/12 text-[#7042D6] dark:text-[#B69AFF]',
+  oc: 'border-[#fdd845]/55 bg-[#fdd845]/14 text-[#8A7200] dark:text-[#FFE46D]',
+  offered: 'border-[#22C55E]/40 bg-[#22C55E]/12 text-[#168A42] dark:text-[#67E08D]',
+  closed: 'border-[#EF4444]/40 bg-[#EF4444]/10 text-[#D23434] dark:text-[#FF7B7B]',
+}
 const intentionOptions: Array<{ label: string; value: OpportunityIntentionLevel }> = [
   { label: 'S · 高优先级', value: 'S' },
   { label: 'A · 优先跟进', value: 'A' },
@@ -63,6 +74,12 @@ const isCreatingOpportunity = ref(false)
 const retryingOpportunityId = ref<string | null>(null)
 const deleteOpportunityId = ref<string | null>(null)
 const isDeletingOpportunity = ref(false)
+const interviewHistoryConflict = ref<(OpportunityInterviewHistoryConflict & { opportunityId: string }) | null>(null)
+const isArchivingInterviewsAndDeleting = ref(false)
+const isSelectionMode = ref(false)
+const selectedOpportunityIds = ref<string[]>([])
+const isBatchDeleteConfirmOpen = ref(false)
+const isBatchDeleting = ref(false)
 const duplicateOpportunityConflict = ref<DuplicateOpportunityConflict | null>(null)
 const isResolvingDuplicateOpportunity = ref(false)
 const batchCreationOutcome = ref<{
@@ -102,6 +119,32 @@ const filteredOpportunities = computed(() => opportunities.value)
 const deleteTargetOpportunity = computed(() => {
   return opportunities.value.find((opportunity) => opportunity.id === deleteOpportunityId.value) ?? null
 })
+const conflictTargetOpportunity = computed(() => {
+  const opportunityId = interviewHistoryConflict.value?.opportunityId
+  return opportunityId ? (opportunities.value.find((opportunity) => opportunity.id === opportunityId) ?? null) : null
+})
+const selectedOpportunityCount = computed(() => selectedOpportunityIds.value.length)
+
+function isOpportunitySelected(opportunityId: string) {
+  return selectedOpportunityIds.value.includes(opportunityId)
+}
+
+function toggleOpportunitySelection(opportunityId: string) {
+  selectedOpportunityIds.value = isOpportunitySelected(opportunityId)
+    ? selectedOpportunityIds.value.filter((id) => id !== opportunityId)
+    : [...selectedOpportunityIds.value, opportunityId]
+}
+
+function toggleSelectionMode() {
+  isSelectionMode.value = !isSelectionMode.value
+  if (!isSelectionMode.value) selectedOpportunityIds.value = []
+}
+
+function toggleSelectAllVisible() {
+  const visibleIds = filteredOpportunities.value.map((opportunity) => opportunity.id)
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => isOpportunitySelected(id))
+  selectedOpportunityIds.value = allSelected ? [] : visibleIds
+}
 
 function openCreateModal() {
   opportunityImportReviewStore.clear()
@@ -403,13 +446,20 @@ function getAnalysisFailurePresentation(opportunityId: string) {
   return getAiTaskErrorPresentation(getOpportunityAnalysisTask(opportunityId)?.error)
 }
 
+function isAnalysisStarting(opportunityId: string) {
+  return retryingOpportunityId.value === opportunityId
+}
+
+function isAnalysisActive(opportunityId: string) {
+  const task = getOpportunityAnalysisTask(opportunityId)
+  return isAnalysisStarting(opportunityId) || task?.status === 'pending' || task?.status === 'processing'
+}
+
 function isAnalysisCompleted(opportunityId: string) {
-  return getOpportunityAnalysisTask(opportunityId)?.status === 'completed'
+  return !isAnalysisStarting(opportunityId) && getOpportunityAnalysisTask(opportunityId)?.status === 'completed'
 }
 
 function getOpportunityActionItems(opportunityId: string) {
-  const task = getOpportunityAnalysisTask(opportunityId)
-  const isAnalysisActive = task?.status === 'pending' || task?.status === 'processing'
   const isActionLocked = Boolean(
     retryingOpportunityId.value || isDeletingOpportunity.value || deleteOpportunityId.value,
   )
@@ -419,7 +469,7 @@ function getOpportunityActionItems(opportunityId: string) {
       {
         label: '重新分析',
         icon: 'i-lucide-rotate-cw',
-        disabled: isAnalysisActive || isActionLocked,
+        disabled: isAnalysisActive(opportunityId) || isActionLocked,
         onSelect: () => void retryJobAnalysis(opportunityId),
       },
     ],
@@ -491,6 +541,12 @@ async function confirmDeleteOpportunity() {
     deleteOpportunityId.value = null
     toast.add({ title: 'JD 已删除', color: 'success', icon: 'i-lucide-trash-2' })
   } catch (error) {
+    const conflict = getOpportunityInterviewHistoryConflict(error)
+    if (conflict) {
+      deleteOpportunityId.value = null
+      interviewHistoryConflict.value = { ...conflict, opportunityId }
+      return
+    }
     toast.add({
       title: '删除 JD 失败',
       description: error instanceof Error ? error.message : '请稍后重试。',
@@ -502,9 +558,111 @@ async function confirmDeleteOpportunity() {
   }
 }
 
+function closeInterviewHistoryConflict() {
+  if (isArchivingInterviewsAndDeleting.value) return
+  interviewHistoryConflict.value = null
+}
+
+function openConflictOpportunityInterviews() {
+  const opportunityId = interviewHistoryConflict.value?.opportunityId
+  if (!opportunityId || isArchivingInterviewsAndDeleting.value) return
+  interviewHistoryConflict.value = null
+  void router.push({ name: 'opportunity-detail', params: { id: opportunityId }, query: { section: 'mock-interview' } })
+}
+
+async function confirmArchiveInterviewsAndDeleteOpportunity() {
+  const conflict = interviewHistoryConflict.value
+  if (!conflict || conflict.details.blockingCount > 0 || isArchivingInterviewsAndDeleting.value) return
+
+  isArchivingInterviewsAndDeleting.value = true
+  try {
+    const result = await opportunityStore.archiveInterviewsAndDeleteOpportunity(conflict.opportunityId)
+    interviewHistoryConflict.value = null
+    toast.add({
+      title: '机会已删除',
+      description: `已归档 ${result.archivedSessionCount} 场模拟面试，能力证据继续保留。`,
+      color: 'success',
+      icon: 'i-lucide-archive-check',
+    })
+  } catch (error) {
+    const latestConflict = getOpportunityInterviewHistoryConflict(error)
+    if (latestConflict) {
+      interviewHistoryConflict.value = { ...latestConflict, opportunityId: conflict.opportunityId }
+    }
+    toast.add({
+      title: '归档并删除失败',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+      icon: 'i-lucide-circle-alert',
+    })
+  } finally {
+    isArchivingInterviewsAndDeleting.value = false
+  }
+}
+
+async function confirmBatchDeleteOpportunities() {
+  if (selectedOpportunityIds.value.length === 0 || isBatchDeleting.value) return
+  isBatchDeleting.value = true
+  try {
+    const result = await opportunityStore.batchDeleteOpportunities(selectedOpportunityIds.value)
+    selectedOpportunityIds.value = result.failures.map((failure) => failure.opportunityId)
+    isBatchDeleteConfirmOpen.value = false
+
+    if (result.deletedIds.length > 0) {
+      toast.add({
+        title: `已删除 ${result.deletedIds.length} 条机会`,
+        description: result.failures.length
+          ? `${result.failures.length} 条未删除：${result.failures[0]?.reason ?? '请检查关联数据。'}`
+          : undefined,
+        color: result.failures.length ? 'warning' : 'success',
+        icon: result.failures.length ? 'i-lucide-circle-alert' : 'i-lucide-trash-2',
+      })
+    } else {
+      toast.add({
+        title: '没有机会被删除',
+        description: result.failures[0]?.reason ?? '请先处理关联的模拟面试。',
+        color: 'warning',
+        icon: 'i-lucide-circle-alert',
+      })
+    }
+  } catch (error) {
+    toast.add({
+      title: '批量删除失败',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+    })
+  } finally {
+    isBatchDeleting.value = false
+  }
+}
+
 function formatCityList(cities: string[] | string | undefined) {
   if (Array.isArray(cities)) return cities.length ? cities.join('、') : ''
   return cities ?? ''
+}
+
+function getOpportunityStatusLabel(status: JobOpportunityStatus) {
+  return statusOptions.find((option) => option.value === status)?.label ?? status
+}
+
+function getBlockingInterviewStatusSummary(statuses: string[]) {
+  const labels: Record<string, string> = {
+    preparing: '准备中',
+    active: '进行中',
+    finalizing: '生成复盘中',
+  }
+  return [...new Set(statuses)].map((status) => labels[status] ?? status).join('、')
+}
+
+function openOpportunityDetail(opportunityId: string) {
+  if (isSelectionMode.value) {
+    toggleOpportunitySelection(opportunityId)
+    return
+  }
+  if (!isAnalysisCompleted(opportunityId)) return
+
+  opportunityStore.selectOpportunity(opportunityId)
+  void router.push({ name: 'opportunity-detail', params: { id: opportunityId } })
 }
 
 function scheduleOpportunityDetailPrefetch(opportunityId: string) {
@@ -631,6 +789,15 @@ watch(
           创建一条 JD 后，系统会先生成机会记录，并进入分析流程。后续 AI 会基于岗位要求和你的简历版本生成结构化分析结果。
         </p>
         <UButton class="mt-5 whitespace-nowrap" icon="i-lucide-plus" @click="openCreateModal"> 创建第一条 JD </UButton>
+        <UButton
+          class="mt-5 ml-2 whitespace-nowrap"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-archive"
+          @click="router.push({ name: 'archived-interviews' })"
+        >
+          已归档模拟面试
+        </UButton>
       </div>
     </UCard>
 
@@ -645,9 +812,50 @@ watch(
             <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
             正在同步
           </span>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            class="whitespace-nowrap"
+            icon="i-lucide-archive"
+            @click="router.push({ name: 'archived-interviews' })"
+          >
+            归档面试
+          </UButton>
+          <UButton
+            color="neutral"
+            variant="outline"
+            class="whitespace-nowrap"
+            :icon="isSelectionMode ? 'i-lucide-x' : 'i-lucide-list-checks'"
+            @click="toggleSelectionMode"
+          >
+            {{ isSelectionMode ? '退出多选' : '多选' }}
+          </UButton>
           <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateModal"> 新增 JD 分析 </UButton>
         </div>
       </div>
+
+      <section v-if="isSelectionMode" class="app-toolbar flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div class="flex items-center gap-3 text-sm">
+          <span class="font-medium text-highlighted">已选择 {{ selectedOpportunityCount }} 条</span>
+          <UButton type="button" color="neutral" variant="link" size="sm" @click="toggleSelectAllVisible">
+            {{
+              filteredOpportunities.length > 0 && selectedOpportunityCount === filteredOpportunities.length
+                ? '取消全选'
+                : '全选当前列表'
+            }}
+          </UButton>
+        </div>
+        <UButton
+          type="button"
+          color="error"
+          size="sm"
+          icon="i-lucide-trash-2"
+          :disabled="selectedOpportunityCount === 0"
+          @click="isBatchDeleteConfirmOpen = true"
+        >
+          批量删除
+        </UButton>
+      </section>
 
       <section class="app-toolbar p-4">
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -692,16 +900,39 @@ watch(
             class="app-card flex items-center gap-4 p-4"
             :class="{
               'app-card-interactive': isAnalysisCompleted(opportunity.id),
+              'ring-2 ring-primary/50': isOpportunitySelected(opportunity.id),
             }"
+            :role="isSelectionMode ? 'checkbox' : isAnalysisCompleted(opportunity.id) ? 'link' : undefined"
+            :tabindex="isSelectionMode || isAnalysisCompleted(opportunity.id) ? 0 : undefined"
+            :aria-checked="isSelectionMode ? isOpportunitySelected(opportunity.id) : undefined"
+            :aria-label="
+              isAnalysisCompleted(opportunity.id)
+                ? `进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`
+                : `${opportunity.company} ${opportunity.jobTitle} 正在等待分析结果`
+            "
+            @click="openOpportunityDetail(opportunity.id)"
+            @keydown.enter.prevent="openOpportunityDetail(opportunity.id)"
+            @keydown.space.prevent="openOpportunityDetail(opportunity.id)"
+            @mouseenter="scheduleOpportunityDetailPrefetch(opportunity.id)"
+            @mouseleave="cancelOpportunityDetailPrefetch(opportunity.id)"
           >
-            <RouterLink
+            <button
+              v-if="isSelectionMode"
+              type="button"
+              class="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-elevated hover:text-highlighted"
+              :aria-label="isOpportunitySelected(opportunity.id) ? '取消选择这条机会' : '选择这条机会'"
+              :aria-pressed="isOpportunitySelected(opportunity.id)"
+              @click.stop="toggleOpportunitySelection(opportunity.id)"
+            >
+              <UIcon
+                :name="isOpportunitySelected(opportunity.id) ? 'i-lucide-square-check-big' : 'i-lucide-square'"
+                class="size-5"
+                :class="isOpportunitySelected(opportunity.id) ? 'text-primary' : ''"
+              />
+            </button>
+            <div
               v-if="isAnalysisCompleted(opportunity.id)"
-              class="opportunity-card-main flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-              :to="{ name: 'opportunity-detail', params: { id: opportunity.id } }"
-              :aria-label="`进入 ${opportunity.company} ${opportunity.jobTitle} 分析详情`"
-              @click="opportunityStore.selectOpportunity(opportunity.id)"
-              @mouseenter="scheduleOpportunityDetailPrefetch(opportunity.id)"
-              @mouseleave="cancelOpportunityDetailPrefetch(opportunity.id)"
+              class="opportunity-card-main flex min-w-0 flex-1 items-center gap-3"
             >
               <span
                 class="flex size-9 shrink-0 items-center justify-center rounded-md border border-default bg-elevated text-muted"
@@ -718,10 +949,16 @@ watch(
                     variant="subtle"
                     :label="formatCityList(opportunity.address)"
                   />
+                  <span
+                    class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium"
+                    :class="statusBadgeClasses[opportunity.status]"
+                  >
+                    {{ getOpportunityStatusLabel(opportunity.status) }}
+                  </span>
                 </div>
                 <p class="mt-1 truncate text-sm text-muted">{{ opportunity.jobTitle }}</p>
               </div>
-            </RouterLink>
+            </div>
 
             <div
               v-else
@@ -743,6 +980,12 @@ watch(
                     variant="subtle"
                     :label="formatCityList(opportunity.address)"
                   />
+                  <span
+                    class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium"
+                    :class="statusBadgeClasses[opportunity.status]"
+                  >
+                    {{ getOpportunityStatusLabel(opportunity.status) }}
+                  </span>
                 </div>
                 <p class="mt-1 truncate text-sm text-muted">{{ opportunity.jobTitle }}</p>
               </div>
@@ -750,6 +993,7 @@ watch(
 
             <div class="opportunity-card-status flex w-[12.5rem] shrink-0 items-center justify-end gap-3">
               <UDropdownMenu
+                v-if="!isSelectionMode"
                 :items="getOpportunityActionItems(opportunity.id)"
                 :content="{ align: 'end', sideOffset: 8 }"
               >
@@ -762,11 +1006,12 @@ watch(
                   title="更多操作"
                   aria-label="更多操作"
                   :disabled="isDeletingOpportunity || retryingOpportunityId !== null"
+                  @click.stop
+                  @keydown.stop
                 />
               </UDropdownMenu>
-              <UBadge v-if="opportunity.status === 'closed'" color="error" variant="subtle" label="流程终止" />
               <div
-                v-else-if="getOpportunityAnalysisTask(opportunity.id)?.status === 'completed'"
+                v-if="opportunity.status !== 'closed' && isAnalysisCompleted(opportunity.id)"
                 class="app-match-score-badge flex items-center gap-2 rounded-xl px-3 py-2 text-sm"
                 :class="getScoreClass(getOpportunityAnalysisTask(opportunity.id)?.matchScore ?? 0)"
               >
@@ -785,16 +1030,12 @@ watch(
                 </span>
               </div>
               <div
-                v-else-if="
-                  getOpportunityAnalysisTask(opportunity.id)?.status === 'pending' ||
-                  getOpportunityAnalysisTask(opportunity.id)?.status === 'processing'
-                "
+                v-else-if="isAnalysisActive(opportunity.id)"
                 class="rounded-xl border border-default bg-[color-mix(in_srgb,var(--app-surface-muted)_82%,transparent)] px-3 py-2 text-sm text-muted"
               >
                 <span class="inline-flex items-center gap-1.5">
                   <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-                  分析中 · 第 {{ getOpportunityAnalysisTask(opportunity.id)?.currentAttempt ?? 1 }}/
-                  {{ getOpportunityAnalysisTask(opportunity.id)?.maxAttempts ?? 3 }} 次
+                  {{ isAnalysisStarting(opportunity.id) ? '正在启动分析' : '分析中' }}
                 </span>
               </div>
               <div
@@ -865,7 +1106,7 @@ watch(
             <div class="min-w-0">
               <h2 class="text-base font-semibold text-highlighted">确认删除 JD</h2>
               <p class="mt-2 text-sm leading-6 text-muted">
-                删除后会同时移除该 JD 的分析结果、运行记录和求职流程记录，此操作无法恢复。
+                删除后该机会将从日常列表和求职策略中移除；已归档模拟面试仍保留在历史归档中。
               </p>
               <p v-if="deleteTargetOpportunity" class="mt-3 truncate text-sm font-medium text-highlighted">
                 {{ deleteTargetOpportunity.company }} · {{ deleteTargetOpportunity.jobTitle }}
@@ -890,6 +1131,126 @@ watch(
               :loading="isDeletingOpportunity"
               :disabled="isDeletingOpportunity"
               @click="confirmDeleteOpportunity"
+            >
+              确认删除
+            </UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="Boolean(interviewHistoryConflict)"
+      :dismissible="!isArchivingInterviewsAndDeleting"
+      :close="false"
+      :ui="{
+        overlay: 'app-overlay-layer bg-black/55',
+        content: 'app-modal-layer app-panel w-[calc(100%-2rem)] max-w-md p-5 shadow-xl',
+      }"
+      @update:open="(open: boolean) => !open && closeInterviewHistoryConflict()"
+    >
+      <template #content>
+        <div v-if="interviewHistoryConflict">
+          <div class="flex items-start gap-3">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-warning/12 text-warning">
+              <UIcon name="i-lucide-archive" class="size-4" />
+            </div>
+            <div class="min-w-0">
+              <h2 class="text-base font-semibold text-highlighted">
+                {{ interviewHistoryConflict.details.blockingCount ? '先处理进行中的模拟面试' : '归档面试后删除机会' }}
+              </h2>
+              <p v-if="conflictTargetOpportunity" class="mt-2 truncate text-sm font-medium text-highlighted">
+                {{ conflictTargetOpportunity.company }} · {{ conflictTargetOpportunity.jobTitle }}
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-4 rounded-xl border border-default bg-elevated/55 p-4 text-sm leading-6 text-muted">
+            <template v-if="interviewHistoryConflict.details.blockingCount > 0">
+              <p>
+                当前有 {{ interviewHistoryConflict.details.blockingCount }} 场模拟面试仍处于
+                <span class="font-medium text-highlighted">{{
+                  getBlockingInterviewStatusSummary(interviewHistoryConflict.details.blockingStatuses)
+                }}</span
+                >，运行中的任务不能直接归档或删除。
+              </p>
+              <p v-if="interviewHistoryConflict.details.archiveableCount" class="mt-2">
+                另外 {{ interviewHistoryConflict.details.archiveableCount }} 场已结束记录可以归档。
+              </p>
+            </template>
+            <template v-else>
+              <p>
+                发现
+                {{ interviewHistoryConflict.details.archiveableCount }}
+                场尚未归档的模拟面试。可以一键归档这些记录并继续删除机会。
+              </p>
+            </template>
+            <p class="mt-2 text-xs leading-5 text-muted">
+              归档只会隐藏记录，有效评分仍会纳入能力画像；如不希望继续参与能力证据，请前往“已归档模拟面试”彻底删除。
+            </p>
+          </div>
+
+          <div class="mt-6 flex flex-wrap justify-end gap-2">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="isArchivingInterviewsAndDeleting"
+              @click="closeInterviewHistoryConflict"
+            >
+              取消
+            </UButton>
+            <UButton
+              v-if="interviewHistoryConflict.details.blockingCount > 0"
+              color="primary"
+              icon="i-lucide-arrow-right"
+              @click="openConflictOpportunityInterviews"
+            >
+              去处理面试
+            </UButton>
+            <UButton
+              v-else
+              color="error"
+              icon="i-lucide-archive-x"
+              :loading="isArchivingInterviewsAndDeleting"
+              @click="confirmArchiveInterviewsAndDeleteOpportunity"
+            >
+              归档并删除机会
+            </UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="isBatchDeleteConfirmOpen"
+      :dismissible="!isBatchDeleting"
+      :close="false"
+      :ui="{
+        overlay: 'app-overlay-layer bg-black/55',
+        content: 'app-modal-layer app-panel w-[calc(100%-2rem)] max-w-md p-5 shadow-xl',
+      }"
+      @update:open="(open: boolean) => !open && !isBatchDeleting && (isBatchDeleteConfirmOpen = false)"
+    >
+      <template #content>
+        <div>
+          <h2 class="text-base font-semibold text-highlighted">批量删除 {{ selectedOpportunityCount }} 条机会？</h2>
+          <p class="mt-2 text-sm leading-6 text-muted">
+            存在未归档模拟面试的机会会被保留，其余机会将从日常列表和求职策略中移除。
+          </p>
+          <div class="mt-6 flex justify-end gap-2">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="isBatchDeleting"
+              @click="isBatchDeleteConfirmOpen = false"
+            >
+              取消
+            </UButton>
+            <UButton
+              color="error"
+              icon="i-lucide-trash-2"
+              :loading="isBatchDeleting"
+              @click="confirmBatchDeleteOpportunities"
             >
               确认删除
             </UButton>

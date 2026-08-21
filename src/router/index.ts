@@ -27,6 +27,12 @@ const router = createRouter({
       meta: { title: '模拟面试', workspacePage: true },
     },
     {
+      path: '/interviews/archived',
+      name: 'archived-interviews',
+      component: () => import('@/pages/interview/archived.vue'),
+      meta: { title: '已归档模拟面试' },
+    },
+    {
       path: '/opportunities/:id/interviews/:sessionId',
       name: 'opportunity-interview-session',
       component: () => import('@/pages/opportunity/detail/interview/pages/InterviewSessionPage.vue'),

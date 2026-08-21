@@ -15,6 +15,7 @@ import type {
   BatchUpdateOpportunityProfilesForUserInput,
   CreateInterviewScheduleForUserInput,
   TransitionOpportunityStatusForUserInput,
+  TerminateOpportunityForUserInput,
   UpdateInterviewReviewForUserInput,
   UpdateOpportunityProfileForUserInput,
   UpdateWrittenTestReviewForUserInput,
@@ -91,6 +92,7 @@ export type BatchUpdateOpportunityProfilesForUser = (
 export type TransitionOpportunityStatusForUser = (
   record: TransitionOpportunityStatusForUserInput,
 ) => OpportunityMutationResult
+export type TerminateOpportunityForUser = (record: TerminateOpportunityForUserInput) => OpportunityMutationResult
 export type CreateInterviewScheduleForUser = (
   record: CreateInterviewScheduleForUserInput,
 ) => Promise<{ round: { id: string; scheduledAt: string; title: string; type: string }; alreadyApplied: boolean }>
@@ -125,6 +127,7 @@ export type ChatToolRegistryDependencies = {
   updateOpportunityProfileForUser?: UpdateOpportunityProfileForUser
   batchUpdateOpportunityProfilesForUser?: BatchUpdateOpportunityProfilesForUser
   transitionOpportunityStatusForUser?: TransitionOpportunityStatusForUser
+  terminateOpportunityForUser?: TerminateOpportunityForUser
   createInterviewScheduleForUser?: CreateInterviewScheduleForUser
   createMockInterviewForUser?: CreateMockInterviewForUser
   saveWrittenTestReviewForUser?: SaveWrittenTestReviewForUser
@@ -200,7 +203,10 @@ export function createSearchOpportunitiesTool(
 
       const matched = opportunities.filter((opportunity) => {
         if (parsed.statuses.length > 0 && !parsed.statuses.includes(opportunity.status)) return false
-        if (parsed.intentionLevels.length > 0 && !parsed.intentionLevels.includes(opportunity.intentionLevel)) {
+        if (
+          parsed.intentionLevels.length > 0 &&
+          (!opportunity.intentionLevel || !parsed.intentionLevels.includes(opportunity.intentionLevel))
+        ) {
           return false
         }
         if (parsed.keyword && !includesKeyword(opportunity, parsed.keyword)) return false

@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
-import { useInterviewStore, useOpportunityStore, useResumeStore } from '@/stores'
 import { dashboardApi } from '@/services/dashboard'
 import type { DashboardOverview, DashboardWidgetKey, DashboardWidgetVisibility } from '@/types/dashboard'
 import type { JobOpportunityStatus } from '@/types/opportunity'
@@ -9,12 +7,6 @@ import DashboardAbilityCard from './components/DashboardAbilityCard.vue'
 import DashboardActivityCard from './components/DashboardActivityCard.vue'
 import DashboardInterviewCalendar from './components/DashboardInterviewCalendar.vue'
 import DashboardRingChart from './components/DashboardRingChart.vue'
-
-const resumeStore = useResumeStore()
-const opportunityStore = useOpportunityStore()
-const interviewStore = useInterviewStore()
-const { resumes, currentResume, currentVersion, isLoading: isResumeLoading } = storeToRefs(resumeStore)
-const { opportunities, analysisTasks, isInitialLoading: isOpportunityLoading } = storeToRefs(opportunityStore)
 
 const dashboardOverview = ref<DashboardOverview | null>(null)
 const isDashboardLoading = ref(true)
@@ -40,19 +32,14 @@ const widgetOptions: Array<{ key: DashboardWidgetKey; label: string }> = [
 
 const widgetVisibility = ref<DashboardWidgetVisibility>(readWidgetVisibility())
 
-const isLoading = computed(() => isResumeLoading.value || isOpportunityLoading.value)
-const analyzingCount = computed(
-  () => analysisTasks.value.filter((task) => task.status === 'pending' || task.status === 'processing').length,
-)
-const followUpCount = computed(
-  () =>
-    opportunities.value.filter((item) => ['applied', 'written_test', 'interviewing', 'oc'].includes(item.status))
-      .length,
-)
-const interviewCount = computed(() => Object.keys(interviewStore.sessionsById).length)
+const isLoading = computed(() => isDashboardLoading.value)
+const analyzingCount = computed(() => dashboardOverview.value?.summary.analyzingCount ?? 0)
+const followUpCount = computed(() => dashboardOverview.value?.summary.followUpCount ?? 0)
+const interviewCount = computed(() => dashboardOverview.value?.summary.mockInterviewCount ?? 0)
 const latestResumeLabel = computed(() => {
-  if (!currentResume.value || !currentVersion.value) return '尚未创建简历'
-  return `${currentResume.value.title} · V${currentVersion.value.versionNumber}`
+  const resume = dashboardOverview.value?.summary.currentResume
+  if (!resume) return '尚未创建简历'
+  return `${resume.title} · V${resume.versionNumber}`
 })
 const stats = computed(() => [
   {
@@ -161,8 +148,6 @@ watch(
 )
 
 onMounted(() => {
-  void resumeStore.loadFromApi()
-  void opportunityStore.loadOpportunities()
   void loadDashboard()
 })
 </script>
@@ -335,10 +320,18 @@ onMounted(() => {
           <p class="mt-1 text-sm text-muted">从当前最需要处理的一项开始。</p>
         </div>
         <RouterLink
-          :to="analyzingCount ? '/opportunities' : resumes.length ? '/opportunities' : '/resumes'"
+          :to="
+            analyzingCount ? '/opportunities' : dashboardOverview?.summary.currentResume ? '/opportunities' : '/resumes'
+          "
           class="inline-flex items-center gap-2 rounded-lg text-sm font-medium text-primary outline-none hover:text-[var(--app-accent-deep)] focus-visible:ring-2 focus-visible:ring-primary/60"
         >
-          {{ analyzingCount ? '查看分析进度' : resumes.length ? '添加一个 JD' : '创建第一份简历' }}
+          {{
+            analyzingCount
+              ? '查看分析进度'
+              : dashboardOverview?.summary.currentResume
+                ? '添加一个 JD'
+                : '创建第一份简历'
+          }}
           <UIcon name="i-lucide-arrow-right" class="size-4" />
         </RouterLink>
       </div>

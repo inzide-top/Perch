@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import type { DateValue } from '@internationalized/date'
+import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import CityPicker from '@/components/CityPicker.vue'
 import { industryOptions } from '@/data/industryOptions'
 import type {
@@ -43,7 +44,7 @@ const allLanguageOptions = ['英语', '西班牙语', '葡萄牙语', '法语', 
 const industrySelectItems = industryOptions.map((industry) => ({ label: industry, value: industry }))
 
 const languageForm = reactive<LanguageAbilityForm>({
-  language: '英语',
+  language: '',
   level: 'reading_writing',
 })
 const workExperienceForm = reactive<WorkExperienceForm>({
@@ -65,8 +66,10 @@ const workExperienceErrors = reactive<WorkExperienceErrors>({
 const graduationDatePopoverOpen = ref(false)
 const graduationCalendarDate = ref<unknown>()
 const isWorkExperienceModalOpen = ref(false)
-const workExperiencePeriodPopoverOpen = ref(false)
-const workExperienceCalendarRange = ref<unknown>()
+const workExperienceStartPopoverOpen = ref(false)
+const workExperienceEndPopoverOpen = ref(false)
+const workExperienceStartMonth = shallowRef<DateValue>()
+const workExperienceEndMonth = shallowRef<DateValue>()
 const pendingDeleteWorkExperienceIndex = ref<number | null>(null)
 const originalBodyOverflow = ref('')
 
@@ -86,15 +89,7 @@ const canAddLanguage = computed(
 const graduationTimeLabel = computed(() => {
   return form.value.graduationYear || '选择毕业年月'
 })
-const workExperiencePeriodLabel = computed(() => {
-  const { start, end } = workExperienceForm.period
-
-  if (start && end) return `${start} 至 ${end}`
-  if (start) return `${start} 至 结束时间`
-  if (end) return `开始时间 至 ${end}`
-
-  return '请选择工作时间范围'
-})
+const minimumWorkExperienceEndMonth = computed(() => workExperienceStartMonth.value)
 
 function formatCalendarMonth(value: unknown) {
   if (!value) return ''
@@ -108,14 +103,8 @@ function formatCalendarMonth(value: unknown) {
   return String(value).slice(0, 7)
 }
 
-function getCalendarRangeValue(value: unknown, key: 'start' | 'end') {
-  if (!value || typeof value !== 'object') return undefined
-
-  return (value as Record<'start' | 'end', unknown>)[key]
-}
-
 function resetLanguageForm() {
-  Object.assign(languageForm, { language: availableLanguageOptions.value[0]?.value ?? '', level: 'reading_writing' })
+  Object.assign(languageForm, { language: '', level: 'reading_writing' })
 }
 
 function resetWorkExperienceForm() {
@@ -132,8 +121,10 @@ function resetWorkExperienceForm() {
   workExperienceErrors.companyName = ''
   workExperienceErrors.jobTitle = ''
   workExperienceErrors.period = ''
-  workExperienceCalendarRange.value = undefined
-  workExperiencePeriodPopoverOpen.value = false
+  workExperienceStartMonth.value = undefined
+  workExperienceEndMonth.value = undefined
+  workExperienceStartPopoverOpen.value = false
+  workExperienceEndPopoverOpen.value = false
 }
 
 function addLanguage() {
@@ -155,8 +146,12 @@ function removeLanguage(languageId: string) {
 function validateWorkExperienceForm() {
   workExperienceErrors.companyName = workExperienceForm.companyName.trim() ? '' : '请填写公司名称'
   workExperienceErrors.jobTitle = workExperienceForm.jobTitle.trim() ? '' : '请填写岗位名称'
-  workExperienceErrors.period =
-    workExperienceForm.period.start && workExperienceForm.period.end ? '' : '请选择工作时间范围'
+  const { start, end } = workExperienceForm.period
+  workExperienceErrors.period = !start || !end ? '请分别选择开始时间和结束时间' : ''
+
+  if (start && end && start > end) {
+    workExperienceErrors.period = '开始时间不能晚于结束时间'
+  }
 
   return !Object.values(workExperienceErrors).some(Boolean)
 }
@@ -204,19 +199,41 @@ function handleGraduationMonthSelect(value: unknown) {
   graduationDatePopoverOpen.value = false
 }
 
-function handleWorkExperienceRangeSelect(value: unknown) {
-  workExperienceCalendarRange.value = value
+function handleWorkExperienceStartSelect(value: DateValue | undefined) {
+  if (!value) return
 
-  const startValue = formatCalendarMonth(getCalendarRangeValue(value, 'start'))
-  const endValue = formatCalendarMonth(getCalendarRangeValue(value, 'end'))
+  const startValue = formatCalendarMonth(value)
+  if (!startValue) return
 
-  if (startValue) workExperienceForm.period.start = startValue
-  if (endValue) workExperienceForm.period.end = endValue
+  workExperienceStartMonth.value = value
+  workExperienceForm.period.start = startValue
+  workExperienceStartPopoverOpen.value = false
 
-  if (workExperienceForm.period.start && workExperienceForm.period.end) {
-    clearWorkExperienceError('period')
-    workExperiencePeriodPopoverOpen.value = false
+  if (workExperienceForm.period.end && startValue > workExperienceForm.period.end) {
+    workExperienceEndMonth.value = undefined
+    workExperienceForm.period.end = ''
+    workExperienceErrors.period = '开始时间已调整，请重新选择结束时间'
+    return
   }
+
+  clearWorkExperienceError('period')
+}
+
+function handleWorkExperienceEndSelect(value: DateValue | undefined) {
+  if (!value) return
+
+  const endValue = formatCalendarMonth(value)
+  if (!endValue) return
+
+  if (workExperienceForm.period.start && endValue < workExperienceForm.period.start) {
+    workExperienceErrors.period = '结束时间不能早于开始时间'
+    return
+  }
+
+  workExperienceEndMonth.value = value
+  workExperienceForm.period.end = endValue
+  workExperienceEndPopoverOpen.value = false
+  clearWorkExperienceError('period')
 }
 
 function removeWorkExperience(index: number) {
@@ -255,7 +272,10 @@ watch(isWorkExperienceModalOpen, (isOpen) => {
 })
 
 watch(availableLanguageOptions, () => {
-  if (!availableLanguageOptions.value.some((option) => option.value === languageForm.language)) {
+  if (
+    languageForm.language &&
+    !availableLanguageOptions.value.some((option) => option.value === languageForm.language)
+  ) {
     resetLanguageForm()
   }
 })
@@ -533,7 +553,7 @@ onBeforeUnmount(() => {
               class="w-full"
               :items="availableLanguageOptions"
               value-key="value"
-              placeholder="选择语言"
+              placeholder="请选择你的语言能力"
               :disabled="availableLanguageOptions.length === 0"
             />
             <USelect
@@ -602,7 +622,7 @@ onBeforeUnmount(() => {
           class="w-full"
           :class="{ 'form-control-error': resumeErrors.skills, 'pdf-imported-control': isPdfImported('skills') }"
           :rows="5"
-          placeholder="例如：Vue 3、TypeScript、Vite、前端工程化"
+          placeholder="例如：Vue 3, TypeScript, Vite, 前端工程化"
           @update:model-value="clearResumeError('skills')"
         />
         <p
@@ -706,29 +726,89 @@ onBeforeUnmount(() => {
                 </UFormField>
 
                 <UFormField label="工作时间" required class="sm:col-span-2">
-                  <UPopover v-model:open="workExperiencePeriodPopoverOpen" :ui="{ content: 'z-[60]' }">
-                    <UButton
-                      type="button"
-                      color="neutral"
-                      variant="outline"
-                      class="w-full justify-between"
-                      :class="{ 'form-control-error': workExperienceErrors.period }"
-                      trailing-icon="i-lucide-calendar-range"
-                    >
-                      {{ workExperiencePeriodLabel }}
-                    </UButton>
-                    <template #content>
-                      <div class="p-2">
-                        <UCalendar
-                          v-model="workExperienceCalendarRange"
-                          type="month"
-                          range
-                          size="sm"
-                          @update:model-value="handleWorkExperienceRangeSelect"
-                        />
-                      </div>
-                    </template>
-                  </UPopover>
+                  <div class="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                    <div class="min-w-0">
+                      <p class="mb-1 text-[11px] font-medium text-muted">开始时间</p>
+                      <UPopover
+                        v-model:open="workExperienceStartPopoverOpen"
+                        :portal="true"
+                        :ui="{ content: 'app-popover-layer' }"
+                      >
+                        <UButton
+                          type="button"
+                          color="neutral"
+                          variant="outline"
+                          class="w-full min-w-0 justify-between"
+                          :class="{ 'form-control-error': workExperienceErrors.period }"
+                          trailing-icon="i-lucide-calendar-days"
+                          aria-label="选择工作经历开始时间"
+                        >
+                          <span
+                            class="min-w-0 flex-1 truncate text-left"
+                            :class="workExperienceForm.period.start ? 'text-highlighted' : 'text-muted'"
+                          >
+                            {{ workExperienceForm.period.start || '选择开始月份' }}
+                          </span>
+                        </UButton>
+                        <template #content>
+                          <div class="p-2">
+                            <p class="px-2 pb-2 text-xs font-medium text-muted">选择开始月份</p>
+                            <UCalendar
+                              :model-value="workExperienceStartMonth"
+                              type="month"
+                              locale="zh-CN"
+                              size="sm"
+                              @update:model-value="handleWorkExperienceStartSelect"
+                            />
+                          </div>
+                        </template>
+                      </UPopover>
+                    </div>
+
+                    <UIcon name="i-lucide-arrow-right" class="mb-2.5 hidden size-4 text-muted sm:block" />
+
+                    <div class="min-w-0">
+                      <p class="mb-1 text-[11px] font-medium text-muted">结束时间</p>
+                      <UPopover
+                        v-model:open="workExperienceEndPopoverOpen"
+                        :portal="true"
+                        :ui="{ content: 'app-popover-layer' }"
+                      >
+                        <UButton
+                          type="button"
+                          color="neutral"
+                          variant="outline"
+                          class="w-full min-w-0 justify-between"
+                          :class="{ 'form-control-error': workExperienceErrors.period }"
+                          trailing-icon="i-lucide-calendar-check"
+                          :disabled="!workExperienceForm.period.start"
+                          aria-label="选择工作经历结束时间"
+                        >
+                          <span
+                            class="min-w-0 flex-1 truncate text-left"
+                            :class="workExperienceForm.period.end ? 'text-highlighted' : 'text-muted'"
+                          >
+                            {{ workExperienceForm.period.end || '选择结束月份' }}
+                          </span>
+                        </UButton>
+                        <template #content>
+                          <div class="p-2">
+                            <p class="px-2 pb-2 text-xs font-medium text-muted">
+                              选择结束月份（不能早于 {{ workExperienceForm.period.start }}）
+                            </p>
+                            <UCalendar
+                              :model-value="workExperienceEndMonth"
+                              type="month"
+                              locale="zh-CN"
+                              size="sm"
+                              :min-value="minimumWorkExperienceEndMonth"
+                              @update:model-value="handleWorkExperienceEndSelect"
+                            />
+                          </div>
+                        </template>
+                      </UPopover>
+                    </div>
+                  </div>
                   <p
                     class="mt-1 min-h-[14px] text-[11px] leading-[14px]"
                     :class="workExperienceErrors.period ? 'text-error' : 'invisible'"

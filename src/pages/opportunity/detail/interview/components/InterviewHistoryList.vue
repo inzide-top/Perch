@@ -6,12 +6,19 @@ defineProps<{
   sessions: InterviewSessionSummary[]
   loading: boolean
   openingSessionId: string | null
+  archivingSessionId: string | null
 }>()
 
 const emit = defineEmits<{
   open: [sessionId: string]
   create: []
+  archive: [sessionId: string]
+  openArchive: []
 }>()
+
+function canArchive(status: InterviewSessionSummary['status']) {
+  return ['completed', 'ended_early', 'cancelled', 'preparation_failed'].includes(status)
+}
 
 function handleHistoryWheel(event: WheelEvent) {
   if (typeof window === 'undefined' || event.deltaY === 0) return
@@ -78,18 +85,30 @@ function formatDate(value: string) {
     <div class="flex items-start justify-between gap-3 px-1 pb-4">
       <div>
         <h2 class="text-base font-semibold text-highlighted">历史模拟面试</h2>
-        <p class="mt-1 text-xs leading-5 text-muted">按时间回看每一次训练与整体表现</p>
+        <p class="mt-1 text-xs leading-5 text-muted">归档后从此处隐藏，但有效证据仍参与能力画像</p>
       </div>
-      <UButton
-        type="button"
-        class="interview-history-create"
-        color="primary"
-        size="sm"
-        icon="i-lucide-plus"
-        @click="emit('create')"
-      >
-        新建面试
-      </UButton>
+      <div class="flex shrink-0 items-center gap-1.5">
+        <UButton
+          type="button"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          icon="i-lucide-archive"
+          title="查看已归档模拟面试"
+          aria-label="查看已归档模拟面试"
+          @click="emit('openArchive')"
+        />
+        <UButton
+          type="button"
+          class="interview-history-create"
+          color="primary"
+          size="sm"
+          icon="i-lucide-plus"
+          @click="emit('create')"
+        >
+          新建面试
+        </UButton>
+      </div>
     </div>
 
     <div v-if="loading" class="flex-1 space-y-3 overflow-y-auto pr-1" aria-label="正在加载面试记录">
@@ -101,13 +120,13 @@ function formatDate(value: string) {
       class="interview-history-list flex-1 space-y-3 overflow-y-auto pr-1"
       @wheel="handleHistoryWheel"
     >
-      <button
+      <article
         v-for="session in sessions"
         :key="session.id"
         type="button"
         class="interview-history-item w-full text-left"
         :class="{ 'is-opening': openingSessionId === session.id }"
-        :disabled="openingSessionId !== null"
+        :aria-disabled="openingSessionId !== null"
         @click="emit('open', session.id)"
       >
         <div class="flex items-start gap-3">
@@ -151,24 +170,43 @@ function formatDate(value: string) {
             class="mt-0.5 size-4 animate-spin text-primary"
           />
         </div>
-        <div class="mt-3 flex items-center justify-between gap-2 border-t border-default pt-3">
-          <div class="flex items-center gap-2">
+        <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-default pt-3">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
             <UBadge
               size="sm"
               :color="getStatusColor(session.status)"
               variant="subtle"
               :label="getStatusLabel(session.status)"
             />
-            <span v-if="session.config.referenceHistoricalWeaknesses" class="text-[11px] text-muted"
+            <span v-if="session.config.referenceHistoricalWeaknesses" class="whitespace-nowrap text-[11px] text-muted"
               >已参考历史薄弱项</span
             >
           </div>
-          <span v-if="session.validAnswerCount < 3 && session.status !== 'active'" class="text-[11px] text-muted"
-            >证据不足</span
-          >
-          <UIcon v-else name="i-lucide-chevron-right" class="size-4 text-muted" />
+          <div class="ml-auto flex shrink-0 items-center gap-1">
+            <span
+              v-if="session.validAnswerCount < 3 && session.status !== 'active'"
+              class="mr-1 whitespace-nowrap text-[11px] text-muted"
+              >证据不足</span
+            >
+            <UButton
+              v-if="canArchive(session.status)"
+              type="button"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              square
+              icon="i-lucide-archive"
+              title="归档记录；有效证据仍会参与能力画像"
+              aria-label="归档这场模拟面试，有效证据仍会参与能力画像"
+              :loading="archivingSessionId === session.id"
+              :disabled="archivingSessionId !== null"
+              @click.stop="emit('archive', session.id)"
+              @keydown.stop
+            />
+            <UIcon name="i-lucide-chevron-right" class="size-4 text-muted" />
+          </div>
         </div>
-      </button>
+      </article>
     </div>
 
     <div v-else class="flex flex-1 flex-col items-center justify-center px-5 text-center">

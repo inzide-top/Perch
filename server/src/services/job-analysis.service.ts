@@ -38,6 +38,7 @@ import {
   type ValidationRepairContext,
 } from './job-analysis/prompt'
 import { withBackgroundTaskCapacity } from './background-task.service'
+import { indexCapabilityJdSignalsInBackground } from './capability-jd-signal-indexer'
 
 const maxAnalysisAttempts = 3
 const retryDelaysMs = [0, 2_000, 5_000]
@@ -358,7 +359,7 @@ async function executeJobAnalysis(context: AnalysisExecutionContext) {
 
       const result = normalizeJobAnalysisResult(parsedResult.data)
       const finishedAt = new Date().toISOString()
-      return jobAnalysisRepository.completeRunAndAnalysis({
+      const completed = await jobAnalysisRepository.completeRunAndAnalysis({
         analysisId: context.analysisId,
         runId,
         resumeVersionId: context.resumeVersionId,
@@ -369,6 +370,8 @@ async function executeJobAnalysis(context: AnalysisExecutionContext) {
         durationMs: Date.now() - startedAtMs,
         finishedAt,
       })
+      indexCapabilityJdSignalsInBackground(context.analysisId)
+      return completed
     } catch (error) {
       if (isJobAnalysisCancelled(context.opportunityId)) return
 
@@ -528,6 +531,7 @@ export async function startJobAnalysis(opportunityId: string, input: unknown): P
             completedAt: now,
           })
 
+      indexCapabilityJdSignalsInBackground(analysis.id)
       return toJobAnalysisProgress(analysis, null)
     }
   }

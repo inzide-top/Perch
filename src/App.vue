@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
+import AppMobileNavigation from '@/components/layout/AppMobileNavigation.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import BackgroundTaskToastHost from '@/components/layout/BackgroundTaskToastHost.vue'
-import GlobalChatAssistant from '@/components/chat/GlobalChatAssistant.vue'
+import GlobalChatAssistantShell from '@/components/chat/GlobalChatAssistantShell.vue'
 import { useSettingsStore } from '@/stores'
 import { useChatStore } from '@/stores/chat'
 import { useBackgroundTaskStore } from '@/stores/background-tasks'
@@ -20,6 +21,7 @@ const systemPrefersDark = ref(
 )
 const sidebarPreferenceStorageKey = 'agent-seek-employment:sidebar-expanded'
 const preferredSidebarExpanded = ref(readSidebarPreference())
+const isMobileNavigationOpen = ref(false)
 const isSidebarExpanded = ref(
   route.matched.some((item) => item.meta.workspacePage) ? false : preferredSidebarExpanded.value,
 )
@@ -35,6 +37,12 @@ const isModelReady = computed(() => {
   return Boolean(baseUrl.trim() && modelName.trim() && apiKey.trim())
 })
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440)
+const shouldLoadChatAssistant = ref(false)
+const GlobalChatAssistant = defineAsyncComponent({
+  loader: () => import('@/components/chat/GlobalChatAssistant.vue'),
+  loadingComponent: GlobalChatAssistantShell,
+  delay: 0,
+})
 const chatLayoutStyle = computed(() => {
   if (!chatStore.isOpen || viewportWidth.value < 1024) return undefined
   return { paddingRight: `${chatStore.width}px` }
@@ -54,6 +62,7 @@ function syncSystemThemePreference(event?: MediaQueryListEvent) {
 
 function syncViewportWidth() {
   viewportWidth.value = window.innerWidth
+  if (viewportWidth.value >= 1024) isMobileNavigationOpen.value = false
 }
 
 watch(isDark, (enabled) => document.documentElement.classList.toggle('dark', enabled), { immediate: true })
@@ -85,6 +94,12 @@ onMounted(() => {
   syncSystemThemePreference()
   systemThemeQuery.addEventListener('change', syncSystemThemePreference)
   window.addEventListener('resize', syncViewportWidth)
+  // 先让页面主体完成首帧，再下载 Markdown、工具卡片等较重的助手主体。
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      shouldLoadChatAssistant.value = true
+    })
+  })
 })
 
 onBeforeUnmount(() => {
@@ -110,10 +125,12 @@ onBeforeUnmount(() => {
     }"
   >
     <BackgroundTaskToastHost />
-    <GlobalChatAssistant v-if="!isDeveloperPage" />
+    <GlobalChatAssistant v-if="!isDeveloperPage && shouldLoadChatAssistant" />
+    <GlobalChatAssistantShell v-else-if="!isDeveloperPage" />
     <RouterView v-if="isDeveloperPage" />
     <div v-else class="app-shell text-default">
       <AppSidebar v-model:expanded="isSidebarExpanded" />
+      <AppMobileNavigation v-model:open="isMobileNavigationOpen" />
       <div
         class="transition-[padding] [transition-duration:var(--duration-panel)] [transition-timing-function:var(--ease-panel)]"
         :class="layoutOffsetClass"
@@ -124,6 +141,7 @@ onBeforeUnmount(() => {
           :model-label="settingsStore.llm.modelName"
           :is-model-ready="isModelReady"
           :is-chat-open="chatStore.isOpen"
+          @toggle-navigation="isMobileNavigationOpen = true"
           @open-settings="router.push('/settings')"
           @toggle-chat="chatStore.setOpen(!chatStore.isOpen)"
         />

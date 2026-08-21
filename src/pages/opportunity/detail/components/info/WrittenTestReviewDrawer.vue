@@ -41,6 +41,7 @@ function getStatusColor(status: ReviewDocumentSummary['status']) {
     :open="open"
     direction="right"
     :handle="false"
+    :handle-only="true"
     :close="false"
     :dismissible="!saving"
     :ui="{

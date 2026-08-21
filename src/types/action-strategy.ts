@@ -34,7 +34,7 @@ export type StrategyAction = {
   company?: string
   jobTitle?: string
   status?: JobOpportunityStatus
-  intentionLevel?: OpportunityIntentionLevel
+  intentionLevel?: OpportunityIntentionLevel | null
   matchScore?: number | null
   waitingStage?: StrategyWaitingStage
   cta: StrategyActionCta

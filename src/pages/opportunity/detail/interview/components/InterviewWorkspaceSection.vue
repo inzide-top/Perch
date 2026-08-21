@@ -8,6 +8,7 @@ import type { JobAnalysis } from '@/types/opportunity'
 import CreateInterviewModal from './CreateInterviewModal.vue'
 import InterviewHistoryList from './InterviewHistoryList.vue'
 import InterviewOverviewPanel from './InterviewOverviewPanel.vue'
+import { interviewApi } from '@/services/interviews'
 
 const props = defineProps<{
   opportunityId: string
@@ -22,6 +23,7 @@ const settingsStore = useSettingsStore()
 const isCreateModalOpen = ref(false)
 const isCreating = ref(false)
 const openingSessionId = ref<string | null>(null)
+const archivingSessionId = ref<string | null>(null)
 const sessionSummaries = computed<InterviewSessionSummary[]>(() =>
   interviewStore.sessionSummariesForOpportunity(props.opportunityId),
 )
@@ -95,6 +97,24 @@ async function openSession(sessionId: string) {
   }
 }
 
+async function archiveSession(sessionId: string) {
+  if (archivingSessionId.value) return
+  archivingSessionId.value = sessionId
+  try {
+    await interviewApi.archiveSession(sessionId)
+    await interviewStore.loadInterviewHome(props.opportunityId)
+    toast.add({ title: '模拟面试已归档', color: 'success', icon: 'i-lucide-archive' })
+  } catch (error) {
+    toast.add({
+      title: '归档模拟面试失败',
+      description: error instanceof Error ? error.message : '请稍后重试。',
+      color: 'error',
+    })
+  } finally {
+    archivingSessionId.value = null
+  }
+}
+
 watch(
   () => props.opportunityId,
   () => loadWorkspace(),
@@ -124,8 +144,11 @@ watch(
         :sessions="sessionSummaries"
         :loading="isLoading"
         :opening-session-id="openingSessionId"
+        :archiving-session-id="archivingSessionId"
         @create="openCreateModal"
         @open="openSession"
+        @archive="archiveSession"
+        @open-archive="router.push({ name: 'archived-interviews' })"
       />
       <InterviewOverviewPanel :overview="overview" :loading="isLoading" />
     </div>

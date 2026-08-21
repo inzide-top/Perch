@@ -10,6 +10,7 @@ const props = defineProps<{
   presentation: ChatOpportunityProfileBatchChangePresentation
   status: OpportunityConfirmationStatus
   pendingDecision?: ToolConfirmationDecision | null
+  errorMessage?: string | null
 }>()
 
 const emit = defineEmits<{ approve: []; reject: [] }>()
@@ -54,6 +55,10 @@ const statusCopy = computed(() => {
         </div>
       </article>
     </div>
+
+    <p v-if="status === 'failed'" class="mt-2 text-[11px] leading-5 text-error">
+      {{ errorMessage || '当前批量修改失败，请根据最新机会状态重试。' }}
+    </p>
 
     <div v-if="status === 'waiting'" class="mt-3 flex justify-end gap-2">
       <UButton

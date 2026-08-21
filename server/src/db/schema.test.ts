@@ -12,6 +12,8 @@ import {
   chatRunEvents,
   chatRuns,
   chatToolActions,
+  interviewSessions,
+  jobOpportunities,
 } from './schema'
 
 type TableConfig = ReturnType<typeof getTableConfig>
@@ -117,4 +119,16 @@ test('聊天上下文摘要独立保存游标，并随会话删除', () => {
   assert.ok(columnNames(config).includes('summarized_through_sequence'))
   assert.ok(columnNames(config).includes('revision'))
   assert.ok(config.checks.some((constraint) => constraint.name === 'chat_conversation_summaries_sequence_check'))
+})
+
+test('机会软删除和模拟面试归档字段及索引被声明', () => {
+  const opportunityConfig = getTableConfig(jobOpportunities)
+  const sessionConfig = getTableConfig(interviewSessions)
+  const intentionLevelColumn = opportunityConfig.columns.find((column) => column.name === 'intention_level')
+
+  assert.ok(columnNames(opportunityConfig).includes('deleted_at'))
+  assert.equal(intentionLevelColumn?.notNull, false)
+  assert.ok(columnNames(sessionConfig).includes('archived_at'))
+  assert.ok(hasIndex(sessionConfig, 'interview_sessions_archived_at_index'))
+  assert.ok(hasIndex(opportunityConfig, 'job_opportunities_user_dedupe_fingerprint_unique'))
 })

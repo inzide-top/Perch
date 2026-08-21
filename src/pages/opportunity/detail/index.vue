@@ -14,6 +14,7 @@ import type { ReviewDocumentSummary } from '@/types/review'
 import { useOpportunityStore, useSettingsStore } from '@/stores'
 import { ApiRequestError } from '@/services/http'
 import { getRecommendationClass, getRecommendationLabel } from '@/shared/opportunity/analysisPresentation'
+import { getHighestReachedStatusIndex } from '@/shared/opportunity/reviewAvailability'
 import { formatDateOnly, toDateTimeLocalInput, toIsoDateTime } from '@/shared/formatDate'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
@@ -113,8 +114,6 @@ const isRoundEditDrawerOpen = ref(false)
 const editingRoundInitialValue = ref<InterviewRoundForm | null>(null)
 const writtenTestDatePopoverOpen = ref(false)
 const writtenTestCalendarDate = ref<unknown>()
-const roundDrawerBodyOverflow = ref('')
-const roundDrawerLockCount = ref(0)
 const terminationTarget = ref<'none' | 'new' | string>('none')
 const terminationNewRoundType = ref<InterviewRoundType>('technical_basic')
 const terminationNewRoundTitle = ref('')
@@ -165,7 +164,7 @@ const infoForm = reactive<OpportunityInfoForm>({
   description: '',
   status: 'pending_apply' as JobOpportunityStatus,
   includeWrittenTest: false,
-  intentionLevel: 'B' as OpportunityIntentionLevel,
+  intentionLevel: null,
   industry: '',
   note: '',
 })
@@ -206,28 +205,10 @@ const currentStatusIndex = computed(() => {
   return statusFlow.value.findIndex((status) => status.value === currentStatus)
 })
 
-function getStatusFlowIndex(status: JobOpportunityStatus | null | undefined) {
-  if (!status) return -1
-
-  const normalizedStatus = status
-
-  return statusFlow.value.findIndex((item) => item.value === normalizedStatus)
-}
-
 const reviewAvailableStatusIndex = computed(() => {
   if (opportunity.value?.status !== 'closed') return currentStatusIndex.value
 
-  const histories = opportunity.value?.statusHistory ?? []
-
-  for (let index = histories.length - 1; index >= 0; index -= 1) {
-    const history = histories[index]
-    const relatedStatus = history.toStatus === 'closed' ? history.fromStatus : history.toStatus
-    const relatedStatusIndex = getStatusFlowIndex(relatedStatus)
-
-    if (relatedStatusIndex >= 0) return relatedStatusIndex
-  }
-
-  return currentStatusIndex.value
+  return getHighestReachedStatusIndex(statusFlow.value, opportunity.value.status, opportunity.value.statusHistory)
 })
 
 function hasCurrentStageReached(status: JobOpportunityStatus) {
@@ -237,10 +218,13 @@ function hasCurrentStageReached(status: JobOpportunityStatus) {
 }
 
 const canOpenWrittenTestReview = computed(() => {
-  return Boolean(opportunity.value?.includeWrittenTest) && hasCurrentStageReached('written_test')
+  const review = opportunity.value?.writtenTestReview
+  const hasSavedReview = Boolean(review?.scheduledAt || review?.reviewNote)
+
+  return hasSavedReview || (Boolean(opportunity.value?.includeWrittenTest) && hasCurrentStageReached('written_test'))
 })
 const canOpenInterviewReview = computed(() => {
-  return hasCurrentStageReached('interviewing')
+  return Boolean(opportunity.value?.interviewRounds.length) || hasCurrentStageReached('interviewing')
 })
 const canCreateInterviewSchedule = computed(() => opportunity.value?.status === 'interviewing')
 const nextStatus = computed(() => {
@@ -312,7 +296,7 @@ function syncInfoForm() {
     description: opportunity.value.description,
     status: opportunity.value.status,
     includeWrittenTest: opportunity.value.includeWrittenTest ?? false,
-    intentionLevel: opportunity.value.intentionLevel ?? 'B',
+    intentionLevel: opportunity.value.intentionLevel,
     industry: opportunity.value.industry ?? '',
     note: opportunity.value.note ?? '',
   })
@@ -668,54 +652,29 @@ function handleWrittenTestDateSelect(value: unknown) {
   writtenTestDatePopoverOpen.value = false
 }
 
-function lockRoundDrawerScroll() {
-  if (typeof document === 'undefined') return
-
-  if (roundDrawerLockCount.value === 0) {
-    roundDrawerBodyOverflow.value = document.body.style.overflow
-  }
-  roundDrawerLockCount.value += 1
-  document.body.style.overflow = 'hidden'
-}
-
-function unlockRoundDrawerScroll() {
-  if (typeof document === 'undefined') return
-  if (roundDrawerLockCount.value === 0) return
-
-  roundDrawerLockCount.value -= 1
-
-  if (roundDrawerLockCount.value === 0) {
-    document.body.style.overflow = roundDrawerBodyOverflow.value
-  }
-}
-
 function openInterviewReviewDrawer() {
   if (!canOpenInterviewReview.value) return
 
   interviewManagementTab.value = canCreateInterviewSchedule.value ? 'schedule' : 'review'
   isInterviewReviewDrawerOpen.value = true
-  lockRoundDrawerScroll()
 }
 
 function closeInterviewReviewDrawer() {
   if (isAddingInterviewRound.value || completingInterviewRoundId.value || cancelingInterviewRoundId.value) return
 
   isInterviewReviewDrawerOpen.value = false
-  unlockRoundDrawerScroll()
 }
 
 function openWrittenTestReviewDrawer() {
   if (!canOpenWrittenTestReview.value) return
 
   isWrittenTestReviewDrawerOpen.value = true
-  lockRoundDrawerScroll()
 }
 
 function closeWrittenTestReviewDrawer(force = false) {
   if (isSavingWrittenTestReview.value && !force) return
 
   isWrittenTestReviewDrawerOpen.value = false
-  unlockRoundDrawerScroll()
 }
 
 async function saveWrittenTestReview() {
@@ -750,7 +709,6 @@ function openRoundEditDrawer(round: InterviewRound) {
   })
   editingRoundInitialValue.value = { ...roundEditForm }
   isRoundEditDrawerOpen.value = true
-  lockRoundDrawerScroll()
 }
 
 function closeRoundEditDrawer(force = false) {
@@ -759,7 +717,6 @@ function closeRoundEditDrawer(force = false) {
   isRoundEditDrawerOpen.value = false
   editingRoundId.value = null
   editingRoundInitialValue.value = null
-  unlockRoundDrawerScroll()
 }
 
 async function saveRoundEdit() {
@@ -930,10 +887,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
-  if (isInterviewReviewDrawerOpen.value || isWrittenTestReviewDrawerOpen.value || isRoundEditDrawerOpen.value) {
-    roundDrawerLockCount.value = 1
-    unlockRoundDrawerScroll()
-  }
 })
 </script>
 

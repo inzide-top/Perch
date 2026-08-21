@@ -161,17 +161,32 @@ export type InterviewSession = {
   startedAt: string
   lastActivityAt: string
   completedAt: string | null
+  archivedAt?: string | null
 }
 
 export type InterviewSessionSummary = Pick<
   InterviewSession,
-  'id' | 'opportunityId' | 'config' | 'status' | 'phase' | 'startedAt' | 'lastActivityAt' | 'completedAt'
+  | 'id'
+  | 'opportunityId'
+  | 'config'
+  | 'status'
+  | 'phase'
+  | 'startedAt'
+  | 'lastActivityAt'
+  | 'completedAt'
+  | 'archivedAt'
 > & {
   answeredQuestionCount: number
   validAnswerCount: number
   overallScore: number | null
   primaryStrength: string | null
   primaryGap: string | null
+}
+
+export type ArchivedInterviewSessionSummary = InterviewSessionSummary & {
+  company: string
+  jobTitle: string
+  opportunityDeletedAt: string | null
 }
 
 export type InterviewOverview = {
