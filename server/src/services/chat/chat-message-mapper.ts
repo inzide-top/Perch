@@ -21,7 +21,7 @@ export type ChatToolActionContextRecord = {
 }
 
 export type ChatConfirmationPartPlacement = {
-  toolActionId: string
+  toolActionIds: string[]
   leadingText: string
 }
 
@@ -95,7 +95,9 @@ export function toChatMessageParts(
     const trailingText = text.slice(leadingTextLength)
 
     if (leadingText.trim()) parts.push({ type: 'text', text: leadingText })
-    parts.push({ type: 'tool_action', toolActionId: confirmation.toolActionId })
+    for (const toolActionId of confirmation.toolActionIds) {
+      parts.push({ type: 'tool_action', toolActionId })
+    }
     if (trailingText.trim()) parts.push({ type: 'text', text: trailingText })
   } else if (text.trim()) {
     parts.push({ type: 'text', text })

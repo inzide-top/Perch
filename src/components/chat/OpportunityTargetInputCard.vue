@@ -82,7 +82,9 @@ function submit() {
         </span>
         <span class="flex shrink-0 items-center gap-1.5">
           <UBadge color="neutral" variant="soft" size="sm">{{ candidate.statusLabel }}</UBadge>
-          <UBadge color="primary" variant="subtle" size="sm">{{ candidate.intentionLevel }}</UBadge>
+          <UBadge :color="candidate.intentionLevel ? 'primary' : 'neutral'" variant="subtle" size="sm">
+            {{ candidate.intentionLevel ?? '未设置' }}
+          </UBadge>
           <UIcon
             :name="selectedOpportunityId === candidate.opportunityId ? 'i-lucide-circle-check-big' : 'i-lucide-circle'"
             class="size-4"

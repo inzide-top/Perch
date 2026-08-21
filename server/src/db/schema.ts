@@ -116,6 +116,7 @@ export const resumePdfImportTasks = pgTable(
     result: jsonb('result').$type<ResumePdfImportResponse>(),
     error: jsonb('error').$type<{ code: string; message: string; retryable: boolean }>(),
     modelName: text('model_name').notNull(),
+    currentAttempt: integer('current_attempt').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
@@ -138,18 +139,22 @@ export const jobOpportunities = pgTable(
     description: text('description').notNull(),
     status: text('status').$type<JobOpportunityStatus>().notNull(),
     includeWrittenTest: boolean('include_written_test').notNull(),
-    intentionLevel: text('intention_level').$type<OpportunityIntentionLevel>().notNull(),
+    intentionLevel: text('intention_level').$type<OpportunityIntentionLevel>(),
     industry: text('industry').notNull(),
     note: text('note').notNull(),
     writtenTestScheduledAt: timestamp('written_test_scheduled_at', { withTimezone: true, mode: 'string' }),
     writtenTestReviewNote: text('written_test_review_note'),
     writtenTestReviewedAt: timestamp('written_test_reviewed_at', { withTimezone: true, mode: 'string' }),
+    /** 软删除后不再进入日常机会列表，但保留关联的历史模拟面试和能力证据。 */
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [
     index('job_opportunities_user_id_updated_at_index').on(table.userId, table.updatedAt),
-    uniqueIndex('job_opportunities_user_dedupe_fingerprint_unique').on(table.userId, table.dedupeFingerprint),
+    uniqueIndex('job_opportunities_user_dedupe_fingerprint_unique')
+      .on(table.userId, table.dedupeFingerprint)
+      .where(sql`${table.deletedAt} IS NULL`),
   ],
 )
 
@@ -294,6 +299,40 @@ export const jobAnalyses = pgTable(
     uniqueIndex('job_analyses_active_source_fingerprint_unique')
       .on(table.inputFingerprint)
       .where(sql`"source_analysis_id" IS NULL AND "status" IN ('pending', 'processing')`),
+  ],
+)
+
+/**
+ * JD 分析中优势/待补强项的语义索引。原始结论仍保存在 job_analyses.result；
+ * 这张表只是可重建的派生数据，用于能力画像做跨岗位语义归并。
+ */
+export const capabilityJdSignalEmbeddings = pgTable(
+  'capability_jd_signal_embeddings',
+  {
+    id: uuid('id').primaryKey(),
+    analysisId: uuid('analysis_id')
+      .notNull()
+      .references(() => jobAnalyses.id, { onDelete: 'cascade' }),
+    signalType: text('signal_type').$type<'strength' | 'gap'>().notNull(),
+    signalIndex: integer('signal_index').notNull(),
+    title: text('title').notNull(),
+    reason: text('reason').notNull(),
+    contentHash: text('content_hash').notNull(),
+    embeddingModel: text('embedding_model').notNull(),
+    embedding: vector('embedding', { dimensions: RETRIEVAL_EMBEDDING_DIMENSIONS }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    check('capability_jd_signal_embeddings_signal_index_check', sql`${table.signalIndex} >= 0`),
+    check('capability_jd_signal_embeddings_signal_type_check', sql`${table.signalType} IN ('strength', 'gap')`),
+    uniqueIndex('capability_jd_signal_embeddings_analysis_type_index_unique').on(
+      table.analysisId,
+      table.signalType,
+      table.signalIndex,
+    ),
+    index('capability_jd_signal_embeddings_analysis_id_index').on(table.analysisId),
+    index('capability_jd_signal_embeddings_model_index').on(table.embeddingModel),
   ],
 )
 
@@ -610,6 +649,9 @@ export const agentRuns = pgTable(
     }),
     chatRunId: uuid('chat_run_id').references(() => chatRuns.id, { onDelete: 'cascade' }),
     reviewDocumentId: uuid('review_document_id').references(() => reviewDocuments.id, { onDelete: 'set null' }),
+    resumePdfImportTaskId: uuid('resume_pdf_import_task_id').references(() => resumePdfImportTasks.id, {
+      onDelete: 'set null',
+    }),
     actionStrategySnapshotId: uuid('action_strategy_snapshot_id').references(() => actionStrategySnapshots.id, {
       onDelete: 'set null',
     }),
@@ -635,6 +677,7 @@ export const agentRuns = pgTable(
     index('agent_runs_chat_run_id_index').on(table.chatRunId),
     index('agent_runs_chat_run_id_started_at_index').on(table.chatRunId, table.startedAt),
     index('agent_runs_review_document_id_index').on(table.reviewDocumentId),
+    index('agent_runs_resume_pdf_import_task_id_index').on(table.resumePdfImportTaskId),
     index('agent_runs_action_strategy_snapshot_id_index').on(table.actionStrategySnapshotId),
   ],
 )
@@ -672,12 +715,15 @@ export const interviewSessions = pgTable(
     startedAt: timestamp('started_at', { withTimezone: true, mode: 'string' }),
     lastActiveAt: timestamp('last_active_at', { withTimezone: true, mode: 'string' }).notNull(),
     endedAt: timestamp('ended_at', { withTimezone: true, mode: 'string' }),
+    /** 归档只影响日常展示；有效评估仍可继续参与能力画像。 */
+    archivedAt: timestamp('archived_at', { withTimezone: true, mode: 'string' }),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [
     index('interview_sessions_opportunity_id_index').on(table.opportunityId),
     index('interview_sessions_status_index').on(table.status),
     index('interview_sessions_updated_at_index').on(table.updatedAt),
+    index('interview_sessions_archived_at_index').on(table.archivedAt),
   ],
 )
 

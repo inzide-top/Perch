@@ -13,7 +13,7 @@ export type StrategyOpportunityContext = {
   company: string
   jobTitle: string
   status: JobOpportunityStatus
-  intentionLevel: OpportunityIntentionLevel
+  intentionLevel: OpportunityIntentionLevel | null
   updatedAt: string
   writtenTestScheduledAt: string | null
   writtenTestReviewedAt: string | null
@@ -53,7 +53,7 @@ export type StrategyCandidateInput = {
   company: string
   jobTitle: string
   status: JobOpportunityStatus
-  intentionLevel: OpportunityIntentionLevel
+  intentionLevel: OpportunityIntentionLevel | null
   matchScore: number | null
   waitingStage: StrategyWaitingStage | null
   facts: string[]

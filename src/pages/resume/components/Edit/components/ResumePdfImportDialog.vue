@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { ApiRequestError } from '@/services/http'
 import { resumeApi, type ResumePdfImportResponse } from '@/services/resumes'
+import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import { useBackgroundTaskStore, useResumePdfImportReviewStore, useSettingsStore } from '@/stores'
 
 defineProps<{ disabled?: boolean }>()
@@ -17,7 +18,9 @@ const reviewStore = useResumePdfImportReviewStore()
 const toast = useToast()
 const fileInput = ref<HTMLInputElement | null>(null)
 const isUploading = ref(false)
+const isRetrying = ref(false)
 const preview = ref<ResumePdfImportResponse | null>(null)
+const failureDialogOpen = ref(false)
 let importController: AbortController | null = null
 const activeImportTask = computed(() =>
   backgroundTaskStore.tasks.find(
@@ -26,6 +29,13 @@ const activeImportTask = computed(() =>
 )
 const isImporting = computed(() => isUploading.value || Boolean(activeImportTask.value))
 const hasReviewResult = computed(() => Boolean(reviewStore.result))
+const failedImportTask = computed(() =>
+  [...backgroundTaskStore.tasks]
+    .filter((task) => task.type === 'resume_pdf_import' && task.status === 'failed' && task.resumePdfImport?.error)
+    .sort((left, right) => Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''))
+    .at(0),
+)
+const failurePresentation = computed(() => getAiTaskErrorPresentation(failedImportTask.value?.resumePdfImport?.error))
 
 const fieldLabels: Record<string, string> = {
   title: '简历名称',
@@ -111,6 +121,46 @@ function openReviewResult() {
   if (reviewStore.result) preview.value = reviewStore.result
 }
 
+function openFailureResult() {
+  if (failedImportTask.value) failureDialogOpen.value = true
+}
+
+function chooseAnotherPdf() {
+  const task = failedImportTask.value
+  if (task) backgroundTaskStore.unregister(task)
+  failureDialogOpen.value = false
+  openFilePicker()
+}
+
+async function retryFailedImport() {
+  const task = failedImportTask.value
+  if (!task || task.type !== 'resume_pdf_import' || isRetrying.value) return
+
+  isRetrying.value = true
+  try {
+    const result = await resumeApi.retryResumePdfImportTask(task.taskId, settingsStore.llm)
+    backgroundTaskStore.register(
+      { type: 'resume_pdf_import', taskId: result.id },
+      task.displayContext ?? { primary: result.fileName, secondary: 'PDF 简历识别' },
+    )
+    failureDialogOpen.value = false
+    toast.add({
+      title: '已重新提交识别',
+      description: '后端仍会按有限次数自动重试，完成后会通知你。',
+      color: 'success',
+      icon: 'i-lucide-refresh-cw',
+    })
+  } catch (error) {
+    toast.add({
+      title: '重新识别提交失败',
+      description: error instanceof ApiRequestError ? error.message : '暂时无法重新提交，请稍后再试。',
+      color: 'error',
+    })
+  } finally {
+    isRetrying.value = false
+  }
+}
+
 watch(
   () => reviewStore.revision,
   () => openReviewResult(),
@@ -134,6 +184,14 @@ watch(
   },
   { deep: true, immediate: true },
 )
+
+watch(
+  () => failedImportTask.value?.key,
+  (taskKey) => {
+    failureDialogOpen.value = Boolean(taskKey)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -147,9 +205,9 @@ watch(
     title="PDF 文本会发送到当前配置的模型进行结构化，不会自动保存"
     :loading="isImporting"
     :disabled="disabled || isImporting"
-    @click="hasReviewResult ? openReviewResult() : openFilePicker()"
+    @click="hasReviewResult ? openReviewResult() : failedImportTask ? openFailureResult() : openFilePicker()"
   >
-    {{ hasReviewResult ? '查看 PDF 识别结果' : 'PDF 导入' }}
+    {{ hasReviewResult ? '查看 PDF 识别结果' : failedImportTask ? '查看 PDF 识别失败' : 'PDF 导入' }}
   </UButton>
 
   <Teleport to="body">
@@ -217,6 +275,61 @@ watch(
 
         <footer class="flex shrink-0 justify-end border-t border-default px-6 py-4">
           <UButton type="button" icon="i-lucide-check" @click="applyPreview">应用到表单</UButton>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <div
+      v-if="failureDialogOpen && failedImportTask?.resumePdfImport?.error"
+      class="fixed inset-0 z-[150] flex items-center justify-center bg-black/55 px-4 py-6"
+    >
+      <div class="absolute inset-0" aria-hidden="true" />
+      <section
+        class="app-panel relative w-full max-w-lg overflow-hidden shadow-2xl"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="resume-pdf-failure-title"
+      >
+        <header class="flex items-start justify-between gap-4 border-b border-default px-6 py-5">
+          <div class="min-w-0">
+            <h2 id="resume-pdf-failure-title" class="text-lg font-semibold text-highlighted">
+              {{ failurePresentation.title }}
+            </h2>
+            <p class="mt-1 truncate text-sm text-muted">{{ failedImportTask.resumePdfImport.fileName }}</p>
+          </div>
+          <UButton
+            type="button"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            aria-label="关闭"
+            :disabled="isRetrying"
+            @click="failureDialogOpen = false"
+          />
+        </header>
+
+        <div class="px-6 py-5">
+          <div class="flex items-start gap-3 rounded-xl border border-error/25 bg-error/8 p-4">
+            <UIcon name="i-lucide-circle-alert" class="mt-0.5 size-5 shrink-0 text-error" />
+            <div class="min-w-0">
+              <p class="text-sm leading-6 text-highlighted">{{ failurePresentation.description }}</p>
+              <p class="mt-2 text-xs leading-5 text-muted">
+                后端已经自动执行到第
+                {{ failedImportTask.resumePdfImport.currentAttempt || 1 }} 次；任务最终失败后才会在这里通知你。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <footer class="flex flex-wrap justify-end gap-2 border-t border-default px-6 py-4">
+          <UButton type="button" color="neutral" variant="ghost" :disabled="isRetrying" @click="chooseAnotherPdf">
+            选择其他 PDF
+          </UButton>
+          <UButton type="button" icon="i-lucide-refresh-cw" :loading="isRetrying" @click="retryFailedImport">
+            重新识别
+          </UButton>
         </footer>
       </section>
     </div>

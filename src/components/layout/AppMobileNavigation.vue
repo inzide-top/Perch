@@ -52,12 +52,12 @@ function closeNavigation() {
           />
         </div>
 
-        <nav class="mt-7 space-y-1" aria-label="主导航">
+        <nav class="mt-7 space-y-1.5" aria-label="主导航">
           <RouterLink
             v-for="item in navigation"
             :key="item.to"
             :to="item.to"
-            class="app-mobile-nav-item"
+            class="app-mobile-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted transition-[background-color,color,box-shadow] duration-150 hover:bg-[var(--app-accent-soft)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             active-class="is-active"
             @click="closeNavigation"
           >
@@ -67,7 +67,12 @@ function closeNavigation() {
         </nav>
 
         <div class="mt-auto border-t border-default pt-3">
-          <RouterLink to="/settings" class="app-mobile-nav-item" active-class="is-active" @click="closeNavigation">
+          <RouterLink
+            to="/settings"
+            class="app-mobile-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted transition-[background-color,color,box-shadow] duration-150 hover:bg-[var(--app-accent-soft)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            active-class="is-active"
+            @click="closeNavigation"
+          >
             <UIcon name="i-lucide-settings" class="size-4 shrink-0" />
             <span>设置</span>
           </RouterLink>
@@ -76,3 +81,11 @@ function closeNavigation() {
     </template>
   </USlideover>
 </template>
+
+<style scoped>
+.app-mobile-nav-item.is-active {
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--app-accent-deep);
+  color: var(--app-text);
+}
+</style>

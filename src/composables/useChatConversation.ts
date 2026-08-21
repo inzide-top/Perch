@@ -1,6 +1,8 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import {
   chatApi,
+  type ChatBootstrapRunSummary,
+  type ChatConversationDetail,
   type ChatConversationRecord,
   type ChatMessageRecord,
   type ChatTurnResult,
@@ -148,6 +150,15 @@ export function useChatConversation() {
     }
   }
 
+  function hydrate(detail: ChatConversationDetail) {
+    stream.stop()
+    stream.clearState()
+    conversation.value = detail.conversation
+    messages.value = detail.messages
+    toolActions.value = detail.toolActions
+    error.value = null
+  }
+
   function clear() {
     stream.stop()
     stream.clearState()
@@ -228,11 +239,31 @@ export function useChatConversation() {
     if (conversation.value) clearPendingSubmission(conversation.value.id)
   }
 
-  async function recoverAfterOpen(): Promise<ChatConversationRecoveryResult> {
+  async function recoverAfterOpen(
+    prefetchedRun: ChatBootstrapRunSummary | null | undefined = undefined,
+  ): Promise<ChatConversationRecoveryResult> {
     const currentConversation = conversation.value
     if (!currentConversation) return { status: 'none' }
 
-    if (await stream.resumeFromStorage(currentConversation.id)) {
+    if (prefetchedRun === null) {
+      // Bootstrap 已经查询数据库并确认当前会话不存在活跃 Run。
+      // 会话详情里即使残留旧的 waiting ToolAction，也不能再把已结束任务重新拉起来。
+      stream.discardPersistedRun(currentConversation.id)
+      clearPendingSubmission(currentConversation.id)
+      return { status: 'settled' }
+    }
+
+    if (prefetchedRun !== undefined) {
+      if (prefetchedRun?.conversationId === currentConversation.id) {
+        if (await stream.resumeRun(prefetchedRun.id, currentConversation.id, prefetchedRun)) {
+          clearPendingSubmission(currentConversation.id)
+          return { status: 'resumed' }
+        }
+      }
+
+      // 防御服务端返回了不属于当前会话的摘要，不允许用它恢复当前 UI。
+      stream.discardPersistedRun(currentConversation.id)
+    } else if (await stream.resumeFromStorage(currentConversation.id)) {
       clearPendingSubmission(currentConversation.id)
       return { status: 'resumed' }
     }
@@ -299,7 +330,8 @@ export function useChatConversation() {
       | 'mock_interview_input_cancelled'
       | 'review_input_cancelled'
       | 'opportunity_target_cancelled'
-      | 'resume_target_cancelled' = 'user_requested',
+      | 'resume_target_cancelled'
+      | 'opportunity_termination_input_cancelled' = 'user_requested',
   ) {
     const run = activeRun.value
     if (!conversation.value || !run || isTerminalRunStatus(run.status) || isCancelling.value) return
@@ -457,6 +489,7 @@ export function useChatConversation() {
     streamingAssistantText,
     stream,
     open,
+    hydrate,
     clear,
     create,
     send,

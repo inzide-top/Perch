@@ -10,6 +10,7 @@ const props = defineProps<{
   presentation: ChatOpportunityStatusTransitionPresentation
   status: OpportunityConfirmationStatus
   pendingDecision?: ToolConfirmationDecision | null
+  errorMessage?: string | null
 }>()
 
 const emit = defineEmits<{ approve: []; reject: [] }>()
@@ -57,6 +58,10 @@ const statusCopy = computed(() => {
     >
       <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-3.5 shrink-0" />
       {{ presentation.warning }}
+    </p>
+
+    <p v-if="status === 'failed'" class="mt-2 text-[11px] leading-5 text-error">
+      {{ errorMessage || '当前流转失败，请根据最新机会状态重试。' }}
     </p>
 
     <div v-if="status === 'waiting'" class="mt-3 flex justify-end gap-2">

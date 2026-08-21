@@ -115,6 +115,7 @@ function buildInput(overrides: Partial<CapabilityProfileBuildInput> = {}): Capab
 
 function analysisRecord(overrides: Partial<CapabilityJobAnalysisRecord> = {}): CapabilityJobAnalysisRecord {
   return {
+    analysisId: '00000000-0000-0000-0000-000000000019',
     opportunityId: '00000000-0000-0000-0000-000000000020',
     company: '示例公司',
     jobTitle: '前端工程师',

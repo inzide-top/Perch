@@ -77,7 +77,7 @@ function openAll() {
           </span>
           <span class="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-muted">
             <span class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-primary">{{ item.statusLabel }}</span>
-            <span class="shrink-0">意向 {{ item.intentionLevel }}</span>
+            <span class="shrink-0">意向 {{ item.intentionLevel ?? '未设置' }}</span>
             <span v-if="item.address.length" class="truncate">{{ item.address.join('、') }}</span>
           </span>
         </span>

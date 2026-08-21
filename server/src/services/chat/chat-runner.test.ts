@@ -532,6 +532,52 @@ test('确认后 Runner 恢复 checkpoint、执行工具并生成最终回答', a
   assert.equal(persistence.status, 'completed')
 })
 
+test('用户确认后的写入失败会保留确认卡并展示可理解的失败原因', async () => {
+  const persistence = new FakePersistence()
+  const writeConflict = Object.assign(new Error('机会信息已被其他操作修改'), { statusCode: 409 })
+  const toolRegistry = new AgentToolRegistry([
+    {
+      ...createConfirmationTool({ value: 0 }),
+      execute: async () => {
+        throw writeConflict
+      },
+    },
+  ])
+  const adapter = new FakeAdapter([
+    [
+      {
+        type: 'tool_call',
+        callId: 'call-write-conflict',
+        name: 'update_opportunity',
+        arguments: { status: 'interviewing' },
+      },
+      { type: 'completed', finishReason: 'tool_call', tokenUsage: null },
+    ],
+  ])
+
+  const waiting = await executeChatRun(createInput(persistence, toolRegistry), { adapter, persistence })
+  assert.equal(waiting.status, 'waiting_confirmation')
+  if (waiting.status !== 'waiting_confirmation') return
+
+  await assert.rejects(
+    executeChatRun(
+      createInput(persistence, toolRegistry, {
+        type: 'confirmation',
+        checkpoint: waiting.checkpoint,
+        decision: 'approved',
+      }),
+      { adapter, persistence },
+    ),
+    /机会信息已被其他操作修改/,
+  )
+
+  assert.equal(persistence.messages.at(-1)?.text, '当前修改失败：机会信息已被其他操作修改')
+  assert.deepEqual(
+    persistence.messages.at(-1)?.parts.map((part) => part.type),
+    ['tool_action', 'text'],
+  )
+})
+
 test('等待确认前的模型引导语会保留在续跑后的最终消息中', async () => {
   const persistence = new FakePersistence()
   const toolRegistry = new AgentToolRegistry([createConfirmationTool({ value: 0 })])

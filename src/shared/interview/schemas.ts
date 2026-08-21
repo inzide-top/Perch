@@ -47,6 +47,7 @@ export const agentWorkflowTypeSchema = z.enum([
   'interview_deep_evaluation',
   'interview_final_summary',
   'review_extraction',
+  'resume_pdf_import',
   'action_strategy',
   'chat_turn',
 ])

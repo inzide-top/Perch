@@ -5,6 +5,12 @@ import { getVersionDiff } from '../../../src/shared/resume/versionDiff'
 import { createResumeInputSchema, saveResumeVersionInputSchema } from '../schemas/resume.schema'
 import { interviewRepository } from '../repositories/interview.repository'
 import { getCurrentUserId } from '../context/current-user'
+import {
+  ResumeInterviewHistoryConflictError,
+  summarizeResumeInterviewHistoryConflict,
+} from './resume/deletion-conflict'
+
+export { ResumeInterviewHistoryConflictError } from './resume/deletion-conflict'
 
 export type CreateResumeResult = {
   resume: ResumeRecord
@@ -40,15 +46,6 @@ export class ResumeNotFoundError extends Error {
   constructor(resumeId: string) {
     super(`Resume ${resumeId} not found`)
     this.name = 'ResumeNotFoundError'
-  }
-}
-
-class ResumeInterviewHistoryConflictError extends Error {
-  statusCode = 409
-
-  constructor() {
-    super('该简历存在模拟面试历史，当前不能直接删除')
-    this.name = 'ResumeInterviewHistoryConflictError'
   }
 }
 
@@ -219,8 +216,9 @@ export async function getResumeVersions(resumeId: string) {
 
 export async function deleteResume(resumeId: string): Promise<DeleteResumeResult> {
   await getResumeForCurrentUser(resumeId)
-  if (await interviewRepository.hasSessionsByResumeId(resumeId)) {
-    throw new ResumeInterviewHistoryConflictError()
+  const sessions = await interviewRepository.findSessionArchiveStatesByResumeId(resumeId)
+  if (sessions.length > 0) {
+    throw new ResumeInterviewHistoryConflictError(summarizeResumeInterviewHistoryConflict(sessions))
   }
   await resumeRepository.deleteResumeByResumeId(resumeId)
 

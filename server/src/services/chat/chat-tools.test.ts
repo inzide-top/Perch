@@ -1625,6 +1625,13 @@ test('能力画像工具只信任用户选择的简历 ID，并限制返回证�
       failedJdAnalyses: 0,
       simulatedSessions: 3,
     },
+    jdOverview: {
+      indexingStatus: 'ready',
+      analyzedOpportunityCount: 0,
+      indexedOpportunityCount: 0,
+      strengthThemes: [],
+      gapThemes: [],
+    },
     jdSignals: [],
     interview: {
       strengths: evidence,
@@ -1773,4 +1780,108 @@ test('机会内会话不暴露跨机会能力画像和行动策略工具', () =>
 
   assert.equal(registry.get('get_capability_profile'), undefined)
   assert.equal(registry.get('get_action_strategy'), undefined)
+})
+
+test('机会内终止工具先展示可编辑原因卡片，提交后才写入', async () => {
+  const opportunity = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000401',
+    company: '百度',
+    jobTitle: '前端工程师',
+    status: 'applied',
+  })
+  let received: Record<string, unknown> | null = null
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'opportunity', opportunity },
+    {
+      findOpportunitiesByUserId: async () => [opportunity],
+      updateOpportunityProfileForUser: async () => ({ opportunity, alreadyApplied: false }),
+      transitionOpportunityStatusForUser: async () => ({ opportunity, alreadyApplied: false }),
+      terminateOpportunityForUser: async (record) => {
+        received = record
+        return { opportunity: { ...opportunity, status: 'closed' }, alreadyApplied: false }
+      },
+    },
+  )
+  const tool = registry.get('terminate_opportunity')
+  assert.ok(tool?.prepareInput)
+  assert.equal(tool.requiresConfirmation, false)
+
+  const waiting = await tool.prepareInput({ reasonNote: '薪资不匹配' }, undefined, {
+    signal: new AbortController().signal,
+  })
+  assert.equal(waiting.status, 'waiting_input')
+  if (waiting.status !== 'waiting_input') return
+  assert.equal(waiting.presentation.kind, 'opportunity_termination_input')
+  assert.equal((waiting.presentation.values as { reasonNote: string }).reasonNote, '薪资不匹配')
+
+  const ready = await tool.prepareInput(
+    waiting.input,
+    { reasonNote: '已接受其他 offer' },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(ready.status, 'ready')
+  if (ready.status !== 'ready') return
+  const output = await tool.execute(ready.input, { signal: new AbortController().signal })
+
+  assert.deepEqual(received, {
+    opportunityId: opportunity.id,
+    userId: 'user-1',
+    expectedStatus: 'applied',
+    reasonNote: '已接受其他 offer',
+  })
+  assert.equal(output.status, 'terminated')
+  assert.equal(output.reasonNote, '已接受其他 offer')
+})
+
+test('全局终止工具在同名机会中先选目标，再单独确认终止原因', async () => {
+  const first = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000411',
+    company: '百度',
+    jobTitle: '前端工程师',
+    status: 'applied',
+  })
+  const second = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000412',
+    company: '百度',
+    jobTitle: '高级前端工程师',
+    status: 'interviewing',
+  })
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'global' },
+    {
+      findOpportunitiesByUserId: async () => [first, second],
+      terminateOpportunityForUser: async () => ({
+        opportunity: { ...second, status: 'closed' },
+        alreadyApplied: false,
+      }),
+    },
+  )
+  const tool = registry.get('terminate_opportunity')
+  assert.ok(tool?.prepareInput)
+
+  const targetWaiting = await tool.prepareInput({ opportunityReference: '百度' }, undefined, {
+    signal: new AbortController().signal,
+  })
+  assert.equal(targetWaiting.status, 'waiting_input')
+  if (targetWaiting.status !== 'waiting_input') return
+  assert.equal(targetWaiting.presentation.kind, 'opportunity_target_input')
+
+  const reasonWaiting = await tool.prepareInput(
+    targetWaiting.input,
+    { opportunityId: second.id },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(reasonWaiting.status, 'waiting_input')
+  if (reasonWaiting.status !== 'waiting_input') return
+  assert.equal(reasonWaiting.presentation.kind, 'opportunity_termination_input')
+
+  const ready = await tool.prepareInput(
+    reasonWaiting.input,
+    { reasonNote: '' },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(ready.status, 'ready')
+  if (ready.status !== 'ready') return
+  assert.equal(ready.input.opportunityId, second.id)
+  assert.equal(ready.input.reasonNote, '')
 })

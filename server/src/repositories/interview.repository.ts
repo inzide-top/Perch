@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   agentRuns,
@@ -308,8 +308,37 @@ export class DrizzleInterviewRepository {
       .from(interviewSessions)
       .leftJoin(turnCounts, eq(interviewSessions.id, turnCounts.sessionId))
       .leftJoin(interviewSessionEvaluations, eq(interviewSessions.id, interviewSessionEvaluations.sessionId))
-      .where(eq(interviewSessions.opportunityId, opportunityId))
+      .where(and(eq(interviewSessions.opportunityId, opportunityId), isNull(interviewSessions.archivedAt)))
       .orderBy(desc(interviewSessions.lastActiveAt), desc(interviewSessions.createdAt))
+  }
+
+  async listArchivedSessionSummariesByUserId(userId: string) {
+    const turnCounts = db
+      .select({
+        sessionId: interviewTurns.sessionId,
+        answeredQuestionCount: count(interviewTurns.answer).as('answered_question_count'),
+        validAnswerCount: count(interviewTurns.answerEvidence).as('valid_answer_count'),
+      })
+      .from(interviewTurns)
+      .groupBy(interviewTurns.sessionId)
+      .as('archived_interview_turn_counts')
+
+    return db
+      .select({
+        session: interviewSessions,
+        evaluation: interviewSessionEvaluations.result,
+        answeredQuestionCount: turnCounts.answeredQuestionCount,
+        validAnswerCount: turnCounts.validAnswerCount,
+        company: jobOpportunities.company,
+        jobTitle: jobOpportunities.jobTitle,
+        opportunityDeletedAt: jobOpportunities.deletedAt,
+      })
+      .from(interviewSessions)
+      .innerJoin(jobOpportunities, eq(interviewSessions.opportunityId, jobOpportunities.id))
+      .leftJoin(turnCounts, eq(interviewSessions.id, turnCounts.sessionId))
+      .leftJoin(interviewSessionEvaluations, eq(interviewSessions.id, interviewSessionEvaluations.sessionId))
+      .where(and(eq(jobOpportunities.userId, userId), isNotNull(interviewSessions.archivedAt)))
+      .orderBy(desc(interviewSessions.archivedAt), desc(interviewSessions.lastActiveAt))
   }
 
   /**
@@ -353,6 +382,58 @@ export class DrizzleInterviewRepository {
     return Boolean(session)
   }
 
+  async hasUnarchivedSessionsByOpportunityId(opportunityId: string) {
+    const [session] = await db
+      .select({ id: interviewSessions.id })
+      .from(interviewSessions)
+      .where(and(eq(interviewSessions.opportunityId, opportunityId), isNull(interviewSessions.archivedAt)))
+      .limit(1)
+
+    return Boolean(session)
+  }
+
+  async findUnarchivedSessionStatesByOpportunityId(opportunityId: string) {
+    return db
+      .select({ id: interviewSessions.id, status: interviewSessions.status })
+      .from(interviewSessions)
+      .where(and(eq(interviewSessions.opportunityId, opportunityId), isNull(interviewSessions.archivedAt)))
+  }
+
+  async archiveSession(sessionId: string, archivedAt: string) {
+    const [session] = await db
+      .update(interviewSessions)
+      .set({ archivedAt, updatedAt: archivedAt })
+      .where(
+        and(
+          eq(interviewSessions.id, sessionId),
+          isNull(interviewSessions.archivedAt),
+          inArray(interviewSessions.status, ['completed', 'ended_early', 'cancelled', 'preparation_failed']),
+        ),
+      )
+      .returning()
+
+    return session ?? null
+  }
+
+  async restoreSession(sessionId: string, updatedAt: string) {
+    const [session] = await db
+      .update(interviewSessions)
+      .set({ archivedAt: null, updatedAt })
+      .where(and(eq(interviewSessions.id, sessionId), isNotNull(interviewSessions.archivedAt)))
+      .returning()
+
+    return session ?? null
+  }
+
+  async deleteArchivedSession(sessionId: string) {
+    const [session] = await db
+      .delete(interviewSessions)
+      .where(and(eq(interviewSessions.id, sessionId), isNotNull(interviewSessions.archivedAt)))
+      .returning({ id: interviewSessions.id })
+
+    return session?.id ?? null
+  }
+
   async hasSessionsByResumeId(resumeId: string) {
     const [session] = await db
       .select({ id: interviewSessions.id })
@@ -362,6 +443,14 @@ export class DrizzleInterviewRepository {
       .limit(1)
 
     return Boolean(session)
+  }
+
+  async findSessionArchiveStatesByResumeId(resumeId: string) {
+    return db
+      .select({ id: interviewSessions.id, archivedAt: interviewSessions.archivedAt })
+      .from(interviewSessions)
+      .innerJoin(resumeVersions, eq(interviewSessions.resumeVersionId, resumeVersions.id))
+      .where(eq(resumeVersions.resumeId, resumeId))
   }
 
   async findSessionById(sessionId: string) {

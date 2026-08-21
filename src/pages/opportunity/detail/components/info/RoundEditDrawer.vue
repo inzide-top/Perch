@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ChatDateTimePicker from '@/components/chat/ChatDateTimePicker.vue'
 import type { InterviewRound, InterviewRoundResult, InterviewRoundType } from '@/types/opportunity'
 import type { InterviewRoundForm } from '../../types'
 
@@ -34,6 +35,7 @@ const resultOptions: { label: string; value: Exclude<InterviewRoundResult, 'pend
     :open="open"
     direction="right"
     :handle="false"
+    :handle-only="true"
     :close="false"
     :dismissible="!saving"
     :ui="{
@@ -82,11 +84,11 @@ const resultOptions: { label: string; value: Exclude<InterviewRoundResult, 'pend
             <UInput v-model="form.title" class="w-full" placeholder="一面 / 项目面 / HR 面" />
           </UFormField>
           <UFormField label="面试时间">
-            <UInput
+            <ChatDateTimePicker
               v-model="form.scheduledAt"
-              type="datetime-local"
-              class="w-full min-w-0"
-              icon="i-lucide-calendar-clock"
+              allow-clear
+              content-class="!z-[180]"
+              placeholder="请选择面试日期和时间"
             />
           </UFormField>
 

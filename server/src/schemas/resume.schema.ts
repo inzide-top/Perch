@@ -14,6 +14,24 @@ export const languageAbilityLevelSchema = z.enum([
   'fluent',
 ])
 
+const resumeWorkExperiencePeriodSchema = z
+  .object({
+    start: requiredText,
+    end: requiredText,
+  })
+  .refine(
+    ({ start, end }) => {
+      const isCalendarMonth = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
+      if (!isCalendarMonth(start) || !isCalendarMonth(end)) return true
+
+      return start <= end
+    },
+    {
+      message: '工作经历的开始时间不能晚于结束时间',
+      path: ['end'],
+    },
+  )
+
 export const resumeProjectSchema = z.object({
   id: requiredText,
   name: requiredText,
@@ -60,10 +78,7 @@ export const resumeContentSchema = z.object({
         industry: optionalText,
         department: optionalText,
         jobTitle: requiredText,
-        period: z.object({
-          start: requiredText,
-          end: requiredText,
-        }),
+        period: resumeWorkExperiencePeriodSchema,
       }),
     )
     .default([]),

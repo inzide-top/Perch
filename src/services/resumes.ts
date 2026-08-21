@@ -1,6 +1,6 @@
 import type { Resume, ResumeContent, ResumeVersion, VersionDiffItem } from '@/types/resume'
 import type { LlmConnectionSettings } from '@/types/settings'
-import { request, type RequestOptions } from './http'
+import { ApiRequestError, request, type RequestOptions } from './http'
 import type { ResumePdfImportTaskRecord } from '@/shared/resume/pdf-import'
 
 export type {
@@ -40,6 +40,38 @@ export type SaveResumeVersionResponse =
 
 export type DeleteResumeResponse = {
   deletedResumeId: string
+}
+
+export type ResumeInterviewHistoryConflict = {
+  code: 'resume_interview_history_conflict'
+  details: {
+    archivedSessionCount: number
+    unarchivedSessionCount: number
+  }
+}
+
+export function getResumeInterviewHistoryConflict(error: unknown): ResumeInterviewHistoryConflict | null {
+  if (
+    !(error instanceof ApiRequestError) ||
+    error.status !== 409 ||
+    typeof error.data !== 'object' ||
+    error.data === null
+  ) {
+    return null
+  }
+
+  const data = error.data as Partial<ResumeInterviewHistoryConflict>
+  const details = data.details
+  if (
+    data.code !== 'resume_interview_history_conflict' ||
+    !details ||
+    typeof details.archivedSessionCount !== 'number' ||
+    typeof details.unarchivedSessionCount !== 'number'
+  ) {
+    return null
+  }
+
+  return data as ResumeInterviewHistoryConflict
 }
 
 export type ResumeWorkspaceResponse = {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import ChatDateTimePicker from '@/components/chat/ChatDateTimePicker.vue'
 import type { InterviewRound, InterviewRoundResult, InterviewRoundType, JobOpportunity } from '@/types/opportunity'
 import type { ReviewDocumentSummary } from '@/types/review'
 import { formatDateTime } from '@/shared/formatDate'
@@ -112,6 +113,7 @@ function getResultLabel(result: InterviewRoundResult) {
     :open="open"
     direction="right"
     :handle="false"
+    :handle-only="true"
     :close="false"
     :dismissible="!isBusy"
     :ui="{
@@ -211,11 +213,11 @@ function getResultLabel(result: InterviewRoundResult) {
                 />
               </UFormField>
               <UFormField label="面试时间">
-                <UInput
+                <ChatDateTimePicker
                   v-model="form.scheduledAt"
-                  type="datetime-local"
-                  class="w-full min-w-0"
-                  icon="i-lucide-calendar-clock"
+                  allow-clear
+                  content-class="!z-[160]"
+                  placeholder="请选择面试日期和时间"
                   :disabled="activeTab === 'schedule' && !canCreateSchedule"
                 />
               </UFormField>

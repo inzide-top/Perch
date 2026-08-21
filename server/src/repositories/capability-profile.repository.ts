@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type {
   InterviewAssessmentPlan,
   InterviewEvidenceStatus,
@@ -17,6 +17,7 @@ import {
 } from '../db/schema'
 
 export type CapabilityJobAnalysisRecord = {
+  analysisId: string
   opportunityId: string
   company: string
   jobTitle: string
@@ -54,6 +55,7 @@ export class DrizzleCapabilityProfileRepository {
   async findJobAnalysesByResumeId(userId: string, resumeId: string): Promise<CapabilityJobAnalysisRecord[]> {
     const rows = await db
       .select({
+        analysisId: jobAnalyses.id,
         opportunityId: jobAnalyses.opportunityId,
         company: jobOpportunities.company,
         jobTitle: jobOpportunities.jobTitle,
@@ -68,7 +70,13 @@ export class DrizzleCapabilityProfileRepository {
       .from(jobAnalyses)
       .innerJoin(jobOpportunities, eq(jobAnalyses.opportunityId, jobOpportunities.id))
       .innerJoin(resumeVersions, eq(jobAnalyses.resumeVersionId, resumeVersions.id))
-      .where(and(eq(jobOpportunities.userId, userId), eq(jobAnalyses.resumeId, resumeId)))
+      .where(
+        and(
+          eq(jobOpportunities.userId, userId),
+          eq(jobAnalyses.resumeId, resumeId),
+          isNull(jobOpportunities.deletedAt),
+        ),
+      )
       .orderBy(desc(jobAnalyses.updatedAt))
 
     return rows

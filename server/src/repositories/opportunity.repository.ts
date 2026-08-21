@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type {
   InterviewRound,
   JobOpportunity,
@@ -10,6 +10,7 @@ import { db } from '../db/client'
 import { measureDb } from '../utils/request-metrics'
 import {
   interviewRounds,
+  interviewSessions,
   jobOpportunities,
   opportunityStatusHistory,
   opportunityTerminations,
@@ -27,6 +28,7 @@ export type JobOpportunityRecord = Omit<
   writtenTestScheduledAt: string | null
   writtenTestReviewNote: string | null
   writtenTestReviewedAt: string | null
+  deletedAt?: string | null
 }
 
 export type CreateJobOpportunityRecord = {
@@ -114,6 +116,7 @@ function toJobOpportunityInsertValues(opportunity: JobOpportunityRecord) {
     writtenTestScheduledAt: opportunity.writtenTestScheduledAt,
     writtenTestReviewNote: opportunity.writtenTestReviewNote,
     writtenTestReviewedAt: opportunity.writtenTestReviewedAt,
+    deletedAt: opportunity.deletedAt ?? null,
     createdAt: opportunity.createdAt,
     updatedAt: opportunity.updatedAt,
   }
@@ -161,6 +164,7 @@ function toJobOpportunityRecord(row: JobOpportunityRow): JobOpportunityRecord {
     writtenTestScheduledAt: row.writtenTestScheduledAt ? toIsoTimestamp(row.writtenTestScheduledAt) : null,
     writtenTestReviewNote: row.writtenTestReviewNote,
     writtenTestReviewedAt: row.writtenTestReviewedAt ? toIsoTimestamp(row.writtenTestReviewedAt) : null,
+    deletedAt: row.deletedAt ? toIsoTimestamp(row.deletedAt) : null,
     createdAt: toIsoTimestamp(row.createdAt),
     updatedAt: toIsoTimestamp(row.updatedAt),
   }
@@ -325,13 +329,95 @@ export class DrizzleOpportunityRepository {
     })
   }
 
-  async deleteOpportunityForUser(opportunityId: string, userId: string): Promise<string | null> {
+  async softDeleteOpportunityForUser(opportunityId: string, userId: string, deletedAt: string): Promise<string | null> {
     const [deletedOpportunity] = await db
-      .delete(jobOpportunities)
-      .where(and(eq(jobOpportunities.id, opportunityId), eq(jobOpportunities.userId, userId)))
+      .update(jobOpportunities)
+      .set({ deletedAt, updatedAt: deletedAt })
+      .where(
+        and(
+          eq(jobOpportunities.id, opportunityId),
+          eq(jobOpportunities.userId, userId),
+          isNull(jobOpportunities.deletedAt),
+        ),
+      )
       .returning({ id: jobOpportunities.id })
 
     return deletedOpportunity?.id ?? null
+  }
+
+  /**
+   * 删除确认中的“归档并删除”必须原子完成：只要发现仍在运行的模拟面试，
+   * 就既不归档任何记录，也不软删除机会。
+   */
+  async archiveInterviewsAndSoftDeleteOpportunityForUser(
+    opportunityId: string,
+    userId: string,
+    deletedAt: string,
+  ): Promise<
+    | { status: 'deleted'; id: string; archivedSessionCount: number }
+    | { status: 'blocked'; blockingStatuses: string[] }
+    | { status: 'not_found' }
+  > {
+    return db.transaction(async (tx) => {
+      const [opportunity] = await tx
+        .select({ id: jobOpportunities.id })
+        .from(jobOpportunities)
+        .where(
+          and(
+            eq(jobOpportunities.id, opportunityId),
+            eq(jobOpportunities.userId, userId),
+            isNull(jobOpportunities.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!opportunity) return { status: 'not_found' as const }
+
+      const unarchivedSessions = await tx
+        .select({ id: interviewSessions.id, status: interviewSessions.status })
+        .from(interviewSessions)
+        .where(and(eq(interviewSessions.opportunityId, opportunityId), isNull(interviewSessions.archivedAt)))
+
+      const archiveableStatuses = new Set(['completed', 'ended_early', 'cancelled', 'preparation_failed'])
+      const blockingStatuses = unarchivedSessions
+        .filter((session) => !archiveableStatuses.has(session.status))
+        .map((session) => session.status)
+
+      if (blockingStatuses.length > 0) return { status: 'blocked' as const, blockingStatuses }
+
+      const archivedSessions = unarchivedSessions.length
+        ? await tx
+            .update(interviewSessions)
+            .set({ archivedAt: deletedAt, updatedAt: deletedAt })
+            .where(
+              and(
+                eq(interviewSessions.opportunityId, opportunityId),
+                isNull(interviewSessions.archivedAt),
+                inArray(interviewSessions.status, ['completed', 'ended_early', 'cancelled', 'preparation_failed']),
+              ),
+            )
+            .returning({ id: interviewSessions.id })
+        : []
+
+      const [deletedOpportunity] = await tx
+        .update(jobOpportunities)
+        .set({ deletedAt, updatedAt: deletedAt })
+        .where(
+          and(
+            eq(jobOpportunities.id, opportunityId),
+            eq(jobOpportunities.userId, userId),
+            isNull(jobOpportunities.deletedAt),
+          ),
+        )
+        .returning({ id: jobOpportunities.id })
+
+      if (!deletedOpportunity) return { status: 'not_found' as const }
+      return {
+        status: 'deleted' as const,
+        id: deletedOpportunity.id,
+        archivedSessionCount: archivedSessions.length,
+      }
+    })
   }
 
   async updateOpportunityWithStatusHistory(
@@ -399,11 +485,61 @@ export class DrizzleOpportunityRepository {
     })
   }
 
+  /**
+   * AI 助手使用显式 userId 和确认时的状态快照终止机会。
+   * 条件更新保证用户确认后若机会状态已变，旧卡片不会覆盖新数据。
+   */
+  async terminateOpportunityForUser(
+    opportunity: JobOpportunityRecord,
+    expectedStatus: JobOpportunityRecord['status'],
+    statusHistory: OpportunityStatusHistoryRecord,
+    termination: TerminationRecord,
+  ) {
+    return db.transaction(async (tx) => {
+      const updatedRows = await tx
+        .update(jobOpportunities)
+        .set(toJobOpportunityUpdateValues(opportunity))
+        .where(
+          and(
+            eq(jobOpportunities.id, opportunity.id),
+            eq(jobOpportunities.userId, opportunity.userId),
+            eq(jobOpportunities.status, expectedStatus),
+            isNull(jobOpportunities.deletedAt),
+          ),
+        )
+        .returning({ id: jobOpportunities.id })
+
+      if (updatedRows.length === 0) return false
+
+      await tx.insert(opportunityStatusHistory).values(statusHistory)
+      await tx.insert(opportunityTerminations).values({
+        id: termination.id,
+        opportunityId: termination.opportunityId,
+        fromStatus: termination.fromStatus,
+        relatedInterviewRoundId: termination.relatedInterviewRoundId,
+        relatedInterviewRoundTitle: termination.relatedInterviewRoundTitle,
+        reasonCode: termination.reasonCode,
+        reasonNote: termination.reasonNote,
+        createdAt: termination.createdAt,
+      })
+      await tx
+        .update(interviewRounds)
+        .set({
+          status: 'canceled',
+          result: 'unknown',
+          updatedAt: opportunity.updatedAt,
+        })
+        .where(and(eq(interviewRounds.opportunityId, opportunity.id), eq(interviewRounds.status, 'planned')))
+
+      return true
+    })
+  }
+
   async findOpportunitiesByUserId(userId: string): Promise<JobOpportunityRecord[]> {
     const rows = await db
       .select()
       .from(jobOpportunities)
-      .where(eq(jobOpportunities.userId, userId))
+      .where(and(eq(jobOpportunities.userId, userId), isNull(jobOpportunities.deletedAt)))
       .orderBy(desc(jobOpportunities.updatedAt))
 
     return rows.map(toJobOpportunityRecord)
@@ -435,7 +571,13 @@ export class DrizzleOpportunityRepository {
       db
         .select({ id: jobOpportunities.id })
         .from(jobOpportunities)
-        .where(and(eq(jobOpportunities.userId, userId), inArray(jobOpportunities.id, opportunityIds))),
+        .where(
+          and(
+            eq(jobOpportunities.userId, userId),
+            inArray(jobOpportunities.id, opportunityIds),
+            isNull(jobOpportunities.deletedAt),
+          ),
+        ),
     )
 
     return rows.map((row) => row.id)
@@ -448,7 +590,13 @@ export class DrizzleOpportunityRepository {
     const [row] = await db
       .select()
       .from(jobOpportunities)
-      .where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.dedupeFingerprint, dedupeFingerprint)))
+      .where(
+        and(
+          eq(jobOpportunities.userId, userId),
+          eq(jobOpportunities.dedupeFingerprint, dedupeFingerprint),
+          isNull(jobOpportunities.deletedAt),
+        ),
+      )
       .limit(1)
 
     return row ? toJobOpportunityRecord(row) : null

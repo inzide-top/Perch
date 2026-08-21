@@ -1,5 +1,6 @@
 import type {
   AnswerDeepReview,
+  ArchivedInterviewSessionSummary,
   AnswerEvaluation,
   CreateInterviewPayload,
   InterviewAnswer,
@@ -49,6 +50,13 @@ type InterviewSessionSummaryDto = {
   startedAt: string | null
   lastActiveAt: string
   endedAt: string | null
+  archivedAt: string | null
+}
+
+type ArchivedInterviewSessionSummaryDto = InterviewSessionSummaryDto & {
+  company: string
+  jobTitle: string
+  opportunityDeletedAt: string | null
 }
 
 type PublicInterviewSessionDto = InterviewSessionSummaryDto & {
@@ -402,6 +410,7 @@ function toSessionFromSummary(summary: InterviewSessionSummaryDto): InterviewSes
     startedAt: summary.startedAt ?? summary.createdAt,
     lastActivityAt: summary.lastActiveAt,
     completedAt: summary.endedAt,
+    archivedAt: summary.archivedAt,
   }
 }
 
@@ -476,6 +485,7 @@ function toSession(detail: InterviewSessionDetailDto): InterviewSession {
     startedAt: detail.session.startedAt ?? detail.session.createdAt,
     lastActivityAt: detail.session.lastActiveAt,
     completedAt: detail.session.endedAt,
+    archivedAt: detail.session.archivedAt,
   }
 }
 
@@ -489,6 +499,7 @@ export function toSessionSummary(session: InterviewSession): InterviewSessionSum
     startedAt: session.startedAt,
     lastActivityAt: session.lastActivityAt,
     completedAt: session.completedAt,
+    archivedAt: session.archivedAt ?? null,
     answeredQuestionCount: session.answers.length,
     validAnswerCount: session.answers.filter((answer) => answer.evaluation?.outcome !== 'unable_to_assess').length,
     overallScore: session.overallScore.score,
@@ -534,6 +545,36 @@ export const interviewApi = {
     const query = new URLSearchParams({ opportunityId })
     const summaries = await request.get<InterviewSessionSummaryDto[]>(`/interview-sessions?${query.toString()}`)
     return summaries.map(toInterviewSessionSummary)
+  },
+
+  async listArchivedSessions(): Promise<ArchivedInterviewSessionSummary[]> {
+    const summaries = await request.get<ArchivedInterviewSessionSummaryDto[]>('/interview-sessions/archived')
+    return summaries.map((summary) => ({
+      ...toInterviewSessionSummary(summary),
+      company: summary.company,
+      jobTitle: summary.jobTitle,
+      opportunityDeletedAt: summary.opportunityDeletedAt,
+    }))
+  },
+
+  async archiveSession(sessionId: string): Promise<InterviewSessionSummary> {
+    const summary = await request.post<InterviewSessionSummaryDto>(
+      `/interview-sessions/${encodeURIComponent(sessionId)}/archive`,
+      {},
+    )
+    return toInterviewSessionSummary(summary)
+  },
+
+  async restoreSession(sessionId: string): Promise<InterviewSessionSummary> {
+    const summary = await request.post<InterviewSessionSummaryDto>(
+      `/interview-sessions/${encodeURIComponent(sessionId)}/restore`,
+      {},
+    )
+    return toInterviewSessionSummary(summary)
+  },
+
+  deleteArchivedSession(sessionId: string) {
+    return request.delete<{ id: string }>(`/interview-sessions/${encodeURIComponent(sessionId)}`)
   },
 
   async getSession(sessionId: string, options: RequestOptions = {}): Promise<InterviewSession | null> {

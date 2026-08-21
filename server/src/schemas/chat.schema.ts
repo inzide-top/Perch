@@ -73,6 +73,13 @@ export const listChatConversationsQuerySchema = z
     }
   })
 
+export const chatBootstrapQuerySchema = z
+  .object({
+    selectedConversationId: uuidSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict()
+
 export const createChatConversationInputSchema = z
   .object({
     title: requiredText.max(120),
@@ -189,6 +196,7 @@ export const createChatCommandInputSchema = z.discriminatedUnion('type', [
 
 export type CreateChatConversationInput = z.output<typeof createChatConversationInputSchema>
 export type ListChatConversationsQuery = z.output<typeof listChatConversationsQuerySchema>
+export type ChatBootstrapQuery = z.output<typeof chatBootstrapQuerySchema>
 export type UpdateChatConversationInput = z.output<typeof updateChatConversationInputSchema>
 export type SendChatMessageInput = z.output<typeof sendChatMessageInputSchema>
 export type ChatRunEventsQuery = z.output<typeof chatRunEventsQuerySchema>

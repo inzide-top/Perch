@@ -1,5 +1,10 @@
 import { defineStore } from 'pinia'
-import { chatApi, type ChatConversationRecord, type ListChatConversationsOptions } from '@/services/chat-api'
+import {
+  chatApi,
+  type ChatConversationPage,
+  type ChatConversationRecord,
+  type ListChatConversationsOptions,
+} from '@/services/chat-api'
 
 const chatUiStorageKey = 'agent-seek-employment:chat-ui'
 
@@ -59,7 +64,7 @@ export const useChatStore = defineStore('chat', {
     const stored = readUiState()
     const initialHistoryQuery = normalizeHistoryQuery({})
     return {
-      isOpen: stored.isOpen ?? false,
+      isOpen: stored.isOpen ?? true,
       width: Math.min(720, Math.max(360, stored.width ?? 440)),
       selectedConversationId: typeof stored.selectedConversationId === 'string' ? stored.selectedConversationId : null,
       conversations: [],
@@ -109,6 +114,19 @@ export const useChatStore = defineStore('chat', {
       const index = this.conversations.findIndex((item) => item.id === conversation.id)
       if (index === -1) this.conversations.unshift(conversation)
       else this.conversations[index] = conversation
+    },
+
+    hydrateConversationPage(page: ChatConversationPage, query: ChatHistoryQuery = {}) {
+      const normalizedQuery = normalizeHistoryQuery(query)
+      page.items.forEach((conversation) => this.upsertConversation(conversation))
+      this.historyConversationIds = page.items.map((conversation) => conversation.id)
+      this.historyQuery = normalizedQuery
+      this.historyQueryKey = getHistoryQueryKey(normalizedQuery)
+      this.historyNextCursor = page.nextCursor
+      this.historyHasMore = page.hasMore
+      this.historyTotal = page.total
+      this.hasLoadedConversations = true
+      this.error = null
     },
 
     async loadConversations(query: ChatHistoryQuery = {}, force = false) {

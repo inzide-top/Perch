@@ -57,6 +57,13 @@ const emptyCapabilityProfile: CapabilityProfile = {
     failedJdAnalyses: 0,
     simulatedSessions: 0,
   },
+  jdOverview: {
+    indexingStatus: 'ready',
+    analyzedOpportunityCount: 0,
+    indexedOpportunityCount: 0,
+    strengthThemes: [],
+    gapThemes: [],
+  },
   jdSignals: [],
   interview: { strengths: [], weaknesses: [], historicalWeaknesses: [], sessions: [] },
 }
@@ -124,6 +131,10 @@ function createCompleteDependencies(): ChatToolRegistryDependencies {
     updateOpportunityProfileForUser: async () => ({ opportunity, alreadyApplied: false }),
     batchUpdateOpportunityProfilesForUser: async () => ({ opportunities: [opportunity], alreadyApplied: false }),
     transitionOpportunityStatusForUser: async () => ({ opportunity, alreadyApplied: false }),
+    terminateOpportunityForUser: async () => ({
+      opportunity: { ...opportunity, status: 'closed' },
+      alreadyApplied: false,
+    }),
     createInterviewScheduleForUser: async () => ({
       round: {
         id: '00000000-0000-4000-8000-000000000304',
@@ -155,13 +166,14 @@ const toolMatrix = [
   { name: 'update_opportunity_profile', scopes: ['global', 'opportunity'], risk: 'write' },
   { name: 'batch_update_opportunity_profiles', scopes: ['global'], risk: 'write' },
   { name: 'transition_opportunity_status', scopes: ['global', 'opportunity'], risk: 'write' },
+  { name: 'terminate_opportunity', scopes: ['global', 'opportunity'], risk: 'input_confirmed_write' },
   { name: 'create_interview_schedule', scopes: ['global', 'opportunity'], risk: 'write' },
   { name: 'create_mock_interview', scopes: ['global', 'opportunity'], risk: 'write' },
   { name: 'save_written_test_review', scopes: ['global', 'opportunity'], risk: 'write' },
   { name: 'save_interview_review', scopes: ['global', 'opportunity'], risk: 'write' },
 ] as const
 
-test('工具注册矩阵固定会话范围，并要求所有写入工具经过用户确认', () => {
+test('工具注册矩阵固定会话范围，并要求所有写入工具经过用户交互', () => {
   const dependencies = createCompleteDependencies()
   const registries = {
     global: createChatToolRegistry({ userId: 'user-1', scopeType: 'global' }, dependencies),
@@ -185,6 +197,9 @@ test('工具注册矩阵固定会话范围，并要求所有写入工具经过�
       const definition = registries[scope].get(row.name)
       assert.ok(definition, `${scope} 应注册 ${row.name}`)
       assert.equal(definition.requiresConfirmation, row.risk === 'write', `${row.name} 的风险等级配置错误`)
+      if (row.risk === 'input_confirmed_write') {
+        assert.ok(definition.prepareInput, `${row.name} 必须通过可编辑卡片取得用户确认`)
+      }
     }
   }
 

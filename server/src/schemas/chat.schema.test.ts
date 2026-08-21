@@ -9,6 +9,7 @@ import {
   chatToolInputPresentationSchema,
 } from '@/shared/chat/schemas'
 import {
+  chatBootstrapQuerySchema,
   chatRunEventsQuerySchema,
   createChatCommandInputSchema,
   createChatConversationInputSchema,
@@ -16,6 +17,21 @@ import {
   sendChatMessageInputSchema,
   updateChatConversationInputSchema,
 } from './chat.schema'
+
+test('聊天首屏 Bootstrap 只接受当前会话和受限列表数量', () => {
+  assert.deepEqual(chatBootstrapQuerySchema.parse({}), { limit: 20 })
+  assert.deepEqual(
+    chatBootstrapQuerySchema.parse({
+      selectedConversationId: '00000000-0000-4000-8000-000000000010',
+      limit: '12',
+    }),
+    {
+      selectedConversationId: '00000000-0000-4000-8000-000000000010',
+      limit: 12,
+    },
+  )
+  assert.equal(chatBootstrapQuerySchema.safeParse({ limit: 100 }).success, false)
+})
 
 test('聊天消息 Parts 使用 type 区分文本、工具动作、结果卡片和产物', () => {
   const toolActionId = '00000000-0000-4000-8000-000000000001'
@@ -96,6 +112,23 @@ test('等待输入协议支持能力画像的简历选择卡并拒绝伪造字�
     }).success,
     false,
   )
+})
+
+test('等待输入协议支持可选终止原因卡片', () => {
+  const parsed = chatToolInputPresentationSchema.parse({
+    kind: 'opportunity_termination_input',
+    title: '终止机会流程',
+    opportunityId: '00000000-0000-4000-8000-000000000211',
+    company: '百度',
+    jobTitle: '前端工程师',
+    fromStatus: 'interviewing',
+    fromStatusLabel: '面试中',
+    values: { reasonNote: '' },
+    warning: '确认后会终止机会。',
+  })
+
+  assert.equal(parsed.kind, 'opportunity_termination_input')
+  assert.equal(parsed.values.reasonNote, '')
 })
 
 test('AgentRun 工作流类型包含 chat_turn', () => {

@@ -85,8 +85,20 @@ export type DashboardInterviewCalendar = {
   overdueCount: number
 }
 
+export type DashboardSummary = {
+  currentResume: {
+    id: string
+    title: string
+    versionNumber: number
+  } | null
+  analyzingCount: number
+  followUpCount: number
+  mockInterviewCount: number
+}
+
 export type DashboardOverview = {
   generatedAt: string
+  summary: DashboardSummary
   ability: DashboardAbilitySummary
   opportunityPipeline: DashboardOpportunityPipeline
   matchDistribution: DashboardMatchDistribution

@@ -808,13 +808,13 @@ onBeforeUnmount(() => {
 
 <template>
   <form class="w-full" @submit.prevent>
-    <div class="app-toolbar mb-6 flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div class="min-w-0">
+    <div class="app-toolbar mb-6 flex flex-col gap-4 px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
+      <div class="min-w-0 xl:min-w-48">
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">{{ editorTitle }}</h1>
         <p class="mt-1 text-xs text-muted">正式保存后才会进入版本链，编辑过程不会污染历史快照。</p>
       </div>
 
-      <div class="flex flex-wrap items-center justify-end gap-2 sm:shrink-0">
+      <div class="flex w-full flex-wrap items-center justify-end gap-2 xl:w-auto xl:shrink-0">
         <ResumePdfImportDialog
           v-if="mode === 'create'"
           :disabled="isSaving"
