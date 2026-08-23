@@ -59,7 +59,7 @@ function getPartStatusLabel(status: string) {
     :close="false"
     :dismissible="true"
     :ui="{
-      overlay: '!z-[170] bg-black/40',
+      overlay: 'app-drawer-overlay !z-[170] bg-black/40',
       content:
         '!z-[171] app-drawer isolate h-full w-full max-w-3xl overflow-hidden border-l border-default bg-default shadow-2xl',
     }"

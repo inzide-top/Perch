@@ -6,7 +6,8 @@ import { buildCapabilityJdOverview } from './capability-jd-theme'
 const currentVersionId = '00000000-0000-0000-0000-000000000001'
 
 function signal(
-  overrides: Partial<CapabilityJdSignalEmbeddingSource> & Pick<CapabilityJdSignalEmbeddingSource, 'analysisId' | 'opportunityId'>,
+  overrides: Partial<CapabilityJdSignalEmbeddingSource> &
+    Pick<CapabilityJdSignalEmbeddingSource, 'analysisId' | 'opportunityId'>,
 ): CapabilityJdSignalEmbeddingSource {
   return {
     company: '示例公司',

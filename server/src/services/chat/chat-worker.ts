@@ -1,6 +1,7 @@
 import { chatRepository } from '../../repositories/chat.repository'
 import { agentRunRepository } from '../../repositories/agent-run.repository'
 import { opportunityRepository, type JobOpportunityRecord } from '../../repositories/opportunity.repository'
+import { jobAnalysisRepository } from '../../repositories/job-analysis.repository'
 import { resumeRepository } from '../../repositories/resume.repository'
 import type { ModelConnection } from '../../schemas/model.schema'
 import { AgentToolRegistry } from './agent-tool'
@@ -162,6 +163,8 @@ export async function launchChatRunInBackground(input: LaunchChatRunInput, depen
       { userId: input.userId, scopeType: input.scopeType, opportunity: input.opportunity ?? null },
       {
         findOpportunitiesByUserId: opportunityRepository.findOpportunitiesByUserId.bind(opportunityRepository),
+        findOpportunityAnalysisProgressByIds:
+          jobAnalysisRepository.findAnalysisProgressByOpportunityIds.bind(jobAnalysisRepository),
         findResumesByUserId: resumeRepository.findResumesByUserId.bind(resumeRepository),
         getOpportunityContextForUser,
         getCapabilityProfileForUser,

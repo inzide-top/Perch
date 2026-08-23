@@ -38,8 +38,6 @@ export type BackgroundTaskTerminalEvent = {
 type BackgroundTaskState = {
   tasksByKey: Record<string, BackgroundTaskEntry>
   reservedTaskKeys: string[]
-  isPolling: boolean
-  lastPolledAt: string | null
 }
 
 export type BackgroundTaskUpdateKind = 'updated' | 'completed' | 'failed'
@@ -177,8 +175,6 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
   state: (): BackgroundTaskState => ({
     tasksByKey: {},
     reservedTaskKeys: [],
-    isPolling: false,
-    lastPolledAt: null,
   }),
 
   getters: {
@@ -318,7 +314,6 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
       clearPollingTimer()
       if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
       visibilityHandler = null
-      this.isPolling = false
     },
 
     schedule() {
@@ -336,7 +331,6 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
       }
 
       pollingPromise = (async () => {
-        this.isPolling = true
         try {
           const response = await backgroundTaskApi.getStatuses(activeTasks)
           const completedStatuses = await Promise.all(
@@ -396,12 +390,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', {
                   : 'updated'
             notify(next, kind)
           })
-          this.lastPolledAt = new Date().toISOString()
           if (didUpdateTask) persist(this.$state)
         } catch {
           // 后台任务轮询失败不应打断页面交互；下一次可见性或定时轮询会继续尝试。
         } finally {
-          this.isPolling = false
           pollingPromise = null
           this.schedule()
         }

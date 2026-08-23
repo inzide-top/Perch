@@ -104,6 +104,8 @@ export const chatOpportunitySearchResultPartSchema = z
         keyword: z.string().trim().max(100).optional(),
         statuses: z.array(opportunityStatusSchema).max(7),
         intentionLevels: z.array(opportunityIntentionLevelSchema).max(4),
+        minimumMatchScore: z.number().min(0).max(100).optional(),
+        maximumMatchScore: z.number().min(0).max(100).optional(),
       })
       .strict(),
     matchedCount: z.number().int().nonnegative(),
@@ -120,7 +122,8 @@ export const chatOpportunitySearchResultPartSchema = z
             statusLabel: requiredText.max(40),
             intentionLevel: opportunityIntentionLevelSchema.nullable(),
             industry: z.string().trim().max(100),
-            address: z.array(z.string().trim().max(100)).max(10),
+            address: z.array(z.string().trim().max(100)).max(10).default([]),
+            matchScore: z.number().min(0).max(100).optional(),
             updatedAt: requiredText.max(80),
           })
           .strict(),
@@ -411,6 +414,7 @@ export const chatOpportunityTargetInputPresentationSchema = z
             opportunityId: z.string().uuid(),
             company: requiredText.max(200),
             jobTitle: requiredText.max(200),
+            address: z.array(z.string().trim().max(100)).max(10).default([]),
             status: opportunityStatusSchema,
             statusLabel: requiredText.max(40),
             intentionLevel: opportunityIntentionLevelSchema.nullable(),

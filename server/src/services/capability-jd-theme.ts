@@ -120,10 +120,7 @@ function clusterSignals(input: {
   const recordsByNormalizedTitle = new Map<string, CapabilityJdSignalEmbeddingSource[]>()
   records.forEach((record) => {
     const normalizedTitle = normalizeThemeTitle(record.title)
-    recordsByNormalizedTitle.set(normalizedTitle, [
-      ...(recordsByNormalizedTitle.get(normalizedTitle) ?? []),
-      record,
-    ])
+    recordsByNormalizedTitle.set(normalizedTitle, [...(recordsByNormalizedTitle.get(normalizedTitle) ?? []), record])
   })
   const exactTitleGroups = [...recordsByNormalizedTitle.values()].map((items) => ({
     items,
@@ -150,9 +147,7 @@ function clusterSignals(input: {
     bestCluster.centroid = createCentroid(bestCluster.items)
   }
 
-  const themes = clusters.map((cluster) =>
-    toTheme(cluster.items, input.currentVersionId, input.totalOpportunityCount),
-  )
+  const themes = clusters.map((cluster) => toTheme(cluster.items, input.currentVersionId, input.totalOpportunityCount))
   const recurringThemes =
     input.totalOpportunityCount > 1 ? themes.filter((theme) => theme.opportunityCount >= 2) : themes
 
