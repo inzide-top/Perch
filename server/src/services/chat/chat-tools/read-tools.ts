@@ -51,8 +51,17 @@ const searchOpportunitiesInputSchema = z
     keyword: z.string().trim().min(1).max(100).optional(),
     statuses: z.array(opportunityStatusSchema).max(7).default([]),
     intentionLevels: z.array(opportunityIntentionLevelSchema).max(4).default([]),
+    minimumMatchScore: z.number().min(0).max(100).optional(),
+    maximumMatchScore: z.number().min(0).max(100).optional(),
     limit: z.number().int().min(1).max(20).default(10),
   })
+  .refine(
+    (value) =>
+      value.minimumMatchScore === undefined ||
+      value.maximumMatchScore === undefined ||
+      value.minimumMatchScore <= value.maximumMatchScore,
+    { message: '最低匹配分不能高于最高匹配分' },
+  )
   .strict()
 
 export const statusLabels: Record<z.output<typeof opportunityStatusSchema>, string> = {
@@ -66,6 +75,13 @@ export const statusLabels: Record<z.output<typeof opportunityStatusSchema>, stri
 }
 
 export type FindOpportunitiesByUserId = (userId: string) => Promise<JobOpportunityRecord[]>
+export type FindOpportunityAnalysisProgressByIds = (opportunityIds: string[]) => Promise<
+  Array<{
+    opportunityId: string
+    status: string
+    matchScore: string | null
+  }>
+>
 export type FindResumesByUserId = (userId: string) => Promise<ResumeRecord[]>
 export type GetOpportunityContextForUser = (record: {
   userId: string
@@ -118,6 +134,7 @@ export type CreateChatToolRegistryInput = {
 
 export type ChatToolRegistryDependencies = {
   findOpportunitiesByUserId: FindOpportunitiesByUserId
+  findOpportunityAnalysisProgressByIds?: FindOpportunityAnalysisProgressByIds
   findResumesByUserId?: FindResumesByUserId
   getOpportunityContextForUser?: GetOpportunityContextForUser
   getCapabilityProfileForUser?: GetCapabilityProfileForUser
@@ -151,12 +168,13 @@ function includesKeyword(opportunity: JobOpportunityRecord, keyword: string) {
 export function createSearchOpportunitiesTool(
   userId: string,
   findOpportunitiesByUserId: FindOpportunitiesByUserId,
+  findOpportunityAnalysisProgressByIds?: FindOpportunityAnalysisProgressByIds,
 ): AgentToolDefinition {
   return {
     name: 'search_opportunities',
     version: '1',
     description:
-      '查询当前用户已经保存的求职机会。用户询问有哪些机会、某家公司或岗位、某个求职阶段或意向等级时使用。该工具只读，不会修改机会。',
+      '查询当前用户已经保存的求职机会。支持公司/岗位关键词、求职阶段、意向等级和已有 JD 匹配分筛选。按匹配分筛选时直接使用本工具，不要逐条调用详情工具。该工具只读，不会修改机会。',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -182,6 +200,18 @@ export function createSearchOpportunitiesTool(
           maxItems: 4,
           default: [],
         },
+        minimumMatchScore: {
+          type: 'number',
+          description: '可选 JD 最低匹配分，包含边界值。按匹配分筛选时使用。',
+          minimum: 0,
+          maximum: 100,
+        },
+        maximumMatchScore: {
+          type: 'number',
+          description: '可选 JD 最高匹配分，包含边界值。例如“70 分以下”传 70。',
+          minimum: 0,
+          maximum: 100,
+        },
         limit: {
           type: 'integer',
           description: '最多返回多少条，默认 10，最大 20。',
@@ -201,6 +231,22 @@ export function createSearchOpportunitiesTool(
       const opportunities = await findOpportunitiesByUserId(userId)
       if (context.signal.aborted) throw new Error('机会查询已取消')
 
+      const filtersByMatchScore = parsed.minimumMatchScore !== undefined || parsed.maximumMatchScore !== undefined
+      if (filtersByMatchScore && !findOpportunityAnalysisProgressByIds) {
+        throw new Error('机会查询缺少 JD 匹配分读取能力')
+      }
+      const analysisRows = filtersByMatchScore
+        ? await findOpportunityAnalysisProgressByIds!(opportunities.map((opportunity) => opportunity.id))
+        : []
+      if (context.signal.aborted) throw new Error('机会查询已取消')
+      const matchScores = new Map(
+        analysisRows.flatMap((analysis) => {
+          if (analysis.status !== 'completed' || analysis.matchScore === null) return []
+          const score = Number(analysis.matchScore)
+          return Number.isFinite(score) ? [[analysis.opportunityId, score] as const] : []
+        }),
+      )
+
       const matched = opportunities.filter((opportunity) => {
         if (parsed.statuses.length > 0 && !parsed.statuses.includes(opportunity.status)) return false
         if (
@@ -210,25 +256,37 @@ export function createSearchOpportunitiesTool(
           return false
         }
         if (parsed.keyword && !includesKeyword(opportunity, parsed.keyword)) return false
+        if (filtersByMatchScore) {
+          const matchScore = matchScores.get(opportunity.id)
+          if (matchScore === undefined) return false
+          if (parsed.minimumMatchScore !== undefined && matchScore < parsed.minimumMatchScore) return false
+          if (parsed.maximumMatchScore !== undefined && matchScore > parsed.maximumMatchScore) return false
+        }
         return true
       })
-      const items = matched.slice(0, parsed.limit).map((opportunity) => ({
-        id: opportunity.id,
-        company: opportunity.company,
-        jobTitle: opportunity.jobTitle,
-        status: opportunity.status,
-        statusLabel: statusLabels[opportunity.status],
-        intentionLevel: opportunity.intentionLevel,
-        industry: opportunity.industry,
-        address: opportunity.address ?? [],
-        updatedAt: opportunity.updatedAt,
-      }))
+      const items = matched.slice(0, parsed.limit).map((opportunity) => {
+        const matchScore = matchScores.get(opportunity.id)
+        return {
+          id: opportunity.id,
+          company: opportunity.company,
+          jobTitle: opportunity.jobTitle,
+          status: opportunity.status,
+          statusLabel: statusLabels[opportunity.status],
+          intentionLevel: opportunity.intentionLevel,
+          industry: opportunity.industry,
+          address: opportunity.address ?? [],
+          ...(matchScore === undefined ? {} : { matchScore }),
+          updatedAt: opportunity.updatedAt,
+        }
+      })
 
       return {
         query: {
           ...(parsed.keyword ? { keyword: parsed.keyword } : {}),
           statuses: parsed.statuses,
           intentionLevels: parsed.intentionLevels,
+          ...(parsed.minimumMatchScore === undefined ? {} : { minimumMatchScore: parsed.minimumMatchScore }),
+          ...(parsed.maximumMatchScore === undefined ? {} : { maximumMatchScore: parsed.maximumMatchScore }),
         },
         matchedCount: matched.length,
         returnedCount: items.length,
@@ -347,6 +405,7 @@ export function createGetOpportunityContextTool(
             opportunityId: opportunity.id,
             company: opportunity.company,
             jobTitle: opportunity.jobTitle,
+            address: opportunity.address ?? [],
             status: opportunity.status,
             statusLabel: statusLabels[opportunity.status],
             intentionLevel: opportunity.intentionLevel,
@@ -418,6 +477,7 @@ export async function resolveGlobalOpportunityTarget(input: {
         opportunityId: opportunity.id,
         company: opportunity.company,
         jobTitle: opportunity.jobTitle,
+        address: opportunity.address ?? [],
         status: opportunity.status,
         statusLabel: statusLabels[opportunity.status],
         intentionLevel: opportunity.intentionLevel,

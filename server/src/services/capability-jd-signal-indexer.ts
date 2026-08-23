@@ -25,7 +25,10 @@ type CapabilityJdSignalIndexerDependencies = {
 }
 
 function createSignal(type: IndexedSignal['type'], item: AnalysisItem, index: number): IndexedSignal {
-  const content = [item.title, item.reason, item.evidenceFromJD].map((value) => value.trim()).filter(Boolean).join('\n')
+  const content = [item.title, item.reason, item.evidenceFromJD]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join('\n')
   return {
     type,
     index,

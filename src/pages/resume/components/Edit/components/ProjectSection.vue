@@ -266,7 +266,7 @@ function clearDrawerError(field: ProjectRequiredField) {
 
     <Teleport to="body">
       <Transition name="project-edit-drawer">
-        <div v-if="isProjectDrawerOpen" class="fixed inset-0 z-50 flex justify-end bg-black/55">
+        <div v-if="isProjectDrawerOpen" class="app-drawer-overlay fixed inset-0 z-50 flex justify-end bg-black/55">
           <button
             type="button"
             class="absolute inset-0 cursor-default"

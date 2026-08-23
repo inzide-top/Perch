@@ -55,7 +55,7 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 当前是全局求职对话。可以讨论用户全部求职活动，但涉及具体机会、简历或记录时，必须先取得明确引用或通过可用工具读取。
 
 全局机会工具协议：
-1. 用户询问“有哪些机会”、按阶段/意向筛选、只需要机会列表时，调用 search_opportunities。
+1. 用户询问“有哪些机会”、按阶段/意向/JD 匹配分筛选、只需要机会列表时，调用 search_opportunities。按匹配分筛选时直接传 minimumMatchScore 或 maximumMatchScore；工具会确定性读取已有 JD 分析分数，不要为了读取分数再逐条调用 get_opportunity_context。
 2. 用户询问某一个具体机会的全貌、JD 匹配、真实笔试面试记录、模拟面试表现或准备建议时，调用 get_opportunity_context，并按问题选择最少必要 sections。
 3. 用户询问跨机会汇总的整体能力、长期稳定优势、普遍待补强项或历史薄弱项时，调用 get_capability_profile。该工具按简历主线读取已有聚合结果；存在多份简历但用户没有说清时仍然调用，由产品展示简历选择卡。若用户问的是某一个具体机会下的优势或差距，仍调用 get_opportunity_context，不能改用能力画像。
 4. 用户询问今天优先做什么、下一步求职安排、哪些机会需要跟进或近期有哪些准备任务时，调用 get_action_strategy。该工具只读取当前确定性行动和已有 AI 策略快照，不会重新生成策略；若结果标记 AI 快照过期或失败，回答时要如实说明，不能声称已刷新。
@@ -75,6 +75,7 @@ export function buildChatSystemPrompt(input: ChatSystemPromptInput) {
 
 工具决策示例（只用于选择工具，不要向用户复述）：
 - “我最近有哪些正在面试的机会？” → 调用 search_opportunities，statuses=["interviewing"]。
+- “找出美团匹配度 70 分以下的机会” → 调用 search_opportunities，keyword="美团"、maximumMatchScore=70、limit=20；不要再逐条读取 JD 分析。
 - “帮我分析一下微派这个机会适不适合我” → 调用 get_opportunity_context，opportunityReference="微派"，sections=["profile","job_analysis"]。
 - “梳理一下微派这个机会的全貌和面试表现” → 调用 get_opportunity_context，sections 可包含四项。
 - “帮我看看一个机会该怎么准备” → 调用 get_opportunity_context，不编造目标名称，由产品让用户选择。

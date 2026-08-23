@@ -404,6 +404,12 @@ const latestToolPresentation = computed(() => {
   }
 })
 const activeToolNotice = computed(() => {
+  // waiting_input / waiting_confirmation 表示 Runtime 已暂停；即使同一轮里还有尚未执行的工具调用，
+  // 也不能把那些 queued call 展示成“正在调用工具”。
+  if (latestToolInputRequest.value?.status === 'waiting' || latestToolConfirmation.value?.status === 'waiting') {
+    return null
+  }
+
   const activity = latestToolActivity.value
   if (!activity) return null
 
@@ -414,10 +420,6 @@ const activeToolNotice = computed(() => {
   ) {
     return null
   }
-  if (latestToolInputRequest.value?.callId === activity.callId && latestToolInputRequest.value.status === 'waiting') {
-    return null
-  }
-
   const toolLabel =
     activity.name === 'search_opportunities'
       ? '查找机会'
@@ -485,6 +487,28 @@ const activeToolNotice = computed(() => {
 })
 const streamStatusLabel = computed(() => {
   if (isPreparingConversation.value || chat.isSending.value) return '正在准备回答'
+
+  // 用户交互状态优先级高于工具活动。模型可能在同一轮申请多个工具，Runtime 会在第一个
+  // 需要补充信息的调用处暂停，其余调用仍是 requested，但此时并没有正在执行。
+  if (latestToolConfirmation.value?.status === 'waiting') return '等待你确认操作'
+  if (latestToolInputRequest.value?.status === 'waiting') {
+    if (chatResumeTargetInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success) {
+      return '等待你选择简历'
+    }
+    if (chatOpportunityTargetInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success) {
+      return '等待你选择目标机会'
+    }
+    if (
+      chatOpportunityTerminationInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success
+    ) {
+      return '等待你确认终止机会'
+    }
+    if (latestToolInputRequest.value.toolName === 'create_mock_interview') return '等待你配置模拟面试'
+    if (latestToolInputRequest.value.toolName === 'save_written_test_review') return '等待你补充笔试复盘'
+    if (latestToolInputRequest.value.toolName === 'save_interview_review') return '等待你补充面试复盘'
+    return '等待你补全面试安排'
+  }
+
   if (latestToolActivity.value?.status === 'failed' && latestToolActivity.value.recoverable) {
     return '正在调整工具调用方案'
   }
@@ -531,24 +555,6 @@ const streamStatusLabel = computed(() => {
     if (latestToolActivity.value.status === 'failed') return '岗位文本识别失败'
   }
 
-  if (latestToolConfirmation.value?.status === 'waiting') return '等待你确认操作'
-  if (latestToolInputRequest.value?.status === 'waiting') {
-    if (chatResumeTargetInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success) {
-      return '等待你选择简历'
-    }
-    if (chatOpportunityTargetInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success) {
-      return '等待你选择目标机会'
-    }
-    if (
-      chatOpportunityTerminationInputPresentationSchema.safeParse(latestToolInputRequest.value.presentation).success
-    ) {
-      return '等待你确认终止机会'
-    }
-    if (latestToolInputRequest.value.toolName === 'create_mock_interview') return '等待你配置模拟面试'
-    if (latestToolInputRequest.value.toolName === 'save_written_test_review') return '等待你补充笔试复盘'
-    if (latestToolInputRequest.value.toolName === 'save_interview_review') return '等待你补充面试复盘'
-    return '等待你补全面试安排'
-  }
   if (isSubmittingToolInput.value) return '正在生成确认信息'
   if (latestToolConfirmation.value?.status === 'rejected') {
     return chat.stream.isRenderingText.value ? 'AI 正在回答' : '正在整理取消结果'

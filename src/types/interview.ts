@@ -166,15 +166,7 @@ export type InterviewSession = {
 
 export type InterviewSessionSummary = Pick<
   InterviewSession,
-  | 'id'
-  | 'opportunityId'
-  | 'config'
-  | 'status'
-  | 'phase'
-  | 'startedAt'
-  | 'lastActivityAt'
-  | 'completedAt'
-  | 'archivedAt'
+  'id' | 'opportunityId' | 'config' | 'status' | 'phase' | 'startedAt' | 'lastActivityAt' | 'completedAt' | 'archivedAt'
 > & {
   answeredQuestionCount: number
   validAnswerCount: number

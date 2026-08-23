@@ -1484,7 +1484,7 @@ onBeforeUnmount(() => {
       </div>
       <div
         v-if="isMobileScoreOpen && session"
-        class="fixed inset-0 z-[100] flex justify-end bg-black/35 xl:hidden"
+        class="app-drawer-overlay fixed inset-0 z-[100] flex justify-end bg-black/35 xl:hidden"
         @click.self="isMobileScoreOpen = false"
       >
         <section class="app-drawer h-full w-full max-w-sm overflow-y-auto border-l border-default p-4 shadow-2xl">

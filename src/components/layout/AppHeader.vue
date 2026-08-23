@@ -58,9 +58,7 @@ defineEmits<{
         :icon="isChatOpen ? 'i-lucide-panel-right-close' : 'i-lucide-message-circle'"
         class="app-chat-toggle transition-[box-shadow,background-color,color]"
         :class="
-          isChatOpen
-            ? 'app-chat-toggle--open shadow-sm ring-2 ring-primary/25'
-            : 'app-chat-toggle--closed shadow-none'
+          isChatOpen ? 'app-chat-toggle--open shadow-sm ring-2 ring-primary/25' : 'app-chat-toggle--closed shadow-none'
         "
         :aria-pressed="isChatOpen"
         :title="isChatOpen ? '收起 AI 助手' : '打开 AI 助手'"

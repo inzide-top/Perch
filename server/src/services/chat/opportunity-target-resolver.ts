@@ -18,7 +18,15 @@ function normalizeReference(value: string) {
 function getNormalizedOpportunityFields(opportunity: JobOpportunityRecord) {
   const company = normalizeReference(opportunity.company)
   const jobTitle = normalizeReference(opportunity.jobTitle)
-  return { company, jobTitle, combined: `${company}${jobTitle}` }
+  const addresses = (opportunity.address ?? []).map(normalizeReference).filter(Boolean)
+  const combined = `${company}${jobTitle}`
+  return {
+    company,
+    jobTitle,
+    addresses,
+    combined,
+    addressQualified: addresses.map((address) => `${combined}${address}`),
+  }
 }
 
 /**
@@ -53,7 +61,8 @@ export function resolveOpportunityTarget(input: {
     return (
       fields.company === normalizedReference ||
       fields.jobTitle === normalizedReference ||
-      fields.combined === normalizedReference
+      fields.combined === normalizedReference ||
+      fields.addressQualified.includes(normalizedReference)
     )
   })
   if (exactMatches.length === 1) return { status: 'resolved', opportunity: exactMatches[0]! }
@@ -71,7 +80,11 @@ export function resolveOpportunityTarget(input: {
       fields.company.includes(normalizedReference) ||
       fields.jobTitle.includes(normalizedReference) ||
       fields.combined.includes(normalizedReference) ||
-      normalizedReference.includes(fields.combined)
+      normalizedReference.includes(fields.combined) ||
+      fields.addressQualified.some(
+        (qualifiedReference) =>
+          qualifiedReference.includes(normalizedReference) || normalizedReference.includes(qualifiedReference),
+      )
     )
   })
   if (fuzzyMatches.length === 1) return { status: 'resolved', opportunity: fuzzyMatches[0]! }

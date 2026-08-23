@@ -857,8 +857,8 @@ watch(
         </UButton>
       </section>
 
-      <section class="app-toolbar p-4">
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section class="opportunity-filter-container app-toolbar p-4">
+        <div class="opportunity-filter-grid">
           <OpportunityFilterSelect v-model="selectedStatus" label="流程状态" :options="statusOptions" />
           <OpportunityFilterSelect v-model="selectedIntentionLevel" label="意向等级" :options="intentionOptions" />
           <OpportunityFilterSelect v-model="selectedRecommendation" label="匹配结论" :options="recommendationOptions" />
@@ -1358,3 +1358,27 @@ watch(
     />
   </section>
 </template>
+
+<style scoped>
+.opportunity-filter-container {
+  container-type: inline-size;
+}
+
+.opportunity-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+@container (min-width: 36rem) {
+  .opportunity-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 72rem) {
+  .opportunity-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+</style>
