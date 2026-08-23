@@ -137,6 +137,7 @@ export function toChatMessageParts(
                 intentionLevel: record.intentionLevel,
                 industry: record.industry,
                 address: record.address,
+                matchScore: record.matchScore,
                 updatedAt: record.updatedAt,
               },
             ]

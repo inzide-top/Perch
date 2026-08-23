@@ -79,6 +79,9 @@ function submit() {
         <span class="min-w-0 flex-1 text-left">
           <strong class="block truncate text-xs font-semibold text-highlighted">{{ candidate.company }}</strong>
           <span class="mt-0.5 block truncate text-[11px] text-muted">{{ candidate.jobTitle }}</span>
+          <span v-if="candidate.address.length" class="mt-0.5 block truncate text-[10px] text-dimmed">
+            {{ candidate.address.join('、') }}
+          </span>
         </span>
         <span class="flex shrink-0 items-center gap-1.5">
           <UBadge color="neutral" variant="soft" size="sm">{{ candidate.statusLabel }}</UBadge>

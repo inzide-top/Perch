@@ -1,12 +1,7 @@
 import { and, asc, eq, isNull, or, sql } from 'drizzle-orm'
 import type { JobAnalysisResult } from '@/types/opportunity'
 import { db } from '../db/client'
-import {
-  capabilityJdSignalEmbeddings,
-  jobAnalyses,
-  jobOpportunities,
-  resumeVersions,
-} from '../db/schema'
+import { capabilityJdSignalEmbeddings, jobAnalyses, jobOpportunities, resumeVersions } from '../db/schema'
 
 export type CapabilityJdSignalEmbeddingRecord = typeof capabilityJdSignalEmbeddings.$inferInsert
 
