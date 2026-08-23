@@ -101,6 +101,112 @@ test('全局会话注册 search_opportunities，并按当前用户、状态和�
   ])
 })
 
+test('机会查询在后端按已有 JD 匹配分筛选，不需要逐条读取机会详情', async () => {
+  const opportunities = [
+    createOpportunity({
+      id: '00000000-0000-4000-8000-000000000401',
+      company: '美团',
+      jobTitle: '前端工程师',
+      address: ['北京'],
+    }),
+    createOpportunity({
+      id: '00000000-0000-4000-8000-000000000402',
+      company: '美团',
+      jobTitle: '前端工程师',
+      address: ['上海'],
+    }),
+    createOpportunity({
+      id: '00000000-0000-4000-8000-000000000403',
+      company: '美团',
+      jobTitle: '前端工程师',
+      address: ['成都'],
+    }),
+  ]
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'global' },
+    {
+      findOpportunitiesByUserId: async () => opportunities,
+      findOpportunityAnalysisProgressByIds: async (opportunityIds) => {
+        assert.deepEqual(opportunityIds, [
+          '00000000-0000-4000-8000-000000000401',
+          '00000000-0000-4000-8000-000000000402',
+          '00000000-0000-4000-8000-000000000403',
+        ])
+        return [
+          { opportunityId: '00000000-0000-4000-8000-000000000401', status: 'completed', matchScore: '69' },
+          { opportunityId: '00000000-0000-4000-8000-000000000402', status: 'completed', matchScore: '70' },
+          { opportunityId: '00000000-0000-4000-8000-000000000403', status: 'completed', matchScore: '71' },
+        ]
+      },
+    },
+  )
+
+  const tool = registry.get('search_opportunities')
+  assert.ok(tool)
+  const result = await tool.execute(
+    {
+      keyword: '美团',
+      statuses: [],
+      intentionLevels: [],
+      maximumMatchScore: 70,
+      limit: 20,
+    },
+    { signal: new AbortController().signal },
+  )
+
+  assert.equal(result.matchedCount, 2)
+  assert.deepEqual(
+    (result.opportunities as Array<{ id: string; matchScore: number }>).map(({ id, matchScore }) => ({
+      id,
+      matchScore,
+    })),
+    [
+      { id: '00000000-0000-4000-8000-000000000401', matchScore: 69 },
+      { id: '00000000-0000-4000-8000-000000000402', matchScore: 70 },
+    ],
+  )
+})
+
+test('同公司同岗位可通过城市唯一确定目标，避免重复弹出同名候选卡', async () => {
+  const opportunities = [
+    createOpportunity({
+      id: '00000000-0000-4000-8000-000000000411',
+      company: '美团',
+      jobTitle: '前端工程师',
+      address: ['北京'],
+    }),
+    createOpportunity({
+      id: '00000000-0000-4000-8000-000000000412',
+      company: '美团',
+      jobTitle: '前端工程师',
+      address: ['上海'],
+    }),
+  ]
+  let receivedOpportunityId = ''
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'global' },
+    {
+      findOpportunitiesByUserId: async () => opportunities,
+      getOpportunityContextForUser: async ({ opportunityId }) => {
+        receivedOpportunityId = opportunityId
+        return { opportunityId }
+      },
+    },
+  )
+
+  const tool = registry.get('get_opportunity_context')
+  assert.ok(tool?.prepareInput)
+  const prepared = await tool.prepareInput(
+    { opportunityReference: '美团前端工程师上海', sections: ['job_analysis'] },
+    undefined,
+    { signal: new AbortController().signal },
+  )
+  assert.equal(prepared.status, 'ready')
+  if (prepared.status !== 'ready') throw new Error('带城市的机会引用应该唯一命中')
+  await tool.execute(prepared.input, { signal: new AbortController().signal })
+  assert.equal(receivedOpportunityId, '00000000-0000-4000-8000-000000000412')
+})
+
 test('全局机会详情工具唯一匹配时直接读取有界上下文', async () => {
   const opportunities = [
     createOpportunity({

@@ -93,7 +93,13 @@ export function createChatToolRegistry(input: CreateChatToolRegistryInput, depen
     return new AgentToolRegistry(definitions)
   }
 
-  const definitions = [createSearchOpportunitiesTool(input.userId, dependencies.findOpportunitiesByUserId)]
+  const definitions = [
+    createSearchOpportunitiesTool(
+      input.userId,
+      dependencies.findOpportunitiesByUserId,
+      dependencies.findOpportunityAnalysisProgressByIds,
+    ),
+  ]
   if (dependencies.getOpportunityContextForUser) {
     definitions.push(
       createGetOpportunityContextTool(

@@ -221,11 +221,14 @@ onMounted(() => void loadSessions())
       <template #content>
         <div>
           <h2 class="text-base font-semibold text-highlighted">彻底删除这场模拟面试？</h2>
-          <p class="mt-2 text-sm leading-6 text-muted">
-            问答、评分、深度点评和能力证据都会一并删除，且无法恢复。
-          </p>
+          <p class="mt-2 text-sm leading-6 text-muted">问答、评分、深度点评和能力证据都会一并删除，且无法恢复。</p>
           <div class="mt-6 flex justify-end gap-2">
-            <UButton color="neutral" variant="ghost" :disabled="Boolean(deletingSessionId)" @click="deleteTarget = null">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="Boolean(deletingSessionId)"
+              @click="deleteTarget = null"
+            >
               取消
             </UButton>
             <UButton color="error" icon="i-lucide-trash-2" :loading="Boolean(deletingSessionId)" @click="confirmDelete">

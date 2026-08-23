@@ -400,6 +400,7 @@ export function createBatchUpdateOpportunityProfilesTool(
               opportunityId: opportunity.id,
               company: opportunity.company,
               jobTitle: opportunity.jobTitle,
+              address: opportunity.address ?? [],
               status: opportunity.status,
               statusLabel: statusLabels[opportunity.status],
               intentionLevel: opportunity.intentionLevel,

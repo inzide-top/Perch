@@ -117,7 +117,7 @@ function getResultLabel(result: InterviewRoundResult) {
     :close="false"
     :dismissible="!isBusy"
     :ui="{
-      overlay: '!z-[150] bg-black/35 backdrop-blur-[2px]',
+      overlay: 'app-drawer-overlay !z-[150] bg-black/35',
       content: '!z-[151] app-drawer h-full w-full max-w-4xl border-l border-default shadow-2xl',
     }"
     @update:open="(nextOpen: boolean) => !nextOpen && emit('close')"

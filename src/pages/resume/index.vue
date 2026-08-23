@@ -835,7 +835,7 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <Transition name="resume-diff-drawer">
-        <div v-if="isLatestVersionDiffOpen" class="fixed inset-0 z-50 flex justify-end bg-black/55">
+        <div v-if="isLatestVersionDiffOpen" class="app-drawer-overlay fixed inset-0 z-50 flex justify-end bg-black/55">
           <button
             type="button"
             class="absolute inset-0 cursor-default"
@@ -938,9 +938,7 @@ onBeforeUnmount(() => {
               <h2 class="text-base font-semibold text-highlighted">请先处理关联的模拟面试</h2>
               <p v-if="resumeDeleteConflict.details.archivedSessionCount > 0" class="mt-2 text-sm leading-6 text-muted">
                 已归档模拟面试中有
-                {{
-                  resumeDeleteConflict.details.archivedSessionCount
-                }}
+                {{ resumeDeleteConflict.details.archivedSessionCount }}
                 场使用了这份简历。请先在归档列表中彻底删除这些记录，再回来删除简历。
               </p>
               <p
@@ -948,9 +946,7 @@ onBeforeUnmount(() => {
                 class="mt-2 text-sm leading-6 text-muted"
               >
                 另外还有
-                {{
-                  resumeDeleteConflict.details.unarchivedSessionCount
-                }}
+                {{ resumeDeleteConflict.details.unarchivedSessionCount }}
                 场未归档模拟面试使用了这份简历，需要先结束并归档。
               </p>
               <p class="mt-2 text-xs leading-5 text-muted">

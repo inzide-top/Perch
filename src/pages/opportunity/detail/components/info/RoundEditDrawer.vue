@@ -39,7 +39,7 @@ const resultOptions: { label: string; value: Exclude<InterviewRoundResult, 'pend
     :close="false"
     :dismissible="!saving"
     :ui="{
-      overlay: '!z-[170] bg-black/35 backdrop-blur-[2px]',
+      overlay: 'app-drawer-overlay !z-[170] bg-black/35',
       content: '!z-[171] app-drawer h-full w-full max-w-xl border-l border-default shadow-2xl',
     }"
     @update:open="(nextOpen: boolean) => !nextOpen && emit('close')"
