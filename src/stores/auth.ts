@@ -13,6 +13,11 @@ export type AuthUserSummary = {
   isShared: boolean
 }
 
+export type SignUpResult = {
+  requiresEmailConfirmation: boolean
+  accountState: 'created' | 'existing' | 'authenticated'
+}
+
 type AuthState = {
   mode: AppAuthMode
   status: AuthStatus
@@ -140,7 +145,25 @@ export const useAuthStore = defineStore('auth', {
       })
       if (error) throw error
       if (data.session) this.applySession(data.session)
-      return { requiresEmailConfirmation: data.session === null }
+      // Supabase may return an obfuscated user for an existing account when
+      // email confirmation is enabled. An empty identities list is the only
+      // client-side signal we can safely use without exposing an email lookup
+      // endpoint that would allow account enumeration.
+      const isExistingAccount = data.user?.identities?.length === 0
+
+      return {
+        requiresEmailConfirmation: data.session === null,
+        accountState: data.session ? 'authenticated' : isExistingAccount ? 'existing' : 'created',
+      } satisfies SignUpResult
+    },
+
+    async resendSignupConfirmation(email: string) {
+      const { error } = await getSupabaseClient().auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: `${window.location.origin}/auth` },
+      })
+      if (error) throw error
     },
 
     async requestPasswordReset(email: string) {
