@@ -16,13 +16,10 @@ import { useResumePdfImportReviewStore, useResumeStore } from '@/stores'
 import ResumeEdit from './components/Edit/index.vue'
 import ResumeWorkspaceSkeleton from './components/ResumeWorkspaceSkeleton.vue'
 import VersionDiffList from './components/VersionDiffList.vue'
-import { mockResumeDraft } from './mocks/resumeDraft'
 import { getVersionDiff } from '@/shared/resume/versionDiff'
 import { getResumeInterviewHistoryConflict, type ResumeInterviewHistoryConflict } from '@/services/resumes'
 
 type EditorMode = 'create' | 'edit'
-
-const mockResumeDraftStorageKey = 'agent-seek-employment:mock-resume-draft:v2'
 
 const resumeStore = useResumeStore()
 const resumePdfImportReviewStore = useResumePdfImportReviewStore()
@@ -48,7 +45,6 @@ const pendingUnsavedCancelAction = ref<(() => void) | null>(null)
 const originalBodyOverflow = ref('')
 
 const deleteTargetResume = computed(() => resumes.value.find((resume) => resume.id === deleteResumeId.value) ?? null)
-const activeMockDraft = computed(() => readMockResumeDraft())
 const latestResumeVersion = computed(() => {
   if (!currentResume.value) return null
 
@@ -199,22 +195,6 @@ function getResumeCurrentTargetDirection(resumeId: string) {
   return versions.value.find((version) => version.id === resume.currentVersionId)?.content.targetDirection ?? ''
 }
 
-function readMockResumeDraft() {
-  const storedDraft = localStorage.getItem(mockResumeDraftStorageKey)
-
-  if (!storedDraft) return mockResumeDraft
-
-  try {
-    return JSON.parse(storedDraft) as ResumeDraft
-  } catch {
-    return mockResumeDraft
-  }
-}
-
-function writeMockResumeDraft(draft: ResumeDraft) {
-  localStorage.setItem(mockResumeDraftStorageKey, JSON.stringify(draft))
-}
-
 function showToast(title: string, color: 'success' | 'error' | 'warning' = 'success') {
   const iconByColor = {
     success: 'i-lucide-circle-check',
@@ -312,19 +292,6 @@ async function handleEditorSave(draft: ResumeDraft) {
   } finally {
     isSavingResume.value = false
   }
-}
-
-function saveCurrentResumeAsMockDraft() {
-  if (!currentResume.value || !currentVersion.value) return
-
-  writeMockResumeDraft(
-    buildResumeDraft(
-      currentResume.value.title,
-      getVersionTargetDirection(currentVersion.value),
-      currentVersion.value.content,
-    ),
-  )
-  showToast('当前简历已设为本地 mock 数据')
 }
 
 function openDeleteResumeConfirm(resumeId: string) {
@@ -469,14 +436,14 @@ onBeforeUnmount(() => {
       v-else-if="resumes.length === 0 && editorMode === null"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
-      <div class="w-full max-w-md px-6 py-14 text-center">
+      <div class="w-full max-w-xl px-6 py-14 text-center">
         <div
           class="mx-auto flex size-12 items-center justify-center rounded-2xl bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] text-[var(--app-accent-strong)]"
         >
           <UIcon name="i-lucide-file-text" class="size-6 text-muted" />
         </div>
         <p class="mt-4 text-sm font-medium text-highlighted">还没有创建简历</p>
-        <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">
+        <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">
           先创建第一份简历。后续保存修改时，系统会为你保留历史版本。
         </p>
         <UButton class="mt-5 whitespace-nowrap" icon="i-lucide-plus" @click="openCreateEditor">
@@ -490,17 +457,6 @@ onBeforeUnmount(() => {
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">简历管理</h1>
 
         <div class="flex shrink-0 items-center gap-2">
-          <UButton
-            type="button"
-            color="neutral"
-            variant="outline"
-            icon="i-lucide-save-all"
-            class="whitespace-nowrap"
-            :disabled="!currentResume || !currentVersion"
-            @click="saveCurrentResumeAsMockDraft"
-          >
-            设为 mock 数据
-          </UButton>
           <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateEditor">新建简历</UButton>
         </div>
       </div>
@@ -824,12 +780,10 @@ onBeforeUnmount(() => {
       v-else
       :mode="editorMode"
       :initial-draft="editorInitialDraft"
-      :mock-draft="activeMockDraft"
       :is-saving="isSavingResume"
       @cancel="handleEditorCancel"
       @save="handleEditorSave"
       @dirty-change="isEditorDirty = $event"
-      @mock-imported="showToast('mock 数据已导入')"
       @unchanged-save="showToast('当前未发生更改', 'warning')"
     />
 

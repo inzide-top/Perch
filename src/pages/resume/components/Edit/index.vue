@@ -58,7 +58,6 @@ const languageLevelOptions: LanguageLevelOption[] = [
 const props = defineProps<{
   mode: EditorMode
   initialDraft: ResumeDraft | null
-  mockDraft: ResumeDraft
   isSaving: boolean
 }>()
 
@@ -66,7 +65,6 @@ const emit = defineEmits<{
   cancel: []
   save: [draft: ResumeDraft]
   dirtyChange: [dirty: boolean]
-  mockImported: []
   unchangedSave: []
 }>()
 const toast = useToast()
@@ -354,15 +352,6 @@ function buildDraft(): ResumeDraft {
       outcomes: project.outcomes?.trim(),
     })),
   }
-}
-
-function importMockResumeDraft() {
-  fillDraft(props.mockDraft)
-  expandedProjectIndexes.value = new Set(props.mockDraft.projects.map((_, index) => index))
-  initialEditorSnapshot.value = props.initialDraft ? createEditorSnapshot() : ''
-  initialSavedDraft.value = props.initialDraft ? props.initialDraft : null
-  emit('dirtyChange', createEditorSnapshot() !== initialEditorSnapshot.value)
-  emit('mockImported')
 }
 
 function serializePdfImportValue(value: unknown) {
@@ -821,16 +810,6 @@ onBeforeUnmount(() => {
           @import-started="capturePdfImportBaseline"
           @apply="applyPdfImport"
         />
-        <UButton
-          type="button"
-          color="neutral"
-          variant="outline"
-          icon="i-lucide-file-input"
-          class="whitespace-nowrap"
-          @click="importMockResumeDraft"
-        >
-          导入 mock 数据
-        </UButton>
         <UButton
           type="button"
           color="neutral"

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { WrittenTestReviewForm } from '../../types'
+import ChatDateTimePicker from '@/components/chat/ChatDateTimePicker.vue'
 import type { ReviewDocumentSummary } from '@/types/review'
 
 defineProps<{
   open: boolean
   saving: boolean
-  dateLabel: string
   reviewDocument: ReviewDocumentSummary | null
   retryingDocumentId: string | null
 }>()
@@ -13,13 +13,10 @@ defineProps<{
 const emit = defineEmits<{
   close: []
   save: []
-  selectDate: [value: unknown]
   retry: [document: ReviewDocumentSummary]
 }>()
 
 const form = defineModel<WrittenTestReviewForm>('form', { required: true })
-const datePopoverOpen = defineModel<boolean>('datePopoverOpen', { required: true })
-const calendarDate = defineModel<unknown>('calendarDate', { required: true })
 
 function getStatusLabel(status: ReviewDocumentSummary['status']) {
   if (status === 'pending') return '等待提取'
@@ -99,22 +96,12 @@ function getStatusColor(status: ReviewDocumentSummary['status']) {
           </div>
 
           <UFormField label="笔试时间">
-            <UPopover v-model:open="datePopoverOpen" :portal="true" :ui="{ content: 'app-popover-layer' }">
-              <UButton
-                type="button"
-                color="neutral"
-                variant="outline"
-                class="w-full justify-between"
-                trailing-icon="i-lucide-calendar-days"
-              >
-                {{ dateLabel }}
-              </UButton>
-              <template #content>
-                <div class="p-2">
-                  <UCalendar v-model="calendarDate" @update:model-value="emit('selectDate', $event)" />
-                </div>
-              </template>
-            </UPopover>
+            <ChatDateTimePicker
+              v-model="form.scheduledAt"
+              allow-clear
+              content-class="!z-[180]"
+              placeholder="请选择笔试日期和时间"
+            />
           </UFormField>
 
           <UFormField label="笔试复盘">

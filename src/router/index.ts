@@ -3,6 +3,18 @@ import { createRouter, createWebHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/auth',
+      name: 'auth',
+      component: () => import('@/pages/auth/index.vue'),
+      meta: { title: '登录', publicOnly: true, authPage: true },
+    },
+    {
+      path: '/auth/reset-password',
+      name: 'auth-reset-password',
+      component: () => import('@/pages/auth/reset-password.vue'),
+      meta: { title: '重置密码', publicOnly: true, authPage: true, authRecovery: true },
+    },
     { path: '/', name: 'dashboard', component: () => import('@/pages/dashboard/index.vue'), meta: { title: '首页' } },
     {
       path: '/resumes',

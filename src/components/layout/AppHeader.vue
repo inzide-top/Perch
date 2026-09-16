@@ -4,13 +4,18 @@ defineProps<{
   modelLabel: string
   isModelReady: boolean
   isChatOpen: boolean
+  isNavigationOpen: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   toggleNavigation: []
   openSettings: []
   toggleChat: []
 }>()
+
+function openNavigation() {
+  emit('toggleNavigation')
+}
 </script>
 
 <template>
@@ -28,7 +33,8 @@ defineEmits<{
         class="-ml-2 shrink-0 lg:hidden"
         aria-label="打开主导航"
         title="打开主导航"
-        @click="$emit('toggleNavigation')"
+        :aria-expanded="isNavigationOpen"
+        @click="openNavigation"
       />
       <div class="min-w-0">
         <p class="truncate text-sm font-semibold tracking-tight text-highlighted">{{ title }}</p>

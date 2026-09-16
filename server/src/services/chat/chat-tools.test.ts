@@ -101,6 +101,47 @@ test('全局会话注册 search_opportunities，并按当前用户、状态和�
   ])
 })
 
+test('机会查询默认排除已终止记录，但明确查询已终止阶段时仍可返回', async () => {
+  const active = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000101',
+    company: '美团',
+    jobTitle: '前端工程师',
+    status: 'applied',
+  })
+  const closed = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000102',
+    company: '美团',
+    jobTitle: '前端工程师',
+    status: 'closed',
+  })
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'global' },
+    { findOpportunitiesByUserId: async () => [active, closed] },
+  )
+  const tool = registry.get('search_opportunities')
+  assert.ok(tool)
+
+  const defaultResult = await tool.execute(
+    { keyword: '美团', statuses: [], intentionLevels: [], limit: 10 },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(defaultResult.matchedCount, 1)
+  assert.deepEqual(
+    (defaultResult.opportunities as Array<{ id: string }>).map((item) => item.id),
+    [active.id],
+  )
+
+  const closedResult = await tool.execute(
+    { keyword: '美团', statuses: ['closed'], intentionLevels: [], limit: 10 },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(closedResult.matchedCount, 1)
+  assert.deepEqual(
+    (closedResult.opportunities as Array<{ id: string }>).map((item) => item.id),
+    [closed.id],
+  )
+})
+
 test('机会查询在后端按已有 JD 匹配分筛选，不需要逐条读取机会详情', async () => {
   const opportunities = [
     createOpportunity({
@@ -1990,4 +2031,40 @@ test('全局终止工具在同名机会中先选目标，再单独确认终止�
   if (ready.status !== 'ready') return
   assert.equal(ready.input.opportunityId, second.id)
   assert.equal(ready.input.reasonNote, '')
+})
+
+test('全局终止工具重新解析同名机会时排除本轮已终止记录', async () => {
+  const alreadyTerminated = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000421',
+    company: '美团',
+    jobTitle: '前端工程师',
+    status: 'closed',
+  })
+  const remaining = createOpportunity({
+    id: '00000000-0000-4000-8000-000000000422',
+    company: '美团',
+    jobTitle: '前端工程师',
+    status: 'applied',
+  })
+  const registry = createChatToolRegistry(
+    { userId: 'user-1', scopeType: 'global' },
+    {
+      findOpportunitiesByUserId: async () => [alreadyTerminated, remaining],
+      terminateOpportunityForUser: async () => ({
+        opportunity: { ...remaining, status: 'closed' },
+        alreadyApplied: false,
+      }),
+    },
+  )
+  const tool = registry.get('terminate_opportunity')
+  assert.ok(tool?.prepareInput)
+
+  const result = await tool.prepareInput({ opportunityReference: '美团前端工程师' }, undefined, {
+    signal: new AbortController().signal,
+  })
+
+  assert.equal(result.status, 'waiting_input')
+  if (result.status !== 'waiting_input') return
+  assert.equal(result.presentation.kind, 'opportunity_termination_input')
+  assert.equal(result.input.opportunityId, remaining.id)
 })

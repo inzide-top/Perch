@@ -6,7 +6,8 @@ import AppMobileNavigation from '@/components/layout/AppMobileNavigation.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import BackgroundTaskToastHost from '@/components/layout/BackgroundTaskToastHost.vue'
 import GlobalChatAssistantShell from '@/components/chat/GlobalChatAssistantShell.vue'
-import { useSettingsStore } from '@/stores'
+import AppFeedbackModal from '@/components/feedback/AppFeedbackModal.vue'
+import { useAuthStore, useOpportunityStore, useResumeStore, useSettingsStore } from '@/stores'
 import { useChatStore } from '@/stores/chat'
 import { useBackgroundTaskStore } from '@/stores/background-tasks'
 import { setupBackgroundTaskSync, teardownBackgroundTaskSync } from '@/services/background-task-sync'
@@ -14,6 +15,9 @@ import { setupBackgroundTaskSync, teardownBackgroundTaskSync } from '@/services/
 const route = useRoute()
 const router = useRouter()
 const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
+const resumeStore = useResumeStore()
+const opportunityStore = useOpportunityStore()
 const chatStore = useChatStore()
 const backgroundTaskStore = useBackgroundTaskStore()
 const systemPrefersDark = ref(
@@ -22,12 +26,14 @@ const systemPrefersDark = ref(
 const sidebarPreferenceStorageKey = 'agent-seek-employment:sidebar-expanded'
 const preferredSidebarExpanded = ref(readSidebarPreference())
 const isMobileNavigationOpen = ref(false)
+const isFeedbackOpen = ref(false)
 const isSidebarExpanded = ref(
   route.matched.some((item) => item.meta.workspacePage) ? false : preferredSidebarExpanded.value,
 )
 const pageTitle = computed(() => String(route.meta.title ?? 'PERCH'))
 const isWorkspacePage = computed(() => route.matched.some((item) => item.meta.workspacePage))
 const isDeveloperPage = computed(() => route.matched.some((item) => item.meta.developerPage))
+const isAuthPage = computed(() => route.matched.some((item) => item.meta.authPage))
 const layoutOffsetClass = computed(() => (isSidebarExpanded.value ? 'lg:pl-64' : 'lg:pl-16'))
 const isDark = computed(() =>
   settingsStore.themeMode === 'system' ? systemPrefersDark.value : settingsStore.themeMode === 'dark',
@@ -49,6 +55,7 @@ const chatLayoutStyle = computed(() => {
 })
 
 let systemThemeQuery: MediaQueryList | null = null
+let appRuntimeStarted = false
 
 function readSidebarPreference() {
   if (typeof localStorage === 'undefined') return true
@@ -63,6 +70,39 @@ function syncSystemThemePreference(event?: MediaQueryListEvent) {
 function syncViewportWidth() {
   viewportWidth.value = window.innerWidth
   if (viewportWidth.value >= 1024) isMobileNavigationOpen.value = false
+}
+
+function startAppRuntime() {
+  if (appRuntimeStarted || !authStore.isAuthenticated) return
+  appRuntimeStarted = true
+  settingsStore.hydrateFromStorage()
+  resumeStore.hydrateFromStorage()
+  opportunityStore.hydrateFromStorage()
+  backgroundTaskStore.hydrate()
+  setupBackgroundTaskSync()
+  backgroundTaskStore.start()
+
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      shouldLoadChatAssistant.value = true
+    })
+  })
+}
+
+function stopAppRuntime() {
+  if (!appRuntimeStarted) return
+  appRuntimeStarted = false
+  shouldLoadChatAssistant.value = false
+  teardownBackgroundTaskSync()
+  backgroundTaskStore.stop()
+}
+
+async function handleLogout() {
+  try {
+    await authStore.signOut()
+  } finally {
+    window.location.assign('/auth')
+  }
 }
 
 watch(isDark, (enabled) => document.documentElement.classList.toggle('dark', enabled), { immediate: true })
@@ -85,26 +125,33 @@ watch(isSidebarExpanded, (expanded) => {
   preferredSidebarExpanded.value = expanded
   localStorage.setItem(sidebarPreferenceStorageKey, expanded ? 'expanded' : 'collapsed')
 })
+watch(
+  () => authStore.isAuthenticated,
+  (authenticated) => {
+    if (authenticated) {
+      startAppRuntime()
+      return
+    }
+
+    stopAppRuntime()
+    if (authStore.initialized && !isAuthPage.value) {
+      const redirect = encodeURIComponent(route.fullPath)
+      window.location.replace(`/auth?redirect=${redirect}`)
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
-  backgroundTaskStore.hydrate()
-  setupBackgroundTaskSync()
-  backgroundTaskStore.start()
+  startAppRuntime()
   systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
   syncSystemThemePreference()
   systemThemeQuery.addEventListener('change', syncSystemThemePreference)
   window.addEventListener('resize', syncViewportWidth)
-  // 先让页面主体完成首帧，再下载 Markdown、工具卡片等较重的助手主体。
-  void nextTick(() => {
-    window.requestAnimationFrame(() => {
-      shouldLoadChatAssistant.value = true
-    })
-  })
 })
 
 onBeforeUnmount(() => {
-  teardownBackgroundTaskSync()
-  backgroundTaskStore.stop()
+  stopAppRuntime()
   systemThemeQuery?.removeEventListener('change', syncSystemThemePreference)
   window.removeEventListener('resize', syncViewportWidth)
 })
@@ -124,42 +171,60 @@ onBeforeUnmount(() => {
       },
     }"
   >
-    <BackgroundTaskToastHost />
-    <GlobalChatAssistant v-if="!isDeveloperPage && shouldLoadChatAssistant" />
-    <GlobalChatAssistantShell v-else-if="!isDeveloperPage" />
-    <RouterView v-if="isDeveloperPage" />
-    <div v-else class="app-shell text-default">
-      <AppSidebar v-model:expanded="isSidebarExpanded" />
-      <AppMobileNavigation v-model:open="isMobileNavigationOpen" />
-      <div
-        class="transition-[padding] [transition-duration:var(--duration-panel)] [transition-timing-function:var(--ease-panel)]"
-        :class="layoutOffsetClass"
-        :style="chatLayoutStyle"
-      >
-        <AppHeader
-          :title="pageTitle"
-          :model-label="settingsStore.llm.modelName"
-          :is-model-ready="isModelReady"
-          :is-chat-open="chatStore.isOpen"
-          @toggle-navigation="isMobileNavigationOpen = true"
-          @open-settings="router.push('/settings')"
-          @toggle-chat="chatStore.setOpen(!chatStore.isOpen)"
-        />
-        <main id="main-content" tabindex="-1" :class="isWorkspacePage ? 'p-0' : 'px-4 py-6 sm:px-6 lg:px-8'">
-          <RouterView v-slot="{ Component, route: viewRoute }">
-            <KeepAlive :include="['CapabilityProfilePage', 'ActionStrategyPage']">
-              <component
-                :is="Component"
-                :key="
-                  viewRoute.name === 'strategy' || viewRoute.name === 'strategy-actions'
-                    ? String(viewRoute.name)
-                    : viewRoute.fullPath
-                "
-              />
-            </KeepAlive>
-          </RouterView>
-        </main>
+    <RouterView v-if="isAuthPage" />
+    <div
+      v-else-if="authStore.status === 'initializing'"
+      class="flex min-h-dvh items-center justify-center bg-[var(--app-bg)]"
+    >
+      <div class="flex flex-col items-center gap-3 text-sm text-muted" role="status">
+        <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
+        正在恢复登录状态
       </div>
     </div>
+    <template v-else-if="authStore.isAuthenticated">
+      <BackgroundTaskToastHost />
+      <AppFeedbackModal v-model:open="isFeedbackOpen" />
+      <GlobalChatAssistant v-if="!isDeveloperPage && shouldLoadChatAssistant" />
+      <GlobalChatAssistantShell v-else-if="!isDeveloperPage" />
+      <RouterView v-if="isDeveloperPage" />
+      <div v-else class="app-shell text-default">
+        <AppSidebar v-model:expanded="isSidebarExpanded" @feedback="isFeedbackOpen = true" @logout="handleLogout" />
+        <AppMobileNavigation
+          v-model:open="isMobileNavigationOpen"
+          @feedback="isFeedbackOpen = true"
+          @logout="handleLogout"
+        />
+        <div
+          class="transition-[padding] [transition-duration:var(--duration-panel)] [transition-timing-function:var(--ease-panel)]"
+          :class="layoutOffsetClass"
+          :style="chatLayoutStyle"
+        >
+          <AppHeader
+            :title="pageTitle"
+            :model-label="settingsStore.llm.modelName"
+            :is-model-ready="isModelReady"
+            :is-chat-open="chatStore.isOpen"
+            :is-navigation-open="isMobileNavigationOpen"
+            @toggle-navigation="isMobileNavigationOpen = true"
+            @open-settings="router.push('/settings')"
+            @toggle-chat="chatStore.setOpen(!chatStore.isOpen)"
+          />
+          <main id="main-content" tabindex="-1" :class="isWorkspacePage ? 'p-0' : 'px-4 py-6 sm:px-6 lg:px-8'">
+            <RouterView v-slot="{ Component, route: viewRoute }">
+              <KeepAlive :include="['CapabilityProfilePage', 'ActionStrategyPage']">
+                <component
+                  :is="Component"
+                  :key="
+                    viewRoute.name === 'strategy' || viewRoute.name === 'strategy-actions'
+                      ? String(viewRoute.name)
+                      : viewRoute.fullPath
+                  "
+                />
+              </KeepAlive>
+            </RouterView>
+          </main>
+        </div>
+      </div>
+    </template>
   </UApp>
 </template>
