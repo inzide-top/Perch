@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.png'
 import perchMarkLightUrl from '@/assets/brand/perch-mark-light.png'
 import { useAuthStore } from '@/stores/auth'
 
 type AuthView = 'login' | 'register' | 'forgot'
+type SignupOutcome = 'existing' | 'confirmation'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,8 +17,15 @@ const password = ref('')
 const passwordConfirmation = ref('')
 const passwordVisible = ref(false)
 const isSubmitting = ref(false)
+const isResending = ref(false)
+const isPasswordResetSent = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const signupOutcome = ref<SignupOutcome | null>(null)
+const resendMessage = ref('')
+const resendError = ref('')
+const resendCooldown = ref(0)
+let resendCooldownTimer: number | null = null
 
 const heading = computed(() => {
   if (view.value === 'register') return '创建你的求职工作台'
@@ -36,10 +44,34 @@ function getSafeRedirect() {
   return redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
 }
 
+function clearResendCooldown() {
+  if (resendCooldownTimer !== null) window.clearInterval(resendCooldownTimer)
+  resendCooldownTimer = null
+  resendCooldown.value = 0
+}
+
+function clearSignupOutcome() {
+  signupOutcome.value = null
+  resendMessage.value = ''
+  resendError.value = ''
+  clearResendCooldown()
+}
+
+function startResendCooldown() {
+  clearResendCooldown()
+  resendCooldown.value = 30
+  resendCooldownTimer = window.setInterval(() => {
+    resendCooldown.value -= 1
+    if (resendCooldown.value <= 0) clearResendCooldown()
+  }, 1000)
+}
+
 function setView(nextView: AuthView) {
   view.value = nextView
   errorMessage.value = ''
   successMessage.value = ''
+  isPasswordResetSent.value = false
+  clearSignupOutcome()
   password.value = ''
   passwordConfirmation.value = ''
   void router.replace({
@@ -60,18 +92,57 @@ function validateInput() {
   return ''
 }
 
+function getErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') return { message: '', code: '' }
+  const details = error as { message?: unknown; code?: unknown }
+  return {
+    message: typeof details.message === 'string' ? details.message : '',
+    code: typeof details.code === 'string' ? details.code : '',
+  }
+}
+
+function isExistingAccountError(error: unknown) {
+  const { message, code } = getErrorDetails(error)
+  return code === 'user_already_registered' || /user already registered|already registered/i.test(message)
+}
+
 function toFriendlyError(error: unknown) {
-  const message = error instanceof Error ? error.message : ''
+  const { message } = getErrorDetails(error)
   if (/invalid login credentials/i.test(message)) return '邮箱或密码不正确'
   if (/email not confirmed/i.test(message)) return '请先前往邮箱完成验证'
   if (/user already registered/i.test(message)) return '这个邮箱已经注册，请直接登录'
-  if (/rate limit/i.test(message)) return '操作太频繁，请稍后再试'
+  if (/rate limit|too many requests/i.test(message)) return '操作太频繁，请稍后再试'
   return message || '认证服务暂时不可用，请稍后再试'
+}
+
+async function resendConfirmation() {
+  if (isResending.value || resendCooldown.value > 0) return
+
+  const normalizedEmail = email.value.trim().toLowerCase()
+  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+    resendError.value = '请输入有效的邮箱地址'
+    return
+  }
+
+  resendError.value = ''
+  resendMessage.value = ''
+  isResending.value = true
+  try {
+    await authStore.resendSignupConfirmation(normalizedEmail)
+    resendMessage.value = '验证邮件已重新发送，请检查收件箱和垃圾邮件。'
+    startResendCooldown()
+  } catch (error) {
+    resendError.value = toFriendlyError(error)
+  } finally {
+    isResending.value = false
+  }
 }
 
 async function submit() {
   errorMessage.value = validateInput()
   successMessage.value = ''
+  isPasswordResetSent.value = false
+  if (view.value === 'register') clearSignupOutcome()
   if (errorMessage.value) return
 
   isSubmitting.value = true
@@ -80,13 +151,18 @@ async function submit() {
     if (view.value === 'forgot') {
       await authStore.requestPasswordReset(normalizedEmail)
       successMessage.value = '如果该邮箱已经注册，你会收到一封密码重置邮件。'
+      isPasswordResetSent.value = true
       return
     }
 
     if (view.value === 'register') {
       const result = await authStore.signUp(normalizedEmail, password.value)
+      if (result.accountState === 'existing') {
+        signupOutcome.value = 'existing'
+        return
+      }
       if (result.requiresEmailConfirmation) {
-        successMessage.value = '注册成功，请前往邮箱完成验证后登录。'
+        signupOutcome.value = 'confirmation'
         return
       }
     } else {
@@ -95,6 +171,10 @@ async function submit() {
 
     await router.replace(getSafeRedirect())
   } catch (error) {
+    if (view.value === 'register' && isExistingAccountError(error)) {
+      signupOutcome.value = 'existing'
+      return
+    }
     errorMessage.value = toFriendlyError(error)
   } finally {
     isSubmitting.value = false
@@ -107,6 +187,17 @@ watch(
     if (mode === 'register' && view.value !== 'register') view.value = 'register'
   },
 )
+
+watch(email, () => {
+  // A result belongs to the email that was submitted. As soon as the user
+  // edits the address, unlock the form and remove stale success/error copy.
+  if (signupOutcome.value) clearSignupOutcome()
+  errorMessage.value = ''
+  successMessage.value = ''
+  isPasswordResetSent.value = false
+})
+
+onUnmounted(clearResendCooldown)
 </script>
 
 <template>
@@ -169,7 +260,7 @@ watch(
               size="lg"
               class="w-full"
               placeholder="name@example.com"
-              :disabled="isSubmitting"
+              :disabled="isSubmitting || isResending"
             />
           </UFormField>
 
@@ -218,12 +309,45 @@ watch(
             {{ successMessage }}
           </p>
 
+          <div v-if="signupOutcome" class="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3.5" role="status">
+            <p class="text-sm font-medium text-highlighted">
+              {{
+                signupOutcome === 'existing'
+                  ? '这个邮箱已经注册，请选择下一步操作。'
+                  : '验证邮件已发送，请前往邮箱完成验证。'
+              }}
+            </p>
+            <p class="mt-1 text-xs leading-5 text-muted">
+              {{
+                signupOutcome === 'existing'
+                  ? '你可以直接登录或使用找回密码。'
+                  : '如果之前注册过但还没完成验证，可以重发验证邮件。'
+              }}
+            </p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <UButton type="button" size="sm" variant="soft" label="去登录" @click="setView('login')" />
+              <UButton type="button" size="sm" variant="outline" label="找回密码" @click="setView('forgot')" />
+              <UButton
+                v-if="signupOutcome === 'confirmation'"
+                type="button"
+                size="sm"
+                variant="link"
+                :loading="isResending"
+                :disabled="isResending || resendCooldown > 0"
+                :label="resendCooldown > 0 ? `重新发送（${resendCooldown}s）` : '重发验证邮件'"
+                @click="resendConfirmation"
+              />
+            </div>
+            <p v-if="resendMessage" class="mt-2 text-xs text-success">{{ resendMessage }}</p>
+            <p v-if="resendError" role="alert" class="mt-2 text-xs text-error">{{ resendError }}</p>
+          </div>
+
           <UButton
             type="submit"
             block
             size="lg"
             :loading="isSubmitting"
-            :disabled="isSubmitting || Boolean(successMessage)"
+            :disabled="isSubmitting || isResending || isPasswordResetSent || Boolean(signupOutcome)"
             :label="view === 'login' ? '登录' : view === 'register' ? '创建账号' : '发送重置邮件'"
           />
         </form>
