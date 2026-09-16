@@ -55,6 +55,13 @@ import OpportunityProfileConfirmationCard from './OpportunityProfileConfirmation
 import OpportunityProfileBatchConfirmationCard from './OpportunityProfileBatchConfirmationCard.vue'
 import OpportunityStatusTransitionConfirmationCard from './OpportunityStatusTransitionConfirmationCard.vue'
 import OpportunityTerminationCard from './OpportunityTerminationCard.vue'
+import OpportunityMutationSummaryCard from './OpportunityMutationSummaryCard.vue'
+import {
+  groupOpportunityMutationParts,
+  type OpportunityMutationResultStatus,
+  type OpportunityMutationSummaryItem,
+  type OpportunityMutationSummaryPart,
+} from './opportunity-mutation-summary'
 import InterviewScheduleInputCard from './InterviewScheduleInputCard.vue'
 import InterviewScheduleConfirmationCard from './InterviewScheduleConfirmationCard.vue'
 import MockInterviewInputCard from './MockInterviewInputCard.vue'
@@ -75,6 +82,7 @@ type OpportunityIntentionActionPart = {
   presentation: ChatOpportunityIntentionChangePresentation
   status: OpportunityIntentionConfirmationStatus
   errorMessage: string | null
+  alreadyApplied?: boolean
 }
 
 type OpportunityProfileActionPart = {
@@ -83,6 +91,7 @@ type OpportunityProfileActionPart = {
   presentation: ChatOpportunityProfileChangePresentation
   status: OpportunityIntentionConfirmationStatus
   errorMessage: string | null
+  alreadyApplied?: boolean
 }
 
 type OpportunityProfileBatchActionPart = {
@@ -99,6 +108,7 @@ type OpportunityStatusTransitionActionPart = {
   presentation: ChatOpportunityStatusTransitionPresentation
   status: OpportunityIntentionConfirmationStatus
   errorMessage: string | null
+  alreadyApplied?: boolean
 }
 
 type OpportunityConfirmationActionPart =
@@ -152,6 +162,7 @@ type OpportunityTerminationActionPart = {
   presentation: ChatOpportunityTerminationInputPresentation
   status: OpportunityIntentionConfirmationStatus
   errorMessage: string | null
+  alreadyApplied?: boolean
 }
 
 type InterviewScheduleConfirmationActionPart = {
@@ -188,6 +199,7 @@ type ChatUiMessagePart =
   | ResumeTargetInputActionPart
   | OpportunityTerminationActionPart
   | OpportunityConfirmationActionPart
+  | OpportunityMutationSummaryPart
 
 type ChatUiMessage = {
   id: string
@@ -667,10 +679,106 @@ const historyScopeItems = computed<Array<{ label: string; value: ChatHistoryScop
 ])
 const visibleHistoryConversations = computed(() => chatStore.historyConversations)
 const historyPanelTitle = computed(() => (showArchived.value ? '归档对话' : '历史对话'))
+
+function toOpportunityMutationSummaryItem(part: ChatUiMessagePart): OpportunityMutationSummaryItem | null {
+  if (
+    ![
+      'opportunity_intention_action',
+      'opportunity_profile_action',
+      'opportunity_status_transition_action',
+      'opportunity_termination_action',
+    ].includes(part.type)
+  ) {
+    return null
+  }
+  if (
+    part.type !== 'opportunity_intention_action' &&
+    part.type !== 'opportunity_profile_action' &&
+    part.type !== 'opportunity_status_transition_action' &&
+    part.type !== 'opportunity_termination_action'
+  ) {
+    return null
+  }
+  if (part.status === 'waiting' || part.status === 'approving') return null
+
+  const status: OpportunityMutationResultStatus =
+    part.status === 'failed'
+      ? 'failed'
+      : part.status === 'rejected'
+        ? 'rejected'
+        : part.alreadyApplied
+          ? 'skipped'
+          : 'completed'
+
+  if (part.type === 'opportunity_intention_action') {
+    return {
+      toolActionId: part.toolActionId,
+      opportunityId: part.presentation.opportunityId,
+      company: part.presentation.company,
+      jobTitle: part.presentation.jobTitle,
+      operationLabel: '修改意向',
+      status,
+      changes: [
+        {
+          label: '意向等级',
+          before: `${part.presentation.before} 级`,
+          after: `${part.presentation.after} 级`,
+        },
+      ],
+      errorMessage: part.errorMessage,
+    }
+  }
+
+  if (part.type === 'opportunity_profile_action') {
+    return {
+      toolActionId: part.toolActionId,
+      opportunityId: part.presentation.opportunityId,
+      company: part.presentation.company,
+      jobTitle: part.presentation.jobTitle,
+      operationLabel: '修改资料',
+      status,
+      changes: part.presentation.changes.map((change) => ({
+        label: change.label,
+        before: change.before,
+        after: change.after,
+      })),
+      errorMessage: part.errorMessage,
+    }
+  }
+
+  if (part.type === 'opportunity_status_transition_action') {
+    return {
+      toolActionId: part.toolActionId,
+      opportunityId: part.presentation.opportunityId,
+      company: part.presentation.company,
+      jobTitle: part.presentation.jobTitle,
+      operationLabel: '流转阶段',
+      status,
+      changes: [{ label: '阶段', before: part.presentation.beforeLabel, after: part.presentation.afterLabel }],
+      errorMessage: part.errorMessage,
+    }
+  }
+
+  return {
+    toolActionId: part.toolActionId,
+    opportunityId: part.presentation.opportunityId,
+    company: part.presentation.company,
+    jobTitle: part.presentation.jobTitle,
+    operationLabel: '终止流程',
+    status,
+    changes: [{ label: '阶段', before: part.presentation.fromStatusLabel, after: '已终止' }],
+    errorMessage: part.errorMessage,
+  }
+}
+
+function compactOpportunityMutationParts(parts: ChatUiMessagePart[]): ChatUiMessagePart[] {
+  return groupOpportunityMutationParts(parts, toOpportunityMutationSummaryItem).map((group) => group.part)
+}
+
 const persistedChatUiMessages = computed<ChatUiMessage[]>(() =>
   chat.messages.value.flatMap<ChatUiMessage>((message) => {
     if (message.role !== 'user' && message.role !== 'assistant') return []
-    const parts = message.parts.flatMap<ChatUiMessage['parts'][number]>((part) => {
+    const mappedParts = message.parts.flatMap<ChatUiMessage['parts'][number]>((part) => {
       if (part.type === 'text') {
         const text = message.role === 'assistant' ? toUserVisibleChatText(part.text) : part.text
         return text ? [{ ...part, text }] : []
@@ -683,6 +791,7 @@ const persistedChatUiMessages = computed<ChatUiMessage[]>(() =>
       }
       return []
     })
+    const parts = compactOpportunityMutationParts(mappedParts)
     const text = parts
       .filter((part): part is Extract<(typeof parts)[number], { type: 'text' }> => part.type === 'text')
       .map((part) => part.text)
@@ -1139,6 +1248,7 @@ function toPersistedOpportunityIntentionActionPart(toolActionId: string): Opport
     presentation: presentation.data,
     status: getPersistedToolActionStatus(action),
     errorMessage: readToolActionErrorMessage(action.error),
+    alreadyApplied: action.output?.alreadyApplied === true,
   }
 }
 
@@ -1165,6 +1275,7 @@ function toPersistedOpportunityActionPart(
       presentation: presentation.data,
       status: getPersistedToolActionStatus(action),
       errorMessage: readToolActionErrorMessage(action.error),
+      alreadyApplied: action.output?.alreadyApplied === true,
     }
   }
 
@@ -1193,6 +1304,7 @@ function toPersistedOpportunityActionPart(
       presentation: presentation.data,
       status: getPersistedToolActionStatus(action),
       errorMessage: readToolActionErrorMessage(action.error),
+      alreadyApplied: action.output?.alreadyApplied === true,
     }
   }
 
@@ -1220,6 +1332,7 @@ function toPersistedOpportunityActionPart(
       presentation: reasonNote === null ? presentation.data : { ...presentation.data, values: { reasonNote } },
       status: getPersistedToolActionStatus(action),
       errorMessage: readToolActionErrorMessage(action.error),
+      alreadyApplied: action.output?.alreadyApplied === true,
     }
   }
 
@@ -2124,6 +2237,10 @@ onBeforeUnmount(() => {
                       :message-id="message.id"
                     />
                     <OpportunitySearchResultSkeleton v-else-if="part.type === 'opportunity_search_placeholder'" />
+                    <OpportunityMutationSummaryCard
+                      v-else-if="part.type === 'opportunity_mutation_summary'"
+                      :items="part.items"
+                    />
                     <OpportunityTargetInputCard
                       v-else-if="part.type === 'opportunity_target_input_action'"
                       :request-id="part.requestId"

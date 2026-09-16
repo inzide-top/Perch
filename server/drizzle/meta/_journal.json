@@ -204,6 +204,20 @@
       "when": 1787032751719,
       "tag": "0028_bright_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788161083894,
+      "tag": "0029_careful_falcon",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1788167320477,
+      "tag": "0030_absurd_whistler",
+      "breakpoints": true
     }
   ]
 }

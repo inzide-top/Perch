@@ -174,7 +174,7 @@ export function createSearchOpportunitiesTool(
     name: 'search_opportunities',
     version: '1',
     description:
-      '查询当前用户已经保存的求职机会。支持公司/岗位关键词、求职阶段、意向等级和已有 JD 匹配分筛选。按匹配分筛选时直接使用本工具，不要逐条调用详情工具。该工具只读，不会修改机会。',
+      '查询当前用户已经保存的求职机会。支持公司/岗位关键词、求职阶段、意向等级和已有 JD 匹配分筛选。未指定求职阶段时默认不返回已终止机会；只有用户明确查询已终止机会时才传 statuses=["closed"]。按匹配分筛选时直接使用本工具，不要逐条调用详情工具。该工具只读，不会修改机会。',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -248,6 +248,7 @@ export function createSearchOpportunitiesTool(
       )
 
       const matched = opportunities.filter((opportunity) => {
+        if (parsed.statuses.length === 0 && opportunity.status === 'closed') return false
         if (parsed.statuses.length > 0 && !parsed.statuses.includes(opportunity.status)) return false
         if (
           parsed.intentionLevels.length > 0 &&

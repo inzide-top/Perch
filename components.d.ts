@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AppFeedbackModal: typeof import('./src/components/feedback/AppFeedbackModal.vue')['default']
     AppHeader: typeof import('./src/components/layout/AppHeader.vue')['default']
     AppMobileNavigation: typeof import('./src/components/layout/AppMobileNavigation.vue')['default']
     AppSidebar: typeof import('./src/components/layout/AppSidebar.vue')['default']
@@ -27,6 +28,7 @@ declare module 'vue' {
     MockInterviewInputCard: typeof import('./src/components/chat/MockInterviewInputCard.vue')['default']
     OpportunityImportResultCard: typeof import('./src/components/chat/OpportunityImportResultCard.vue')['default']
     OpportunityIntentionConfirmationCard: typeof import('./src/components/chat/OpportunityIntentionConfirmationCard.vue')['default']
+    OpportunityMutationSummaryCard: typeof import('./src/components/chat/OpportunityMutationSummaryCard.vue')['default']
     OpportunityProfileBatchConfirmationCard: typeof import('./src/components/chat/OpportunityProfileBatchConfirmationCard.vue')['default']
     OpportunityProfileConfirmationCard: typeof import('./src/components/chat/OpportunityProfileConfirmationCard.vue')['default']
     OpportunityReferencePicker: typeof import('./src/components/chat/OpportunityReferencePicker.vue')['default']

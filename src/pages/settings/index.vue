@@ -4,6 +4,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { useSettingsStore } from '@/stores'
 import { interviewApi } from '@/services/interviews'
 import { isSameModelIdentity } from '@/services/interview-runtime'
+import { developerToolsEnabled } from '@/services/developer-tools'
 import type { LlmConnectionSettings, ThemeMode } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
@@ -181,7 +182,7 @@ watch(
           配置工作台外观和后续 AI 调用所需的模型连接。
         </p>
       </div>
-      <div class="flex flex-wrap items-center justify-end gap-2">
+      <div v-if="developerToolsEnabled" class="flex flex-wrap items-center justify-end gap-2">
         <UButton to="/developer/agent-runs" target="_blank" color="neutral" variant="outline" icon="i-lucide-bug-play">
           Agent Run
         </UButton>

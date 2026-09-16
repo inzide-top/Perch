@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import { chatApi } from '@/services/chat-api'
@@ -20,6 +20,11 @@ import { opportunityRegionOptions, type OpportunityRegion } from '@/shared/oppor
 import CreateOpportunityModal from './components/CreateOpportunityModal.vue'
 import OpportunityFilterSelect from './components/OpportunityFilterSelect.vue'
 import OpportunityListSkeleton from './components/OpportunityListSkeleton.vue'
+import {
+  clearOpportunityListFilters,
+  consumeOpportunityListFilters,
+  rememberOpportunityListFilters,
+} from './opportunity-list-navigation-state'
 
 const statusOptions: { label: string; value: JobOpportunityStatus }[] = [
   { label: '待投递', value: 'pending_apply' },
@@ -91,6 +96,7 @@ let batchCreationRevision = 0
 const detailPrefetchTimers = new Map<string, number>()
 let filterDebounceTimer: number | null = null
 let filterRequestSequence = 0
+let isFilterStateReady = false
 
 const listFilters = computed(() => {
   return {
@@ -124,6 +130,25 @@ const conflictTargetOpportunity = computed(() => {
   return opportunityId ? (opportunities.value.find((opportunity) => opportunity.id === opportunityId) ?? null) : null
 })
 const selectedOpportunityCount = computed(() => selectedOpportunityIds.value.length)
+const pageActionItems = computed(() => [
+  [
+    {
+      label: '归档面试',
+      icon: 'i-lucide-archive',
+      onSelect: () => void router.push({ name: 'archived-interviews' }),
+    },
+    {
+      label: isSelectionMode.value ? '退出多选' : '多选',
+      icon: isSelectionMode.value ? 'i-lucide-x' : 'i-lucide-list-checks',
+      onSelect: toggleSelectionMode,
+    },
+    {
+      label: '新增 JD 分析',
+      icon: 'i-lucide-plus',
+      onSelect: openCreateModal,
+    },
+  ],
+])
 
 function isOpportunitySelected(opportunityId: string) {
   return selectedOpportunityIds.value.includes(opportunityId)
@@ -661,6 +686,7 @@ function openOpportunityDetail(opportunityId: string) {
   }
   if (!isAnalysisCompleted(opportunityId)) return
 
+  rememberOpportunityListFilters(listFilters.value)
   opportunityStore.selectOpportunity(opportunityId)
   void router.push({ name: 'opportunity-detail', params: { id: opportunityId } })
 }
@@ -732,8 +758,33 @@ function applyOpportunityRouteFilters() {
   isApplyingRouteFilters = false
 }
 
+function applyOpportunityListFilterSnapshot(filters: OpportunityListFilters) {
+  const statuses = filters.statuses ?? []
+  const intentionLevels = filters.intentionLevels ?? []
+
+  isApplyingRouteFilters = true
+  routeStatusFilters.value = statuses.length > 1 ? [...statuses] : []
+  routeIntentionFilters.value = intentionLevels.length > 1 ? [...intentionLevels] : []
+  selectedStatus.value = statuses.length === 1 ? statuses[0]! : ''
+  selectedIntentionLevel.value = intentionLevels.length === 1 ? intentionLevels[0]! : ''
+  selectedRecommendation.value = filters.recommendations?.[0] ?? ''
+  selectedRegion.value = filters.regions?.[0] ?? ''
+  isApplyingRouteFilters = false
+}
+
+function hasExplicitOpportunityRouteFilters() {
+  return ['status', 'statuses', 'intention', 'intentions'].some((key) => route.query[key] !== undefined)
+}
+
 onMounted(async () => {
-  applyOpportunityRouteFilters()
+  const returnFilters = consumeOpportunityListFilters()
+  if (returnFilters && !hasExplicitOpportunityRouteFilters()) {
+    applyOpportunityListFilterSnapshot(returnFilters)
+  } else {
+    applyOpportunityRouteFilters()
+  }
+  await nextTick()
+  isFilterStateReady = true
   try {
     await opportunityStore.loadOpportunities({ filters: listFilters.value })
   } finally {
@@ -763,7 +814,12 @@ onBeforeUnmount(() => {
 })
 
 watch(listFilters, (filters) => {
+  if (!isFilterStateReady) return
   scheduleFilteredOpportunityLoad(filters)
+})
+
+onBeforeRouteLeave((to) => {
+  if (to.name !== 'opportunity-detail') clearOpportunityListFilters()
 })
 
 watch(
@@ -802,35 +858,51 @@ watch(
     </UCard>
 
     <div v-else class="space-y-5">
-      <div class="flex items-center justify-between gap-4">
-        <div>
-          <h1 class="text-xl font-semibold tracking-tight text-highlighted">机会管理</h1>
-          <p class="mt-1 text-sm text-muted">统一维护 JD、分析状态和后续投递流程。</p>
-        </div>
-        <div class="flex items-center gap-3">
-          <span v-if="isRefreshing" class="inline-flex items-center gap-1.5 text-xs text-muted">
-            <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-            正在同步
-          </span>
-          <UButton
-            color="neutral"
-            variant="ghost"
-            class="whitespace-nowrap"
-            icon="i-lucide-archive"
-            @click="router.push({ name: 'archived-interviews' })"
-          >
-            归档面试
-          </UButton>
-          <UButton
-            color="neutral"
-            variant="outline"
-            class="whitespace-nowrap"
-            :icon="isSelectionMode ? 'i-lucide-x' : 'i-lucide-list-checks'"
-            @click="toggleSelectionMode"
-          >
-            {{ isSelectionMode ? '退出多选' : '多选' }}
-          </UButton>
-          <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateModal"> 新增 JD 分析 </UButton>
+      <div class="opportunity-page-header-container">
+        <div class="opportunity-page-header flex items-center justify-between gap-4">
+          <div class="opportunity-page-header-copy">
+            <h1 class="text-xl font-semibold tracking-tight text-highlighted">机会管理</h1>
+            <p class="mt-1 text-sm text-muted">统一维护 JD、分析状态和后续投递流程。</p>
+          </div>
+          <div class="opportunity-page-header-controls flex shrink-0 items-center gap-3">
+            <span v-if="isRefreshing" class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted">
+              <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+              正在同步
+            </span>
+            <div class="opportunity-page-header-actions flex items-center gap-3">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                class="whitespace-nowrap"
+                icon="i-lucide-archive"
+                @click="router.push({ name: 'archived-interviews' })"
+              >
+                归档面试
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="outline"
+                class="whitespace-nowrap"
+                :icon="isSelectionMode ? 'i-lucide-x' : 'i-lucide-list-checks'"
+                @click="toggleSelectionMode"
+              >
+                {{ isSelectionMode ? '退出多选' : '多选' }}
+              </UButton>
+              <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateModal"> 新增 JD 分析 </UButton>
+            </div>
+            <UDropdownMenu :items="pageActionItems" :content="{ align: 'end', sideOffset: 8 }">
+              <UButton
+                class="opportunity-page-header-menu whitespace-nowrap"
+                :color="isSelectionMode ? 'primary' : 'neutral'"
+                :variant="isSelectionMode ? 'soft' : 'outline'"
+                icon="i-lucide-menu"
+                trailing-icon="i-lucide-chevron-down"
+                aria-label="打开机会管理页面操作菜单"
+              >
+                操作
+              </UButton>
+            </UDropdownMenu>
+          </div>
         </div>
       </div>
 
@@ -1360,6 +1432,55 @@ watch(
 </template>
 
 <style scoped>
+.opportunity-page-header-container {
+  container-name: opportunity-page-header;
+  container-type: inline-size;
+}
+
+.opportunity-page-header-copy {
+  min-width: 0;
+}
+
+.opportunity-page-header-copy h1 {
+  white-space: nowrap;
+}
+
+.opportunity-page-header-menu {
+  display: none;
+}
+
+@container opportunity-page-header (max-width: 58rem) {
+  .opportunity-page-header-actions {
+    display: none;
+  }
+
+  .opportunity-page-header-menu {
+    display: inline-flex;
+  }
+}
+
+@container opportunity-page-header (max-width: 30rem) {
+  .opportunity-page-header {
+    align-items: flex-start;
+  }
+
+  .opportunity-page-header-copy p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .opportunity-page-header-controls {
+    gap: 0.5rem;
+  }
+
+  .opportunity-page-header-controls > span {
+    font-size: 0;
+    gap: 0;
+  }
+}
+
 .opportunity-filter-container {
   container-type: inline-size;
 }

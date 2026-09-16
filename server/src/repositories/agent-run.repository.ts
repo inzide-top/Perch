@@ -1,7 +1,10 @@
 import { and, desc, eq, ne, or, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
+  actionStrategySnapshots,
   agentRuns,
+  chatConversations,
+  chatRuns,
   interviewSessions,
   interviewTurns,
   jobAnalyses,
@@ -13,6 +16,7 @@ import type { AgentWorkflowType } from '@/shared/interview/schemas'
 import { measureDb } from '../utils/request-metrics'
 
 export type AgentRunDebugListFilters = {
+  userId: string
   limit: number
   workflowType?: AgentWorkflowType
 }
@@ -122,6 +126,9 @@ export class DrizzleAgentRunRepository {
       .leftJoin(interviewTurns, eq(agentRuns.interviewTurnId, interviewTurns.id))
       .leftJoin(reviewDocuments, eq(agentRuns.reviewDocumentId, reviewDocuments.id))
       .leftJoin(resumePdfImportTasks, eq(agentRuns.resumePdfImportTaskId, resumePdfImportTasks.id))
+      .leftJoin(actionStrategySnapshots, eq(agentRuns.actionStrategySnapshotId, actionStrategySnapshots.id))
+      .leftJoin(chatRuns, eq(agentRuns.chatRunId, chatRuns.id))
+      .leftJoin(chatConversations, eq(chatRuns.conversationId, chatConversations.id))
       .leftJoin(
         jobOpportunities,
         or(
@@ -141,6 +148,9 @@ export class DrizzleAgentRunRepository {
       .leftJoin(interviewTurns, eq(agentRuns.interviewTurnId, interviewTurns.id))
       .leftJoin(reviewDocuments, eq(agentRuns.reviewDocumentId, reviewDocuments.id))
       .leftJoin(resumePdfImportTasks, eq(agentRuns.resumePdfImportTaskId, resumePdfImportTasks.id))
+      .leftJoin(actionStrategySnapshots, eq(agentRuns.actionStrategySnapshotId, actionStrategySnapshots.id))
+      .leftJoin(chatRuns, eq(agentRuns.chatRunId, chatRuns.id))
+      .leftJoin(chatConversations, eq(chatRuns.conversationId, chatConversations.id))
       .leftJoin(
         jobOpportunities,
         or(
@@ -157,18 +167,35 @@ export class DrizzleAgentRunRepository {
       const workflowFilter = filters.workflowType
         ? eq(agentRuns.workflowType, filters.workflowType)
         : ne(agentRuns.workflowType, 'chat_turn')
+      const ownerFilter = or(
+        eq(jobOpportunities.userId, filters.userId),
+        eq(resumePdfImportTasks.userId, filters.userId),
+        eq(actionStrategySnapshots.userId, filters.userId),
+        eq(chatConversations.userId, filters.userId),
+      )!
 
       return query
-        .where(workflowFilter)
+        .where(and(workflowFilter, ownerFilter))
         .orderBy(desc(agentRuns.startedAt), desc(agentRuns.attemptNumber))
         .limit(filters.limit)
     })
   }
 
-  async findDebugById(runId: string) {
-    const [entry] = await measureDb(() => this.debugDetailQuery().where(eq(agentRuns.id, runId)).limit(1))
+  async findDebugById(runId: string, userId: string) {
+    const ownerFilter = or(
+      eq(jobOpportunities.userId, userId),
+      eq(resumePdfImportTasks.userId, userId),
+      eq(actionStrategySnapshots.userId, userId),
+      eq(chatConversations.userId, userId),
+    )!
+    const [entry] = await measureDb(() =>
+      this.debugDetailQuery()
+        .where(and(eq(agentRuns.id, runId), ownerFilter))
+        .limit(1),
+    )
 
-    return entry ?? null
+    if (!entry) return null
+    return entry
   }
 
   async findLatestAttemptNumber(operationKey: string) {

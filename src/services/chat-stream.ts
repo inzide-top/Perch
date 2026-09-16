@@ -1,5 +1,7 @@
 import type { ChatRunEventType, ChatRunPhase, ChatRunStatus } from '@/shared/chat/schemas'
 import { parseChatSseFrame, parseChatSseFrames, type ChatSseFrame } from '@/shared/chat/sse'
+import { appAuthMode } from './auth/auth-mode'
+import { getAuthAccessToken, invalidateAuthSession, refreshAuthAccessToken } from './auth/supabase-client'
 import { ApiRequestError, toApiUrl } from './http'
 
 export type ChatRunSnapshot = {
@@ -152,11 +154,8 @@ async function consumeChatRunStream(
     afterSequence: String(getLastSequence()),
     limit: String(options.limit ?? 200),
   })
-  const response = await fetch(`${toApiUrl(`/chat/runs/${encodeURIComponent(runId)}/stream`)}?${query.toString()}`, {
-    method: 'GET',
-    headers: { accept: 'text/event-stream' },
-    signal,
-  })
+  const streamUrl = `${toApiUrl(`/chat/runs/${encodeURIComponent(runId)}/stream`)}?${query.toString()}`
+  const response = await openAuthenticatedStream(streamUrl, signal)
 
   if (!response.ok) {
     throw new ApiRequestError(await readErrorMessage(response), response.status)
@@ -191,6 +190,23 @@ async function consumeChatRunStream(
   } finally {
     reader.releaseLock()
   }
+}
+
+async function openAuthenticatedStream(url: string, signal: AbortSignal) {
+  const headers = new Headers({ accept: 'text/event-stream' })
+  const accessToken = await getAuthAccessToken()
+  if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
+
+  const response = await fetch(url, { method: 'GET', headers, signal })
+  if (response.status !== 401 || appAuthMode !== 'supabase') return response
+
+  const refreshedToken = await refreshAuthAccessToken()
+  if (!refreshedToken) return response
+
+  headers.set('authorization', `Bearer ${refreshedToken}`)
+  const retriedResponse = await fetch(url, { method: 'GET', headers, signal })
+  if (retriedResponse.status === 401) await invalidateAuthSession()
+  return retriedResponse
 }
 
 function dispatchChatSseFrame(
