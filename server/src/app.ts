@@ -13,6 +13,7 @@ import { capabilityProfileRoute } from './routes/capability-profile.route'
 import { actionStrategyRoute } from './routes/action-strategy.route'
 import { chatRoute } from './routes/chat.route'
 import { chatRunDebugRoute } from './routes/chat-run-debug.route'
+import { feedbackRoute } from './routes/feedback.route'
 import {
   DuplicateJobOpportunityError,
   OpportunityInterviewHistoryConflictError,
@@ -28,6 +29,9 @@ import {
   getPayloadByteLength,
   type RequestMetrics,
 } from './utils/request-metrics'
+import { runWithCurrentUser } from './context/current-user'
+import { authenticateRequest, UnauthorizedRequestError } from './services/request-auth.service'
+import { developerToolsEnabled } from './config/developer-tools'
 
 function isHttpClientError(error: unknown): error is Error & { statusCode: number } {
   if (!(error instanceof Error) || !('statusCode' in error)) return false
@@ -78,6 +82,10 @@ app.addHook('onResponse', async (request, reply) => {
 })
 
 app.setErrorHandler((error, request, reply) => {
+  if (error instanceof UnauthorizedRequestError) {
+    return reply.status(error.statusCode).send({ message: error.message })
+  }
+
   if (error instanceof ZodError) {
     return reply.status(400).send({
       message: 'Request payload is invalid',
@@ -129,7 +137,6 @@ app.setErrorHandler((error, request, reply) => {
       message: error.message,
       code: error.code,
       taskType: error.taskType,
-      counts: error.counts,
     })
   }
 
@@ -156,6 +163,19 @@ await app.register(cors, {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 })
 
+app.addHook('onRequest', (request, _reply, done) => {
+  if (request.method === 'OPTIONS' || request.url === '/api/health') return done()
+
+  void authenticateRequest(request.headers.authorization)
+    .then((identity) => {
+      runWithCurrentUser(identity, () => {
+        request.log.debug({ userId: identity.userId, authMode: identity.authMode }, 'Authenticated API request')
+        done()
+      })
+    })
+    .catch(done)
+})
+
 await app.register(multipart, {
   limits: {
     files: 1,
@@ -168,11 +188,14 @@ await app.register(multipart, {
 await app.register(healthRoute, { prefix: '/api' })
 await app.register(opportunityRoute, { prefix: '/api' })
 await app.register(resumeRoute, { prefix: '/api' })
-await app.register(agentRunRoute, { prefix: '/api' })
-await app.register(chatRunDebugRoute, { prefix: '/api' })
+if (developerToolsEnabled) {
+  await app.register(agentRunRoute, { prefix: '/api' })
+  await app.register(chatRunDebugRoute, { prefix: '/api' })
+}
 await app.register(interviewRoute, { prefix: '/api' })
 await app.register(backgroundTaskRoute, { prefix: '/api' })
 await app.register(dashboardRoute, { prefix: '/api' })
 await app.register(capabilityProfileRoute, { prefix: '/api' })
 await app.register(actionStrategyRoute, { prefix: '/api' })
 await app.register(chatRoute, { prefix: '/api' })
+await app.register(feedbackRoute, { prefix: '/api' })

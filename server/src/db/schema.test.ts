@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getTableConfig } from 'drizzle-orm/pg-core'
+import { is } from 'drizzle-orm'
+import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
+import { createFeedbackInputSchema } from '@/shared/feedback/schemas'
+import * as applicationSchema from './schema'
 import {
   agentRuns,
   chatArtifacts,
@@ -14,6 +17,7 @@ import {
   chatToolActions,
   interviewSessions,
   jobOpportunities,
+  userFeedback,
 } from './schema'
 
 type TableConfig = ReturnType<typeof getTableConfig>
@@ -25,6 +29,18 @@ function columnNames(config: TableConfig) {
 function hasIndex(config: TableConfig, name: string) {
   return config.indexes.some((index) => index.config.name === name)
 }
+
+test('所有应用业务表都启用 RLS，禁止 Supabase 浏览器密钥绕过后端直连数据', () => {
+  const configs = Object.values(applicationSchema).flatMap((value) =>
+    is(value, PgTable) ? [getTableConfig(value)] : [],
+  )
+
+  assert.ok(configs.length > 0)
+  assert.deepEqual(
+    configs.filter((config) => !config.enableRLS).map((config) => config.name),
+    [],
+  )
+})
 
 test('聊天第一版包含会话、消息、Run、事件、工具、Command 和产物七个持久化边界', () => {
   const configs = [
@@ -131,4 +147,15 @@ test('机会软删除和模拟面试归档字段及索引被声明', () => {
   assert.ok(columnNames(sessionConfig).includes('archived_at'))
   assert.ok(hasIndex(sessionConfig, 'interview_sessions_archived_at_index'))
   assert.ok(hasIndex(opportunityConfig, 'job_opportunities_user_dedupe_fingerprint_unique'))
+})
+
+test('用户反馈按用户保存，并限制反馈类型和正文边界', () => {
+  const config = getTableConfig(userFeedback)
+
+  assert.equal(config.name, 'user_feedback')
+  assert.deepEqual(columnNames(config), ['id', 'user_id', 'type', 'content', 'created_at'])
+  assert.ok(hasIndex(config, 'user_feedback_user_id_created_at_index'))
+  assert.equal(createFeedbackInputSchema.safeParse({ type: 'bug', content: '机会列表无法打开' }).success, true)
+  assert.equal(createFeedbackInputSchema.safeParse({ type: 'other', content: '机会列表无法打开' }).success, false)
+  assert.equal(createFeedbackInputSchema.safeParse({ type: 'bug', content: '短' }).success, false)
 })

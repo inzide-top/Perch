@@ -15,11 +15,12 @@ import { useOpportunityStore, useSettingsStore } from '@/stores'
 import { ApiRequestError } from '@/services/http'
 import { getRecommendationClass, getRecommendationLabel } from '@/shared/opportunity/analysisPresentation'
 import { getHighestReachedStatusIndex } from '@/shared/opportunity/reviewAvailability'
-import { formatDateOnly, toDateTimeLocalInput, toIsoDateTime } from '@/shared/formatDate'
+import { toDateTimeLocalInput, toIsoDateTime } from '@/shared/formatDate'
 import DashboardSection from './components/DashboardSection.vue'
 import InfoManagementSection from './components/InfoManagementSection.vue'
 import OpportunityDetailSkeleton from './components/OpportunityDetailSkeleton.vue'
 import InterviewWorkspaceSection from './interview/components/InterviewWorkspaceSection.vue'
+import { clearOpportunityListFilters } from '../opportunity-list-navigation-state'
 import type {
   InterviewManagementTab,
   InterviewRoundForm,
@@ -112,8 +113,6 @@ const interviewManagementTab = ref<InterviewManagementTab>('schedule')
 const isWrittenTestReviewDrawerOpen = ref(false)
 const isRoundEditDrawerOpen = ref(false)
 const editingRoundInitialValue = ref<InterviewRoundForm | null>(null)
-const writtenTestDatePopoverOpen = ref(false)
-const writtenTestCalendarDate = ref<unknown>()
 const terminationTarget = ref<'none' | 'new' | string>('none')
 const terminationNewRoundType = ref<InterviewRoundType>('technical_basic')
 const terminationNewRoundTitle = ref('')
@@ -147,6 +146,11 @@ const userVisibleLoadError = computed(() => {
 })
 const hasLoadedOpportunityDetail = computed(() => {
   return Boolean(opportunityId.value) && opportunityStore.hasOpportunityDetail(opportunityId.value)
+})
+const opportunityFormHydrationKey = computed(() => {
+  if (!opportunity.value || !hasLoadedOpportunityDetail.value) return ''
+
+  return opportunity.value.id
 })
 const shouldShowDetailSkeleton = computed(
   () => !hasLoadedOpportunityDetail.value && (isDetailBootstrapping.value || isDetailLoading.value),
@@ -264,9 +268,6 @@ const canChangeWrittenTestFlow = computed(() => {
 
   return status !== 'interviewing' && status !== 'oc' && status !== 'offered' && status !== 'closed'
 })
-const writtenTestDateLabel = computed(() => {
-  return formatDateOnly(writtenTestReviewForm.scheduledAt) || '请输入笔试时间'
-})
 const interviewRounds = computed(() => opportunity.value?.interviewRounds ?? [])
 const editingInterviewRound = computed(
   () => interviewRounds.value.find((round) => round.id === editingRoundId.value) ?? null,
@@ -302,7 +303,7 @@ function syncInfoForm() {
   })
 
   Object.assign(writtenTestReviewForm, {
-    scheduledAt: opportunity.value.writtenTestReview?.scheduledAt ?? '',
+    scheduledAt: toDateTimeLocalInput(opportunity.value.writtenTestReview?.scheduledAt),
     reviewNote: opportunity.value.writtenTestReview?.reviewNote ?? '',
   })
 }
@@ -645,13 +646,6 @@ async function cancelInterviewRound(round: InterviewRound) {
   }
 }
 
-function handleWrittenTestDateSelect(value: unknown) {
-  if (!value) return
-
-  writtenTestReviewForm.scheduledAt = String(value)
-  writtenTestDatePopoverOpen.value = false
-}
-
 function openInterviewReviewDrawer() {
   if (!canOpenInterviewReview.value) return
 
@@ -683,7 +677,7 @@ async function saveWrittenTestReview() {
   isSavingWrittenTestReview.value = true
   try {
     await opportunityStore.updateWrittenTestReview(opportunity.value.id, {
-      scheduledAt: writtenTestReviewForm.scheduledAt,
+      scheduledAt: toIsoDateTime(writtenTestReviewForm.scheduledAt),
       reviewNote: writtenTestReviewForm.reviewNote,
       modelConnection: getConfiguredReviewModelConnection(),
     })
@@ -848,17 +842,44 @@ function openReviewPanelFromStatus(status: JobOpportunityStatus) {
   openInterviewReviewDrawer()
 }
 
-onBeforeRouteLeave(() => {
-  if (!shouldConfirmUnsavedPreferenceLeave()) return true
+onBeforeRouteLeave((to) => {
+  const shouldClearListFilters = to.name !== 'opportunities'
+  if (!shouldConfirmUnsavedPreferenceLeave()) {
+    if (shouldClearListFilters) clearOpportunityListFilters()
+    return true
+  }
 
   return new Promise<boolean>((resolve) => {
     pendingInternalLeaveAction = null
-    pendingRouteLeaveResolver = resolve
+    pendingRouteLeaveResolver = (shouldLeave) => {
+      if (shouldLeave && shouldClearListFilters) clearOpportunityListFilters()
+      resolve(shouldLeave)
+    }
     isUnsavedPreferenceLeaveDialogOpen.value = true
   })
 })
 
-watch(opportunity, syncInfoForm, { immediate: true })
+watch(
+  opportunityFormHydrationKey,
+  (hydrationKey) => {
+    if (hydrationKey) syncInfoForm()
+  },
+  { immediate: true },
+)
+watch(
+  () => opportunity.value?.status,
+  (status) => {
+    if (status) infoForm.status = status
+  },
+  { immediate: true },
+)
+watch(
+  () => opportunity.value?.includeWrittenTest,
+  (includeWrittenTest) => {
+    if (includeWrittenTest !== undefined) infoForm.includeWrittenTest = includeWrittenTest
+  },
+  { immediate: true },
+)
 watch(
   () => infoForm.status,
   () => {
@@ -990,8 +1011,6 @@ onBeforeUnmount(() => {
           v-model:termination-new-round-title="terminationNewRoundTitle"
           v-model:termination-reason-note="terminationReasonNote"
           v-model:is-written-test-review-drawer-open="isWrittenTestReviewDrawerOpen"
-          v-model:written-test-date-popover-open="writtenTestDatePopoverOpen"
-          v-model:written-test-calendar-date="writtenTestCalendarDate"
           v-model:is-interview-review-drawer-open="isInterviewReviewDrawerOpen"
           v-model:interview-management-tab="interviewManagementTab"
           v-model:deleting-round-id="deletingRoundId"
@@ -1028,7 +1047,6 @@ onBeforeUnmount(() => {
           :can-create-interview-schedule="canCreateInterviewSchedule"
           :termination-round-options="terminationRoundOptions"
           :available-interview-round-type-options="availableInterviewRoundTypeOptions"
-          :written-test-date-label="writtenTestDateLabel"
           :review-documents="reviewDocuments"
           :retrying-review-document-id="retryingReviewDocumentId"
           :editing-interview-round="editingInterviewRound"
@@ -1054,7 +1072,6 @@ onBeforeUnmount(() => {
           @open-round-edit-drawer="openRoundEditDrawer"
           @confirm-delete-round="confirmDeleteRound"
           @close-round-edit-drawer="closeRoundEditDrawer"
-          @handle-written-test-date-select="handleWrittenTestDateSelect"
           @save-round-edit="saveRoundEdit"
           @retry-review-document="retryReviewDocument"
         />

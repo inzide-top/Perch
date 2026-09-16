@@ -55,7 +55,6 @@ const props = defineProps<{
   canCreateInterviewSchedule: boolean
   terminationRoundOptions: { label: string; value: string }[]
   availableInterviewRoundTypeOptions: { label: string; value: InterviewRoundType }[]
-  writtenTestDateLabel: string
   reviewDocuments: ReviewDocumentSummary[]
   retryingReviewDocumentId: string | null
   editingInterviewRound: InterviewRound | null
@@ -80,7 +79,6 @@ const emit = defineEmits<{
   openRoundEditDrawer: [round: InterviewRound]
   confirmDeleteRound: [roundId: string]
   closeRoundEditDrawer: []
-  handleWrittenTestDateSelect: [value: unknown]
   saveRoundEdit: []
   retryReviewDocument: [document: ReviewDocumentSummary]
 }>()
@@ -94,8 +92,6 @@ const terminationNewRoundTitle = defineModel<string>('terminationNewRoundTitle',
 const terminationReasonNote = defineModel<string>('terminationReasonNote', { required: true })
 const isWrittenTestReviewDrawerOpen = defineModel<boolean>('isWrittenTestReviewDrawerOpen', { required: true })
 const writtenTestReviewForm = defineModel<WrittenTestReviewForm>('writtenTestReviewForm', { required: true })
-const writtenTestDatePopoverOpen = defineModel<boolean>('writtenTestDatePopoverOpen', { required: true })
-const writtenTestCalendarDate = defineModel<unknown>('writtenTestCalendarDate', { required: true })
 const isInterviewReviewDrawerOpen = defineModel<boolean>('isInterviewReviewDrawerOpen', { required: true })
 const interviewManagementTab = defineModel<InterviewManagementTab>('interviewManagementTab', { required: true })
 const roundForm = defineModel<InterviewRoundForm>('roundForm', { required: true })
@@ -572,19 +568,15 @@ function getReviewStatusCtaLabel(status: JobOpportunityStatus) {
     </div>
 
     <WrittenTestReviewDrawer
-      v-model:date-popover-open="writtenTestDatePopoverOpen"
-      v-model:calendar-date="writtenTestCalendarDate"
       :form="writtenTestReviewForm"
       :open="isWrittenTestReviewDrawerOpen"
       :saving="isSavingWrittenTestReview"
-      :date-label="writtenTestDateLabel"
       :review-document="reviewDocuments.find((document) => document.sourceType === 'written_test') ?? null"
       :retrying-document-id="retryingReviewDocumentId"
       @update:form="Object.assign(writtenTestReviewForm, $event)"
       @close="emit('closeWrittenTestReviewDrawer')"
       @save="emit('saveWrittenTestReview')"
       @retry="emit('retryReviewDocument', $event)"
-      @select-date="emit('handleWrittenTestDateSelect', $event)"
     />
 
     <InterviewReviewDrawer

@@ -10,7 +10,7 @@ import {
 } from '@/services/opportunities'
 import type { LlmConnectionSettings } from '@/types/settings'
 import type { ChatOpportunityImportResultPart } from '@/shared/chat/schemas'
-import { defaultMockJobDraft, type MockJobDraft } from '../mocks/jobDraft'
+import type { MockJobDraft } from '../mocks/jobDraft'
 
 type JobFormField = 'company' | 'jobTitle' | 'description'
 type ImportMode = 'url' | 'text'
@@ -54,10 +54,6 @@ const emit = defineEmits<{
   submitBatch: [request: BatchCreateRequest]
 }>()
 
-const mockJobDraftStorageKey = 'agent-seek-employment:mock-job-draft:v2'
-let mockSavedTimer: number | null = null
-
-const mockSavedMessage = ref('')
 const importMode = ref<ImportMode>('url')
 const importUrl = ref('')
 const importText = ref('')
@@ -108,13 +104,6 @@ const requiredFieldLabels: Record<ImportedOpportunityRequiredField, string> = {
   description: '任职要求 / 加分项',
 }
 
-function normalizeCityList(cities: string[] | string | undefined) {
-  if (Array.isArray(cities)) return cities
-  if (typeof cities === 'string' && cities.trim()) return [cities.trim()]
-
-  return []
-}
-
 function resetForm() {
   importAbortController?.abort()
   importAbortController = null
@@ -138,30 +127,6 @@ function clearAllErrors() {
   errors.company = ''
   errors.jobTitle = ''
   errors.description = ''
-}
-
-function readMockJobDraft(): MockJobDraft {
-  const storedDraft = localStorage.getItem(mockJobDraftStorageKey)
-  if (!storedDraft) return defaultMockJobDraft
-
-  try {
-    const parsedDraft = JSON.parse(storedDraft) as MockJobDraft & { address?: string[] | string }
-
-    return {
-      ...defaultMockJobDraft,
-      ...parsedDraft,
-      address: normalizeCityList(parsedDraft.address),
-    }
-  } catch {
-    return defaultMockJobDraft
-  }
-}
-
-function importMockJobDraft() {
-  batchItems.value = []
-  activeBatchItemId.value = ''
-  Object.assign(form, readMockJobDraft())
-  clearAllErrors()
 }
 
 function validateImportUrl(value: string) {
@@ -533,26 +498,6 @@ function validateForm() {
 function clearError(field: JobFormField) {
   errors[field] = ''
   if (activeBatchItem.value) activeBatchItem.value.creationError = ''
-}
-
-function setCurrentJobDraftAsMockData() {
-  if (!validateForm()) return
-
-  const draft: MockJobDraft = {
-    company: editableForm.value.company.trim(),
-    jobTitle: editableForm.value.jobTitle.trim(),
-    address: [...editableForm.value.address],
-    introduction: editableForm.value.introduction.trim(),
-    description: editableForm.value.description.trim(),
-  }
-  localStorage.setItem(mockJobDraftStorageKey, JSON.stringify(draft))
-  mockSavedMessage.value = '已设为本地 mock 数据'
-
-  if (mockSavedTimer) window.clearTimeout(mockSavedTimer)
-  mockSavedTimer = window.setTimeout(() => {
-    mockSavedMessage.value = ''
-    mockSavedTimer = null
-  }, 2500)
 }
 
 function close() {
@@ -1024,31 +969,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-default px-6 py-4">
-          <div v-if="batchItems.length === 0" class="flex items-center gap-2">
-            <UButton
-              type="button"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-file-input"
-              :disabled="loading || isImporting"
-              @click="importMockJobDraft"
-            >
-              导入 mock 数据
-            </UButton>
-            <UButton
-              type="button"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-save"
-              :disabled="loading || isImporting"
-              @click="setCurrentJobDraftAsMockData"
-            >
-              设为 mock 数据
-            </UButton>
-            <span v-if="mockSavedMessage" class="text-xs text-muted">{{ mockSavedMessage }}</span>
-          </div>
-
+        <footer class="flex flex-wrap items-center justify-end gap-3 border-t border-default px-6 py-4">
           <div class="flex justify-end gap-2">
             <UButton type="button" color="neutral" variant="ghost" :disabled="loading" @click="close">取消</UButton>
             <UButton
