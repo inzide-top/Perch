@@ -1,3 +1,6 @@
+import { appAuthMode } from './auth/auth-mode'
+import { getAuthAccessToken, invalidateAuthSession, refreshAuthAccessToken } from './auth/supabase-client'
+
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8787/api'
 
 export function toApiUrl(path: string) {
@@ -18,7 +21,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function coreRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function fetchWithAuthentication(path: string, options: RequestInit, allowRefresh: boolean): Promise<Response> {
   const headers = new Headers(options.headers)
 
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
@@ -26,10 +29,30 @@ async function coreRequest<T>(path: string, options: RequestInit = {}): Promise<
     headers.set('content-type', 'application/json')
   }
 
+  const accessToken = await getAuthAccessToken()
+  if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
+
   const response = await fetch(toApiUrl(path), {
     ...options,
     headers,
   })
+
+  if (response.status !== 401 || appAuthMode !== 'supabase' || !allowRefresh) return response
+
+  const refreshedToken = await refreshAuthAccessToken()
+  if (!refreshedToken) return response
+
+  headers.set('authorization', `Bearer ${refreshedToken}`)
+  const retriedResponse = await fetch(toApiUrl(path), {
+    ...options,
+    headers,
+  })
+  if (retriedResponse.status === 401) await invalidateAuthSession()
+  return retriedResponse
+}
+
+async function coreRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetchWithAuthentication(path, options, true)
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => null)) as { message?: string } | null

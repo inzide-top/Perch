@@ -159,10 +159,14 @@ export function createGlobalTerminateOpportunityTool(
     requiresConfirmation: false,
     prepareInput: async (input, providedValue, context) => {
       const partial = globalTerminationPartialInputSchema.parse(input)
+      const findTerminableOpportunitiesByUserId: FindOpportunitiesByUserId = async (targetUserId) => {
+        const opportunities = await findOpportunitiesByUserId(targetUserId)
+        return opportunities.filter((opportunity) => opportunity.status !== 'closed')
+      }
       const resolution = await resolveGlobalOpportunityTarget({
         partialInput: partial,
         providedValue,
-        findOpportunitiesByUserId,
+        findOpportunitiesByUserId: findTerminableOpportunitiesByUserId,
         userId,
         signal: context.signal,
         title: '选择要终止的机会',

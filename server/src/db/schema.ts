@@ -17,6 +17,7 @@ import type { ResumeContent, VersionDiffItem } from '@/types/resume'
 import type { ResumePdfImportResponse, ResumePdfImportTaskStatus } from '@/shared/resume/pdf-import'
 import type { ReviewDocumentKind, ReviewDocumentResult, ReviewDocumentStatus } from '@/types/review'
 import type { ActionStrategyAiSummary, ActionStrategySnapshotStatus } from '@/types/action-strategy'
+import type { FeedbackType } from '@/shared/feedback/schemas'
 import type {
   AgentRunError,
   AgentRunStatus,
@@ -75,6 +76,18 @@ import type {
 } from '@/shared/chat/schemas'
 import { RETRIEVAL_EMBEDDING_DIMENSIONS } from '../../../src/shared/retrieval/constants'
 
+export const userFeedback = pgTable(
+  'user_feedback',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    type: text('type').$type<FeedbackType>().notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [index('user_feedback_user_id_created_at_index').on(table.userId, table.createdAt)],
+).enableRLS()
+
 export const resumes = pgTable('resumes', {
   id: uuid('id').primaryKey(),
   userId: text('user_id').notNull(),
@@ -82,7 +95,7 @@ export const resumes = pgTable('resumes', {
   currentVersionId: uuid('current_version_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
-})
+}).enableRLS()
 
 export const resumeVersions = pgTable(
   'resume_versions',
@@ -100,7 +113,7 @@ export const resumeVersions = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [uniqueIndex('resume_versions_resume_id_version_number_unique').on(table.resumeId, table.versionNumber)],
-)
+).enableRLS()
 
 /** PDF 文本提取后异步结构化；结果独立于正式简历，必须经用户审核才会进入版本链。 */
 export const resumePdfImportTasks = pgTable(
@@ -122,7 +135,7 @@ export const resumePdfImportTasks = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [index('resume_pdf_import_tasks_user_id_updated_at_index').on(table.userId, table.updatedAt)],
-)
+).enableRLS()
 
 /** 一条岗位机会，同时保存 JD 原文和当前求职流程状态。 */
 export const jobOpportunities = pgTable(
@@ -156,7 +169,7 @@ export const jobOpportunities = pgTable(
       .on(table.userId, table.dedupeFingerprint)
       .where(sql`${table.deletedAt} IS NULL`),
   ],
-)
+).enableRLS()
 
 /** 每一次状态变更都保留，供流程回放和后续求职分析使用。 */
 export const opportunityStatusHistory = pgTable(
@@ -173,7 +186,7 @@ export const opportunityStatusHistory = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [index('opportunity_status_history_opportunity_id_index').on(table.opportunityId)],
-)
+).enableRLS()
 
 /** 一条机会可有任意多轮面试；sequence 决定一面、二面、三面的业务顺序。 */
 export const interviewRounds = pgTable(
@@ -199,7 +212,7 @@ export const interviewRounds = pgTable(
     uniqueIndex('interview_rounds_opportunity_id_sequence_unique').on(table.opportunityId, table.sequence),
     index('interview_rounds_opportunity_id_index').on(table.opportunityId),
   ],
-)
+).enableRLS()
 
 /**
  * 一份用户录入的真实笔试/面试复盘原文及其当前结构化提取结果。
@@ -243,7 +256,7 @@ export const reviewDocuments = pgTable(
     index('review_documents_opportunity_id_index').on(table.opportunityId),
     index('review_documents_status_index').on(table.status),
   ],
-)
+).enableRLS()
 
 /** 一条机会最多关闭一次；相关轮次只作可选关联，并保留标题快照。 */
 export const opportunityTerminations = pgTable(
@@ -263,7 +276,7 @@ export const opportunityTerminations = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [uniqueIndex('opportunity_terminations_opportunity_id_unique').on(table.opportunityId)],
-)
+).enableRLS()
 
 /** 一条机会只维护一份当前有效分析；每次模型执行记录在后续的 agent_runs 表。 */
 export const jobAnalyses = pgTable(
@@ -300,7 +313,7 @@ export const jobAnalyses = pgTable(
       .on(table.inputFingerprint)
       .where(sql`"source_analysis_id" IS NULL AND "status" IN ('pending', 'processing')`),
   ],
-)
+).enableRLS()
 
 /**
  * JD 分析中优势/待补强项的语义索引。原始结论仍保存在 job_analyses.result；
@@ -334,7 +347,7 @@ export const capabilityJdSignalEmbeddings = pgTable(
     index('capability_jd_signal_embeddings_analysis_id_index').on(table.analysisId),
     index('capability_jd_signal_embeddings_model_index').on(table.embeddingModel),
   ],
-)
+).enableRLS()
 
 /**
  * 求职策略的 AI 文案快照。规则行动不依赖这张表，AI 失败时仍可展示规则结果。
@@ -364,7 +377,7 @@ export const actionStrategySnapshots = pgTable(
       .on(table.userId)
       .where(sql`"status" IN ('pending', 'processing')`),
   ],
-)
+).enableRLS()
 
 /** 全局或机会内的一组 AI 对话；Scope 只决定上下文边界，不复制机会正文。 */
 export const chatConversations = pgTable(
@@ -388,7 +401,7 @@ export const chatConversations = pgTable(
     index('chat_conversations_user_id_updated_at_index').on(table.userId, table.updatedAt),
     index('chat_conversations_opportunity_id_index').on(table.opportunityId),
   ],
-)
+).enableRLS()
 
 /**
  * 当前会话较早消息的增量摘要。原始消息仍完整保留在 chat_messages；
@@ -414,7 +427,7 @@ export const chatConversationSummaries = pgTable(
       sql`${table.summarizedThroughSequence} > 0 AND ${table.revision} > 0`,
     ),
   ],
-)
+).enableRLS()
 
 /** 对话展示消息只保存有界 Parts；工具输入和执行结果分别保存在 chat_tool_actions。 */
 export const chatMessages = pgTable(
@@ -442,7 +455,7 @@ export const chatMessages = pgTable(
     index('chat_messages_chat_run_id_index').on(table.chatRunId),
     index('chat_messages_replaces_message_id_index').on(table.replacesMessageId),
   ],
-)
+).enableRLS()
 
 /** 一次用户请求触发的完整 Agent 工作流；内部每次模型调用仍单独写入 agent_runs。 */
 export const chatRuns = pgTable(
@@ -489,7 +502,7 @@ export const chatRuns = pgTable(
     index('chat_runs_input_message_id_index').on(table.inputMessageId),
     index('chat_runs_retry_of_run_id_index').on(table.retryOfRunId),
   ],
-)
+).enableRLS()
 
 /** 可断点续接的产品事件；sequence 是单个 ChatRun 内唯一的事件顺序。 */
 export const chatRunEvents = pgTable(
@@ -509,7 +522,7 @@ export const chatRunEvents = pgTable(
     uniqueIndex('chat_run_events_run_id_sequence_unique').on(table.runId, table.sequence),
     index('chat_run_events_run_id_index').on(table.runId),
   ],
-)
+).enableRLS()
 
 /** 每一次工具调用及其确认/幂等信息；工具结果不混入消息正文。 */
 export const chatToolActions = pgTable(
@@ -538,7 +551,7 @@ export const chatToolActions = pgTable(
     uniqueIndex('chat_tool_actions_run_id_idempotency_unique').on(table.runId, table.idempotencyKey),
     index('chat_tool_actions_run_id_status_index').on(table.runId, table.status),
   ],
-)
+).enableRLS()
 
 /** 前端 Command 的幂等收据；expectedRevision 防止旧页面覆盖当前 Agent 状态。 */
 export const chatCommands = pgTable(
@@ -565,7 +578,7 @@ export const chatCommands = pgTable(
     index('chat_commands_conversation_id_created_at_index').on(table.conversationId, table.createdAt),
     index('chat_commands_run_id_index').on(table.runId),
   ],
-)
+).enableRLS()
 
 /** 对话中可下载或继续编辑的 Markdown 产物；第一版不做二进制附件。 */
 export const chatArtifacts = pgTable(
@@ -594,7 +607,7 @@ export const chatArtifacts = pgTable(
     index('chat_artifacts_run_id_index').on(table.runId),
     index('chat_artifacts_message_id_index').on(table.messageId),
   ],
-)
+).enableRLS()
 
 /**
  * 已完成 ChatRun 的可检索文本分块。只保存完整 Embedding，避免留下无法参与检索的半成品记录。
@@ -633,7 +646,7 @@ export const chatMemoryDocuments = pgTable(
     index('chat_memory_documents_opportunity_ids_index').using('gin', table.opportunityIds),
     index('chat_memory_documents_embedding_hnsw_index').using('hnsw', table.embedding.op('vector_cosine_ops')),
   ],
-)
+).enableRLS()
 
 export const agentRuns = pgTable(
   'agent_runs',
@@ -680,7 +693,7 @@ export const agentRuns = pgTable(
     index('agent_runs_resume_pdf_import_task_id_index').on(table.resumePdfImportTaskId),
     index('agent_runs_action_strategy_snapshot_id_index').on(table.actionStrategySnapshotId),
   ],
-)
+).enableRLS()
 
 /** 一次模拟面试固定绑定创建时的 JD 分析、简历版本、模型和 Prompt 快照。 */
 export const interviewSessions = pgTable(
@@ -725,7 +738,7 @@ export const interviewSessions = pgTable(
     index('interview_sessions_updated_at_index').on(table.updatedAt),
     index('interview_sessions_archived_at_index').on(table.archivedAt),
   ],
-)
+).enableRLS()
 
 /** Turn 是一组问题与最终回答的唯一定位单位；追问通过 root/parent 关系形成主题树。 */
 export const interviewTurns = pgTable(
@@ -764,7 +777,7 @@ export const interviewTurns = pgTable(
     index('interview_turns_session_id_index').on(table.sessionId),
     index('interview_turns_root_turn_id_index').on(table.rootTurnId),
   ],
-)
+).enableRLS()
 
 /** 澄清请求、澄清回复和跑题引导属于当前 Turn 的附属消息，不会创建新的评分单元。 */
 export const interviewTurnInteractions = pgTable(
@@ -790,7 +803,7 @@ export const interviewTurnInteractions = pgTable(
     uniqueIndex('interview_turn_interactions_client_message_id_unique').on(table.clientMessageId),
     index('interview_turn_interactions_turn_id_index').on(table.turnId),
   ],
-)
+).enableRLS()
 
 /** 当前总体评分只维护一份快照；TopicEvaluation 作为有界 JSON 随快照一起更新。 */
 export const interviewSessionEvaluations = pgTable(
@@ -809,7 +822,7 @@ export const interviewSessionEvaluations = pgTable(
     finalizedAt: timestamp('finalized_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [uniqueIndex('interview_session_evaluations_session_id_unique').on(table.sessionId)],
-)
+).enableRLS()
 
 /** 深度点评按回答按需生成，独立于总体评分，避免未请求的点评扩大总体上下文。 */
 export const answerDeepEvaluations = pgTable(
@@ -830,7 +843,7 @@ export const answerDeepEvaluations = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [uniqueIndex('answer_deep_evaluations_turn_id_unique').on(table.turnId)],
-)
+).enableRLS()
 
 /** 轻反馈可撤销；一旦提交明确原因或备注，lockedAt 固化该反馈。 */
 export const interviewQuestionFeedback = pgTable(
@@ -848,4 +861,4 @@ export const interviewQuestionFeedback = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
   },
   (table) => [uniqueIndex('interview_question_feedback_turn_id_unique').on(table.turnId)],
-)
+).enableRLS()

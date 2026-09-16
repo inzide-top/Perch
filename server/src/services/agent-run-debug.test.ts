@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+process.env.DATABASE_URL ??= 'postgresql://test:test@127.0.0.1:5432/test'
+
 import type { AgentRunDebugEntry } from './agent-run-debug'
 import { toAgentRunDebugItem } from './agent-run-debug'
+import { runWithCurrentUser } from '../context/current-user'
+
+const { AgentRunNotFoundError, getAgentRunDebugDetail, getAgentRunDebugList } = await import('./agent-run.service')
 
 function createEntry(overrides: Partial<AgentRunDebugEntry> = {}): AgentRunDebugEntry {
   return {
@@ -102,4 +107,45 @@ test('PDF 简历识别调试记录保留任务和文件上下文', () => {
   assert.equal(item.resumePdfImportTaskId, '00000000-0000-4000-8000-000000000006')
   assert.equal(item.resumePdfFileName, '张晨-前端工程师.pdf')
   assert.equal(item.resumePdfImportStatus, 'processing')
+})
+
+test('Agent Run 列表把当前认证用户传入持久层', async () => {
+  let capturedUserId: string | null = null
+
+  await runWithCurrentUser({ userId: 'user-a', email: 'a@example.com', authMode: 'supabase' }, async () => {
+    const result = await getAgentRunDebugList(
+      { limit: 20 },
+      {
+        async findDebugList(filters) {
+          capturedUserId = filters.userId
+          return []
+        },
+      },
+    )
+
+    assert.deepEqual(result, [])
+  })
+
+  assert.equal(capturedUserId, 'user-a')
+})
+
+test('Agent Run 详情只按当前认证用户读取，不暴露其他用户记录', async () => {
+  let capturedLookup: { runId: string; userId: string } | null = null
+
+  await assert.rejects(
+    runWithCurrentUser({ userId: 'user-b', email: 'b@example.com', authMode: 'supabase' }, () =>
+      getAgentRunDebugDetail('00000000-0000-4000-8000-000000000009', {
+        async findDebugById(runId, userId) {
+          capturedLookup = { runId, userId }
+          return null
+        },
+      }),
+    ),
+    AgentRunNotFoundError,
+  )
+
+  assert.deepEqual(capturedLookup, {
+    runId: '00000000-0000-4000-8000-000000000009',
+    userId: 'user-b',
+  })
 })
