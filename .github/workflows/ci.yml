@@ -42,6 +42,9 @@ jobs:
       - name: Run core tests
         run: pnpm test:core
 
+      - name: Verify model configuration encryption
+        run: pnpm exec tsx --tsconfig server/tsconfig.json --test server/src/services/model-settings-crypto.test.ts server/src/routes/model-settings.route.test.ts
+
       - name: Check Drizzle migrations
         run: pnpm exec drizzle-kit check
 

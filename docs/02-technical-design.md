@@ -141,7 +141,7 @@ Resume 1 ─── N ResumeVersion
 
 ## 7. 本地模型配置与安全边界
 
-当前为了便于本地测试，模型 URL、模型名与 API Key 保存在浏览器本地设置中，发起分析时临时传给本地 API；后端不会把 API Key、完整连接配置写入数据库或 AgentRun。
+模型 URL、模型名与 API Key 通过认证接口按账号保存到 `user_model_settings`，完整配置以 AES-256-GCM 加密存储。浏览器缓存用于当前会话，退出登录清理缓存、保留云端配置；API Key 不写入 AgentRun。部署方式见 [账号模型配置](./model-settings-deployment.md)。
 
 这不是生产级密钥方案。上线多用户版本前必须替换为：登录用户 → 服务端加密保存配置或服务端统一 Provider → 按用户授权调用。任何 README、演示或部署文档都必须明确这一点。
 

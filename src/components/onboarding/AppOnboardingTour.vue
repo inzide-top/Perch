@@ -52,7 +52,7 @@ const tourSteps: readonly TourStep[] = [
     path: '/settings',
     marker: 'settings-api-key',
     title: '第四步：输入 API Key',
-    description: '填写 API Key。它只会保存在当前浏览器，并在发起 AI 请求时临时使用。',
+    description: '填写 API Key。保存后会按账号加密存储，重新登录后可以继续使用。',
   },
   {
     path: '/settings',
