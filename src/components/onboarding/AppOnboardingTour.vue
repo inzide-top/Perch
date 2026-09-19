@@ -91,9 +91,15 @@ const isRunning = ref(false)
 let tour: Driver | null = null
 let renderToken = 0
 let pendingNavigationPath: string | null = null
-let startTimer: number | null = null
 let resumeTimer: number | null = null
 let cancelPendingTargetWait: (() => void) | null = null
+let isMoving = false
+
+function preventTourEnter(event: KeyboardEvent) {
+  if (!isRunning.value || event.key !== 'Enter' || event.isComposing) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+}
 
 const currentUserId = () => authStore.user?.id ?? ''
 
@@ -187,6 +193,7 @@ const handleComplete = () => {
 }
 
 const handleNextClick: DriverHook = () => {
+  if (isMoving) return
   const index = activeStepIndex.value
   if (index === null) return
   if (index >= tourSteps.length - 1) {
@@ -198,6 +205,7 @@ const handleNextClick: DriverHook = () => {
 }
 
 const handlePrevClick: DriverHook = () => {
+  if (isMoving) return
   const index = activeStepIndex.value
   if (index === null || index <= 0) return
   void moveToStep(index - 1)
@@ -209,9 +217,10 @@ async function moveToStep(index: number) {
   if (!userId || !step) return
 
   const token = ++renderToken
+  isMoving = true
   activeStepIndex.value = index
   setProgress('in_progress', index)
-  destroyTour()
+  cancelPendingTargetWait?.()
 
   if (index === 1 && isMobileViewport()) {
     emit('open-mobile-navigation')
@@ -237,6 +246,9 @@ async function moveToStep(index: number) {
 
   const target = step.marker ? await waitForVisibleTarget(step.marker) : null
   if (token !== renderToken || !isRunning.value) return
+
+  destroyTour()
+  isMoving = false
 
   const driveStep: DriveStep = {
     popover: {
@@ -267,6 +279,7 @@ async function moveToStep(index: number) {
     animate: true,
     duration: 220,
     allowClose: true,
+    onDestroyStarted: () => stopTour('skipped'),
     allowScroll: true,
     overlayColor: '#0f172a',
     overlayOpacity: 0.68,
@@ -301,6 +314,12 @@ function startTour() {
   const step = Math.min(Math.max(storedStep, 0), tourSteps.length - 1)
   isRunning.value = true
   chatStore.setOpen(false)
+  // Warm route chunks while the user reads the first steps, without blocking navigation.
+  void Promise.allSettled([
+    import('@/pages/settings/index.vue'),
+    import('@/pages/resume/index.vue'),
+    import('@/pages/opportunity/index.vue'),
+  ])
   void moveToStep(step)
 }
 
@@ -345,16 +364,16 @@ watch(
 )
 
 onMounted(() => {
+  window.addEventListener('keydown', preventTourEnter, true)
+  window.addEventListener('keyup', preventTourEnter, true)
   prepareAssistantForTour()
-  startTimer = window.setTimeout(() => {
-    startTimer = null
-    startTour()
-  }, 300)
+  startTour()
 })
 
 onBeforeUnmount(() => {
   renderToken += 1
-  if (startTimer !== null) window.clearTimeout(startTimer)
+  window.removeEventListener('keydown', preventTourEnter, true)
+  window.removeEventListener('keyup', preventTourEnter, true)
   if (resumeTimer !== null) window.clearTimeout(resumeTimer)
   destroyTour()
 })

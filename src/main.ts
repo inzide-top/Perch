@@ -4,7 +4,7 @@ import { createPinia } from 'pinia'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
 import router from './router'
-import { useAuthStore, useOpportunityStore, useResumeStore } from './stores'
+import { useAuthStore } from './stores'
 import { developerToolsEnabled } from './services/developer-tools'
 
 const app = createApp(App)
@@ -13,8 +13,6 @@ const pinia = createPinia()
 app.use(pinia)
 
 const authStore = useAuthStore(pinia)
-const opportunityStore = useOpportunityStore(pinia)
-const resumeStore = useResumeStore(pinia)
 
 router.beforeEach(async (to) => {
   await authStore.initialize()
@@ -36,12 +34,6 @@ router.beforeEach(async (to) => {
   const isDeveloperPage = to.matched.some((item) => item.meta.developerPage)
   if (isDeveloperPage && !developerToolsEnabled) {
     return { name: 'settings' }
-  }
-
-  if (to.name === 'opportunities') {
-    await opportunityStore.loadOpportunities()
-  } else if (to.name === 'resumes') {
-    await resumeStore.loadFromApi()
   }
 
   return true
