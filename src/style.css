@@ -2128,9 +2128,16 @@ button[data-slot='base'][class*='bg-primary'] {
 }
 
 .perch-onboarding-popover .driver-popover-prev-btn {
-  border-color: var(--app-border-strong);
-  background: var(--app-surface-muted);
-  color: var(--app-text-muted);
+  border-color: color-mix(in srgb, var(--app-accent-strong) 48%, var(--app-border-strong));
+  background: color-mix(in srgb, var(--app-accent-strong) 22%, var(--app-surface-elevated));
+  color: var(--app-accent-deep);
+}
+
+.perch-onboarding-popover .driver-popover-prev-btn:hover,
+.perch-onboarding-popover .driver-popover-prev-btn:focus-visible {
+  border-color: var(--app-accent-deep);
+  background: color-mix(in srgb, var(--app-accent-strong) 32%, var(--app-surface-elevated));
+  color: var(--app-text);
 }
 
 :root.dark .perch-onboarding-popover .driver-popover-next-btn {

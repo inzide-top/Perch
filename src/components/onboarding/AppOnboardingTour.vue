@@ -247,6 +247,7 @@ async function moveToStep(index: number) {
       nextBtnText: index === tourSteps.length - 1 ? '完成' : index === 0 ? '开始引导' : '下一步',
       doneBtnText: '完成',
       prevBtnText: '上一步',
+      disableButtons: index === 0 ? ['previous'] : [],
       onNextClick: handleNextClick,
       onDoneClick: index === tourSteps.length - 1 ? handleComplete : undefined,
       onPrevClick: handlePrevClick,
