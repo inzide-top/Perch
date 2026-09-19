@@ -350,7 +350,7 @@ export const useOpportunityStore = defineStore('opportunity', {
       const abortController = new AbortController()
       opportunitiesLoadAbortController = abortController
 
-      const isInitialLoad = this.opportunities.length === 0
+      const isInitialLoad = this.opportunitiesLoadedAt === null && this.opportunities.length === 0
       if (isInitialLoad) this.isInitialLoading = true
       else this.isRefreshing = true
       this.loadError = null

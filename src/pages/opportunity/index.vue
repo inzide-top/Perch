@@ -117,8 +117,8 @@ const listFilters = computed(() => {
     regions: selectedRegion.value ? [selectedRegion.value] : [],
   }
 })
-const isListBootstrapping = ref(!opportunityStore.isOpportunityListFresh(listFilters.value))
-const showListSkeleton = computed(() => isListBootstrapping.value || isInitialLoading.value || isRefreshing.value)
+const isListBootstrapping = ref(opportunityStore.opportunitiesLoadedAt === null && !loadError.value)
+const showListSkeleton = computed(() => isListBootstrapping.value || isInitialLoading.value)
 const hasActiveListFilters = computed(() => {
   return Object.values(listFilters.value).some((values) => values.length > 0)
 })
