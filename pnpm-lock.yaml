@@ -32,6 +32,9 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      driver.js:
+        specifier: ^1.8.0
+        version: 1.8.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
@@ -75,6 +78,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.7.0(jiti@2.7.0))
+      '@iconify-json/lucide':
+        specifier: ^1.2.133
+        version: 1.2.133
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.3
@@ -892,6 +898,9 @@ packages:
   '@humanwhocodes/retry@0.4.3':
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==, tarball: https://registry.npmmirror.com/@humanwhocodes/retry/-/retry-0.4.3.tgz}
     engines: {node: '>=18.18'}
+
+  '@iconify-json/lucide@1.2.133':
+    resolution: {integrity: sha512-zBlWJFHgLI53EMoTXyvIpjZslL5+/voWXNnhxDK6M+VoveFIYxYDgLGJr4lnAkQOscKmRoUfdxqhMZI6VYF32g==, tarball: https://registry.npmmirror.com/@iconify-json/lucide/-/lucide-1.2.133.tgz}
 
   '@iconify/collections@1.0.713':
     resolution: {integrity: sha512-IRuFajJYQ/DfU+Dj5ZJwOXmP41UEjao7H77Kn398v6geqqaYGo0DqvatwChssN90Si9V5O/B824r6QHN2MojVQ==, tarball: https://registry.npmmirror.com/@iconify/collections/-/collections-1.0.713.tgz}
@@ -1885,6 +1894,9 @@ packages:
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==, tarball: https://registry.npmmirror.com/dotenv/-/dotenv-17.4.2.tgz}
     engines: {node: '>=12'}
+
+  driver.js@1.8.0:
+    resolution: {integrity: sha512-+8/IO7h1v14IzWh2GP60N7T3PFZweXwdn5e5POuxRSBoCYUojsBxzqawPeXh3YZIibRy7EehYNEyxe7slwwtdg==, tarball: https://registry.npmmirror.com/driver.js/-/driver.js-1.8.0.tgz}
 
   drizzle-kit@0.31.10:
     resolution: {integrity: sha512-7OZcmQUrdGI+DUNNsKBn1aW8qSoKuTH7d0mYgSP8bAzdFzKoovxEFnoGQp2dVs82EOJeYycqRtciopszwUf8bw==, tarball: https://registry.npmmirror.com/drizzle-kit/-/drizzle-kit-0.31.10.tgz}
@@ -3818,6 +3830,10 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
+  '@iconify-json/lucide@1.2.133':
+    dependencies:
+      '@iconify/types': 2.0.0
+
   '@iconify/collections@1.0.713':
     dependencies:
       '@iconify/types': 2.0.0
@@ -4953,6 +4969,8 @@ snapshots:
       '@types/trusted-types': 2.0.7
 
   dotenv@17.4.2: {}
+
+  driver.js@1.8.0: {}
 
   drizzle-kit@0.31.10:
     dependencies:

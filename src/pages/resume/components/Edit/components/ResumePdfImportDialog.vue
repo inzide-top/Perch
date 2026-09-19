@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
-import { ApiRequestError } from '@/services/http'
 import { resumeApi, type ResumePdfImportResponse } from '@/services/resumes'
 import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import { useBackgroundTaskStore, useResumePdfImportReviewStore, useSettingsStore } from '@/stores'
@@ -98,7 +98,7 @@ async function handleFileChange(event: Event) {
     if (error instanceof DOMException && error.name === 'AbortError') return
     toast.add({
       title: 'PDF 识别失败',
-      description: error instanceof ApiRequestError ? error.message : '暂时无法识别这份简历，请稍后重试。',
+      description: getUserErrorMessage(error, '暂时无法识别这份简历，请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -153,7 +153,7 @@ async function retryFailedImport() {
   } catch (error) {
     toast.add({
       title: '重新识别提交失败',
-      description: error instanceof ApiRequestError ? error.message : '暂时无法重新提交，请稍后再试。',
+      description: getUserErrorMessage(error, '暂时无法重新提交，请稍后再试。'),
       color: 'error',
     })
   } finally {

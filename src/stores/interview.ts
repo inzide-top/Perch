@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { defineStore } from 'pinia'
 import {
   createInterviewOverview,
@@ -511,8 +512,7 @@ export const useInterviewStore = defineStore('interview', {
         this.sessionSummariesByOpportunityId[opportunityId] = sessions
         this.refreshOverview(opportunityId)
       } catch (error) {
-        this.errorsByScope[getOpportunityScope(opportunityId)] =
-          error instanceof Error ? error.message : '加载模拟面试失败。'
+        this.errorsByScope[getOpportunityScope(opportunityId)] = getUserErrorMessage(error, '加载模拟面试失败。')
       } finally {
         removeId(this.loadingOpportunityIds, opportunityId)
       }
@@ -548,8 +548,7 @@ export const useInterviewStore = defineStore('interview', {
         })
         .catch((error) => {
           if (canApplyInterviewSessionResponse(requestGeneration, getSessionRequestGeneration(sessionId))) {
-            this.errorsByScope[getSessionScope(sessionId)] =
-              error instanceof Error ? error.message : '加载面试记录失败。'
+            this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '加载面试记录失败。')
           }
           return null
         })
@@ -579,7 +578,7 @@ export const useInterviewStore = defineStore('interview', {
         }
         return snapshot
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] = error instanceof Error ? error.message : '加载面试状态失败。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '加载面试状态失败。')
         return null
       }
     },
@@ -607,8 +606,7 @@ export const useInterviewStore = defineStore('interview', {
         this.upsertSession(updated)
         return true
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '切换本轮面试模型失败。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '切换本轮面试模型失败。')
         return false
       } finally {
         removeId(this.generatingSessionIds, sessionId)
@@ -704,8 +702,7 @@ export const useInterviewStore = defineStore('interview', {
         session.phase = 'awaiting_answer'
         session.answers = session.answers.filter((answer) => answer.id !== clientSubmissionId)
         answerAbortControllers.delete(sessionId)
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '提交回答失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '提交回答失败，请稍后重试。')
         return { type: 'rejected' as const }
       } finally {
         if (answerAbortControllers.get(sessionId) === abortController) answerAbortControllers.delete(sessionId)
@@ -793,8 +790,10 @@ export const useInterviewStore = defineStore('interview', {
               clientSubmissionId: pendingAnswer.clientSubmissionId,
             })
           }
-          this.errorsByScope[getSessionScope(sessionId)] =
-            error instanceof Error ? error.message : '中止回答失败，已恢复服务端状态。'
+          this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(
+            error,
+            '中止回答失败，已恢复服务端状态。',
+          )
         })
         .finally(() => {
           removeId(this.cancellingAnswerSessionIds, sessionId)
@@ -844,8 +843,7 @@ export const useInterviewStore = defineStore('interview', {
         this.refreshOverview(updated.opportunityId)
         return true
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '跳过问题失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '跳过问题失败，请稍后重试。')
         return false
       } finally {
         removeId(this.skippingSessionIds, sessionId)
@@ -908,8 +906,7 @@ export const useInterviewStore = defineStore('interview', {
 
         answer.deepReviewStatus = 'failed'
         answer.deepReviewError = null
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '深度点评生成失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '深度点评生成失败，请稍后重试。')
         return { status: 'failed' as const }
       } finally {
         backgroundTaskStore.releaseReservation(taskReference)
@@ -938,8 +935,7 @@ export const useInterviewStore = defineStore('interview', {
           })
         }
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '加载深度点评失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '加载深度点评失败，请稍后重试。')
       } finally {
         removeId(this.reviewingAnswerIds, answerId)
       }
@@ -982,8 +978,7 @@ export const useInterviewStore = defineStore('interview', {
         this.upsertSession(updated)
         this.refreshOverview(updated.opportunityId)
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '结束模拟面试失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '结束模拟面试失败，请稍后重试。')
       } finally {
         removeId(this.generatingSessionIds, sessionId)
       }
@@ -1012,8 +1007,7 @@ export const useInterviewStore = defineStore('interview', {
         this.upsertSession(updated)
         this.refreshOverview(updated.opportunityId)
       } catch (error) {
-        this.errorsByScope[getSessionScope(sessionId)] =
-          error instanceof Error ? error.message : '重新分析失败，请稍后重试。'
+        this.errorsByScope[getSessionScope(sessionId)] = getUserErrorMessage(error, '重新分析失败，请稍后重试。')
       } finally {
         removeId(this.generatingSessionIds, sessionId)
       }

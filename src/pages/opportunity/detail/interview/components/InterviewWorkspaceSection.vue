@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
@@ -78,7 +79,7 @@ async function createInterview(config: InterviewConfig) {
   } catch (error) {
     toast.add({
       title: '创建模拟面试失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -107,7 +108,7 @@ async function archiveSession(sessionId: string) {
   } catch (error) {
     toast.add({
       title: '归档模拟面试失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {

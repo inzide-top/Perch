@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
@@ -114,7 +115,7 @@ async function loadProfile(background = false) {
     isTrainingExpanded.value = false
   } catch (error) {
     if (sequence !== loadSequence.value) return
-    errorMessage.value = error instanceof Error ? error.message : '能力画像暂时无法加载。'
+    errorMessage.value = getUserErrorMessage(error, '能力画像暂时无法加载。')
     if (!profile.value) toast.add({ title: '能力画像加载失败', description: errorMessage.value, color: 'error' })
   } finally {
     if (sequence === loadSequence.value) {

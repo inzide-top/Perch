@@ -194,17 +194,34 @@ async function consumeChatRunStream(
 
 async function openAuthenticatedStream(url: string, signal: AbortSignal) {
   const headers = new Headers({ accept: 'text/event-stream' })
-  const accessToken = await getAuthAccessToken()
+  let accessToken: string | null
+  try {
+    accessToken = await getAuthAccessToken()
+  } catch (error) {
+    throw new ApiRequestError('', 0, error, 'auth_session_unavailable')
+  }
   if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
 
-  const response = await fetch(url, { method: 'GET', headers, signal })
+  let response: Response
+  try {
+    response = await fetch(url, { method: 'GET', headers, signal })
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    throw new ApiRequestError('', 0, error, 'network_error')
+  }
   if (response.status !== 401 || appAuthMode !== 'supabase') return response
 
   const refreshedToken = await refreshAuthAccessToken()
   if (!refreshedToken) return response
 
   headers.set('authorization', `Bearer ${refreshedToken}`)
-  const retriedResponse = await fetch(url, { method: 'GET', headers, signal })
+  let retriedResponse: Response
+  try {
+    retriedResponse = await fetch(url, { method: 'GET', headers, signal })
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    throw new ApiRequestError('', 0, error, 'network_error')
+  }
   if (retriedResponse.status === 401) await invalidateAuthSession()
   return retriedResponse
 }

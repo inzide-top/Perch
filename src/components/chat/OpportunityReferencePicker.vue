@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, ref, watch } from 'vue'
 import { opportunityApi, type JobOpportunityListItem } from '@/services/opportunities'
 
@@ -46,7 +47,7 @@ async function loadOpportunities(force = false) {
     opportunities.value = await opportunityApi.getOpportunities()
     loaded = true
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '机会列表加载失败'
+    loadError.value = getUserErrorMessage(error, '机会列表加载失败')
   } finally {
     isLoading.value = false
   }

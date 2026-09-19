@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { useSettingsStore } from '@/stores'
@@ -84,7 +85,7 @@ async function runWithModelUsageWarning(
   } catch (error) {
     toast.add({
       title: '暂时无法检查进行中的面试',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -281,12 +282,22 @@ watch(
 
       <div class="mt-5 grid gap-x-4 gap-y-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
         <UFormField label="Base URL" required>
-          <UInput v-model="llmDraft.baseUrl" class="w-full" placeholder="https://api.deepseek.com" />
+          <UInput
+            v-model="llmDraft.baseUrl"
+            data-tour="settings-base-url"
+            class="w-full"
+            placeholder="https://api.deepseek.com"
+          />
           <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
         </UFormField>
 
         <UFormField label="Model ID" required>
-          <UInput v-model="llmDraft.modelName" class="w-full" placeholder="deepseek-chat" />
+          <UInput
+            v-model="llmDraft.modelName"
+            data-tour="settings-model-name"
+            class="w-full"
+            placeholder="deepseek-chat"
+          />
           <p class="invisible mt-1 min-h-[14px] text-[11px] leading-[14px]">占位</p>
         </UFormField>
 
@@ -294,6 +305,7 @@ watch(
           <div class="flex gap-2">
             <UInput
               v-model="llmDraft.apiKey"
+              data-tour="settings-api-key"
               class="min-w-0 flex-1"
               :type="apiKeyVisible ? 'text' : 'password'"
               placeholder="sk-..."
@@ -326,6 +338,7 @@ watch(
           <span class="truncate">恢复示例</span>
         </UButton>
         <UButton
+          data-tour="settings-save-model"
           type="button"
           icon="i-lucide-save"
           class="min-w-0 max-w-full"
@@ -336,6 +349,7 @@ watch(
           <span class="truncate">保存模型配置</span>
         </UButton>
         <UButton
+          data-tour="settings-save-reusable"
           type="button"
           color="neutral"
           variant="outline"

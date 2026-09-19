@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { chatApi, getAllChatRunEvents, type ChatBootstrapRunSummary } from '@/services/chat-api'
 import { readToolConfirmationRequest, type ChatToolConfirmation } from '@/shared/chat/confirmation'
 import { readToolInputRequest, type ChatToolInputRequest } from '@/shared/chat/input-request'
@@ -79,7 +80,7 @@ function readToolActivity(event: ChatRunEventRecord) {
     status: 'failed' as const,
     recoverable: event.payload.recoverable === true,
     ...(error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
-      ? { error: error.message }
+      ? { error: getUserErrorMessage(error, '工具执行失败，请稍后重试。') }
       : {}),
   }
 }

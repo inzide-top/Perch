@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import CityPicker from '@/components/CityPicker.vue'
 import {
@@ -200,7 +201,7 @@ function applyBatchResponse(
   item.status = 'failed'
   item.preview = null
   item.draft = null
-  item.error = response.error
+  item.error = getUserErrorMessage(response.error, '网页识别失败，请稍后重试。')
   item.creationError = ''
   item.selected = false
 }
@@ -238,7 +239,7 @@ async function importFromUrl() {
     }
   } catch (error) {
     if (controller.signal.aborted) return
-    importError.value = error instanceof Error ? error.message : '网页识别失败，请稍后重试'
+    importError.value = getUserErrorMessage(error, '网页识别失败，请稍后重试')
     for (const item of batchItems.value) {
       item.status = 'failed'
       item.error = importError.value
@@ -277,7 +278,7 @@ async function retryBatchItem(item: BatchImportItem) {
     clearAllErrors()
   } catch (error) {
     if (controller.signal.aborted) return
-    const message = error instanceof Error ? error.message : '网页识别失败，请稍后重试'
+    const message = getUserErrorMessage(error, '网页识别失败，请稍后重试')
     if (previousDraft) {
       item.status = 'ready'
       item.draft = previousDraft
@@ -463,7 +464,7 @@ async function importFromText() {
     applyImportPreview(preview)
   } catch (error) {
     if (controller.signal.aborted) return
-    importError.value = error instanceof Error ? error.message : '岗位文本识别失败，请稍后重试'
+    importError.value = getUserErrorMessage(error, '岗位文本识别失败，请稍后重试')
   } finally {
     if (importAbortController === controller) {
       importAbortController = null
@@ -582,7 +583,7 @@ watch(
     batchItems.value = batchItems.value.filter((item) => !succeededIds.has(item.id))
     for (const failure of outcome.failures) {
       const item = batchItems.value.find((candidate) => candidate.id === failure.id)
-      if (item) item.creationError = failure.error
+      if (item) item.creationError = getUserErrorMessage(failure.error, '岗位创建失败，请稍后重试。')
     }
 
     activeBatchItemId.value = batchReadyItems.value[0]?.id ?? ''

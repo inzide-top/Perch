@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
+import { getAiTaskErrorPresentation } from '@/services/ai-errors'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { actionStrategyApi } from '@/services/action-strategy'
@@ -83,7 +85,7 @@ async function loadOverview(background = false) {
     schedulePoll()
   } catch (error) {
     if (requestId !== latestLoadRequestId) return
-    errorMessage.value = error instanceof Error ? error.message : '行动策略暂时无法加载。'
+    errorMessage.value = getUserErrorMessage(error, '行动策略暂时无法加载。')
     if (!overview.value) toast.add({ title: '行动策略加载失败', description: errorMessage.value, color: 'error' })
   } finally {
     if (requestId === latestLoadRequestId) {
@@ -120,7 +122,7 @@ async function generate() {
   } catch (error) {
     toast.add({
       title: '行动策略生成失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -231,7 +233,7 @@ onBeforeUnmount(() => {
           class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E2726A]/30 bg-[#E2726A]/8 px-3 py-2.5 text-xs"
         >
           <span class="text-[var(--app-danger)]"
-            >AI 文案生成失败：{{ overview.ai.error?.message ?? '可稍后重试。' }}</span
+            >AI 文案生成失败：{{ getAiTaskErrorPresentation(overview.ai.error).description }}</span
           >
           <UButton size="xs" color="neutral" variant="outline" :disabled="!hasModelConfig" @click="generate"
             >重试</UButton

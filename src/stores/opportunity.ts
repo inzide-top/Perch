@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { defineStore } from 'pinia'
 import type { JobAnalysis, JobAnalysisListSummary, JobAnalysisResult, JobOpportunity } from '@/types/opportunity'
 import type { ReviewDocumentSummary } from '@/types/review'
@@ -392,7 +393,7 @@ export const useOpportunityStore = defineStore('opportunity', {
         await request
       } catch (error) {
         if (!isRequestAbortError(error) && requestSequence === opportunityListLoadSequence) {
-          this.loadError = error instanceof Error ? error.message : 'load opportunities failed'
+          this.loadError = getUserErrorMessage(error, 'load opportunities failed')
         }
       } finally {
         if (requestSequence === opportunityListLoadSequence) {
@@ -439,7 +440,7 @@ export const useOpportunityStore = defineStore('opportunity', {
         return opportunity
       } catch (error) {
         if (!options.silent) {
-          this.loadError = error instanceof Error ? error.message : 'load opportunity detail failed'
+          this.loadError = getUserErrorMessage(error, 'load opportunity detail failed')
         }
         return null
       } finally {

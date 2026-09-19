@@ -14,6 +14,7 @@ declare module 'vue' {
     AppFeedbackModal: typeof import('./src/components/feedback/AppFeedbackModal.vue')['default']
     AppHeader: typeof import('./src/components/layout/AppHeader.vue')['default']
     AppMobileNavigation: typeof import('./src/components/layout/AppMobileNavigation.vue')['default']
+    AppOnboardingTour: typeof import('./src/components/onboarding/AppOnboardingTour.vue')['default']
     AppSidebar: typeof import('./src/components/layout/AppSidebar.vue')['default']
     BackgroundTaskToastHost: typeof import('./src/components/layout/BackgroundTaskToastHost.vue')['default']
     ChatConversationHistoryPanel: typeof import('./src/components/chat/ChatConversationHistoryPanel.vue')['default']

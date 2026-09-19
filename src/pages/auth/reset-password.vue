@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.png'
 import perchMarkLightUrl from '@/assets/brand/perch-mark-light.png'
 import { useAuthStore } from '@/stores/auth'
+import { getUserErrorMessage } from '@/services/error-presentation'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -30,7 +31,7 @@ async function submit() {
     successMessage.value = '密码已经更新，正在进入工作台。'
     window.setTimeout(() => void router.replace('/'), 700)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '密码更新失败，请重新打开邮件中的链接'
+    errorMessage.value = getUserErrorMessage(error, '密码更新失败，请重新打开邮件中的链接。', 'auth')
   } finally {
     isSubmitting.value = false
   }

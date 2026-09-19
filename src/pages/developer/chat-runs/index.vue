@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ChatConversationScopeType, ChatRunPhase, ChatRunStatus } from '@/shared/chat/schemas'
@@ -180,7 +181,7 @@ async function loadRuns(options: { append?: boolean; silent?: boolean } = {}) {
     }
   } catch (error) {
     if (generation !== listRequestGeneration) return
-    errorMessage.value = error instanceof Error ? error.message : '无法加载 Chat Run'
+    errorMessage.value = getUserErrorMessage(error, '无法加载 Chat Run')
   } finally {
     if (generation === listRequestGeneration) {
       isLoading.value = false
@@ -201,7 +202,7 @@ async function selectRun(runId: string, options: { silent?: boolean } = {}) {
     selectedRun.value = detail
   } catch (error) {
     if (generation !== detailRequestGeneration) return
-    errorMessage.value = error instanceof Error ? error.message : '无法加载 Chat Run 详情'
+    errorMessage.value = getUserErrorMessage(error, '无法加载 Chat Run 详情')
   } finally {
     if (!options.silent && generation === detailRequestGeneration) isDetailLoading.value = false
   }
@@ -409,7 +410,9 @@ onBeforeUnmount(() => {
 
             <div v-if="selectedRun.run.error" class="mt-4 rounded-xl border border-error/25 bg-error/8 p-4 text-sm">
               <p class="font-medium text-error">{{ selectedRun.run.error.code }}</p>
-              <p class="mt-1 text-muted">{{ selectedRun.run.error.message }}</p>
+              <p class="mt-1 text-muted">
+                {{ getUserErrorMessage(selectedRun.run.error, '运行失败，请稍后重试。', 'generic') }}
+              </p>
             </div>
 
             <section class="chat-run-two-column-grid mt-5 grid gap-4">
