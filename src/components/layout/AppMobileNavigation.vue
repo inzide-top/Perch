@@ -75,6 +75,7 @@ function openFeedback() {
             v-for="item in navigation"
             :key="item.to"
             :to="item.to"
+            :data-tour="item.to === '/settings' ? 'settings-navigation' : undefined"
             class="app-mobile-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted transition-[background-color,color,box-shadow] duration-150 hover:bg-[var(--app-accent-soft)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             active-class="is-active"
             @click="closeNavigation"

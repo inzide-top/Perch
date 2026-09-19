@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { defineStore } from 'pinia'
 import type {
   CurrentStatus,
@@ -191,7 +192,7 @@ export const useResumeStore = defineStore('resume', {
           this.currentVersionId = currentIds.currentVersionId
           this.persistToStorage()
         } catch (error) {
-          this.loadError = error instanceof Error ? error.message : 'load resume failed'
+          this.loadError = getUserErrorMessage(error, 'load resume failed')
         } finally {
           this.isLoading = false
         }

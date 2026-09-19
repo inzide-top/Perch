@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { defineStore } from 'pinia'
 import {
   chatApi,
@@ -150,7 +151,7 @@ export const useChatStore = defineStore('chat', {
         this.hasLoadedConversations = true
         return page.items
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '加载对话列表失败'
+        this.error = getUserErrorMessage(error, '加载对话列表失败')
         throw error
       } finally {
         this.isLoadingConversations = false
@@ -185,7 +186,7 @@ export const useChatStore = defineStore('chat', {
         this.historyTotal = page.total
         return page.items
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '加载更多对话失败'
+        this.error = getUserErrorMessage(error, '加载更多对话失败')
         throw error
       } finally {
         this.isLoadingMoreConversations = false
@@ -215,7 +216,7 @@ export const useChatStore = defineStore('chat', {
         this.upsertConversation(conversation)
         return conversation
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '更新对话失败'
+        this.error = getUserErrorMessage(error, '更新对话失败')
         throw error
       }
     },
@@ -229,7 +230,7 @@ export const useChatStore = defineStore('chat', {
         this.historyTotal = Math.max(0, this.historyTotal - 1)
         if (this.selectedConversationId === conversationId) this.selectConversation(null)
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '删除对话失败'
+        this.error = getUserErrorMessage(error, '删除对话失败')
         throw error
       }
     },

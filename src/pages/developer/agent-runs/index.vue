@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
@@ -283,7 +284,7 @@ async function loadRuns(options: { initial?: boolean; filterChange?: boolean } =
     }
   } catch (error) {
     if (isAgentRunPageUnmounted || requestedWorkflow !== selectedWorkflow.value) return
-    errorMessage.value = error instanceof Error ? error.message : '无法加载 AgentRun'
+    errorMessage.value = getUserErrorMessage(error, '无法加载 AgentRun')
   } finally {
     isListRequestInFlight = false
     if (shouldReloadListAfterCurrent && !isAgentRunPageUnmounted) {
@@ -308,7 +309,7 @@ async function loadRunDetail(runId: string, options: { silent?: boolean } = {}) 
     selectedRun.value = detail
   } catch (error) {
     if (requestId !== latestDetailRequestId) return
-    errorMessage.value = error instanceof Error ? error.message : '无法加载执行详情'
+    errorMessage.value = getUserErrorMessage(error, '无法加载执行详情')
   } finally {
     if (!options.silent && requestId === latestDetailRequestId) isDetailLoading.value = false
   }
@@ -565,7 +566,9 @@ onBeforeUnmount(() => {
               class="mt-4 rounded-xl border border-error/25 bg-error/8 p-4 text-sm text-error"
             >
               <p class="font-medium">{{ selectedRun.error.code }}</p>
-              <p class="mt-1 leading-6">{{ selectedRun.error.message }}</p>
+              <p class="mt-1 leading-6">
+                {{ getUserErrorMessage(selectedRun.error, '运行失败，请稍后重试。', 'generic') }}
+              </p>
               <div v-if="selectedRun.error.validationIssues?.length" class="mt-3 grid gap-2">
                 <div
                   v-for="(issue, index) in selectedRun.error.validationIssues"

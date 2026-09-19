@@ -4,6 +4,10 @@
 :root {
   font-family:
     Inter,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Noto Sans SC',
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -34,8 +38,9 @@
   --app-danger: #d14d4d;
   --app-warning: #c8872f;
   --app-success: #3d9864;
-  --app-radius-panel: 20px;
-  --app-radius-card: 16px;
+  --app-radius-panel: 24px;
+  --app-radius-card: 18px;
+  --app-radius-toast: 20px;
   --duration-fast: 160ms;
   --duration-normal: 220ms;
   --duration-panel: 300ms;
@@ -70,6 +75,7 @@
   --ui-text-dimmed: var(--app-text-soft);
   --ui-text-muted: var(--app-text-muted);
   --ui-text-toned: var(--app-text);
+  --ui-text-highlighted: var(--app-text);
   --ui-border: var(--app-border);
   --ui-border-muted: #edf1f6;
   --ui-border-accented: var(--app-border-strong);
@@ -127,6 +133,7 @@ textarea::placeholder {
   --ui-text-dimmed: var(--app-text-soft);
   --ui-text-muted: var(--app-text-muted);
   --ui-text-toned: var(--app-text);
+  --ui-text-highlighted: var(--app-text);
   --ui-border: var(--app-border);
   --ui-border-muted: #252a2e;
   --ui-border-accented: var(--app-border-strong);
@@ -154,6 +161,8 @@ body {
   background: var(--app-bg);
   color: var(--app-text);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
 
@@ -332,6 +341,12 @@ button:disabled,
 
 .app-popover-layer {
   z-index: var(--app-z-popover) !important;
+  border-radius: var(--app-radius-panel) !important;
+}
+
+/* Nuxt UI renders toast roots in a portal. Keep the prompt shape consistent with the app panels. */
+[data-slot='viewport'] > [data-slot='root'] {
+  border-radius: var(--app-radius-toast) !important;
 }
 
 .app-overlay-layer {
@@ -352,6 +367,7 @@ button:disabled,
 
 .app-modal-layer {
   z-index: var(--app-z-modal) !important;
+  border-radius: var(--app-radius-panel) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2063,5 +2079,72 @@ button[data-slot='base'][class*='bg-primary'] {
   .interview-stream-cursor {
     transition-duration: 0ms;
     animation: none;
+  }
+}
+
+.driver-popover.perch-onboarding-popover {
+  width: min(22rem, calc(100vw - 2rem));
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-panel);
+  padding: 1.25rem;
+  background: var(--app-surface-elevated);
+  color: var(--app-text);
+  box-shadow: var(--app-shadow-float);
+}
+
+.perch-onboarding-popover .driver-popover-title {
+  color: var(--app-text);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.perch-onboarding-popover .driver-popover-description {
+  color: var(--app-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.perch-onboarding-popover .driver-popover-progress-text {
+  color: var(--app-text-soft);
+  font-size: 0.75rem;
+}
+
+.perch-onboarding-popover .driver-popover-footer {
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.perch-onboarding-popover .driver-popover-footer-btn {
+  border-radius: 0.65rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.perch-onboarding-popover .driver-popover-next-btn {
+  border-color: var(--app-accent-strong);
+  background: var(--app-accent-strong);
+  color: #0f2d3a;
+}
+
+.perch-onboarding-popover .driver-popover-prev-btn {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-muted);
+  color: var(--app-text-muted);
+}
+
+:root.dark .perch-onboarding-popover .driver-popover-next-btn {
+  color: #081217;
+}
+
+@media (max-width: 640px) {
+  .driver-popover.perch-onboarding-popover {
+    width: min(20rem, calc(100vw - 1.5rem));
+    border-radius: var(--app-radius-card);
+    padding: 1rem;
+  }
+
+  .perch-onboarding-popover .driver-popover-description {
+    font-size: 0.8125rem;
   }
 }

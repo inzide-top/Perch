@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, ref } from 'vue'
 import type { OpportunityMutationSummaryItem } from './opportunity-mutation-summary'
 
@@ -62,7 +63,7 @@ const statusPresentation = {
               另有 {{ item.changes.length - 2 }} 项修改
             </p>
             <p v-if="item.errorMessage" class="mt-1 line-clamp-2 text-[10px] leading-4 text-error">
-              {{ item.errorMessage }}
+              {{ getUserErrorMessage(item.errorMessage, '操作失败，请稍后重试。') }}
             </p>
           </div>
           <span class="shrink-0 text-[10px]" :class="statusPresentation[item.status].className">

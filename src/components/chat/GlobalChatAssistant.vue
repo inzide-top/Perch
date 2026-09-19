@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
@@ -1254,7 +1255,7 @@ function toPersistedOpportunityIntentionActionPart(toolActionId: string): Opport
 
 function readToolActionErrorMessage(error: unknown) {
   if (!error || typeof error !== 'object' || !('message' in error)) return null
-  return typeof error.message === 'string' ? error.message : null
+  return getUserErrorMessage(error, '操作失败，请稍后重试。')
 }
 
 function toPersistedOpportunityActionPart(
@@ -1380,7 +1381,7 @@ async function resolveToolConfirmation(toolActionId: string, decision: 'approved
   } catch (error) {
     toast.add({
       title: decision === 'approved' ? '修改确认失败' : '取消操作失败',
-      description: error instanceof Error ? error.message : '请稍后重试',
+      description: getUserErrorMessage(error, '请稍后重试'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -1394,7 +1395,7 @@ async function submitToolInput(requestId: string, value: unknown) {
   } catch (error) {
     toast.add({
       title: '补充信息提交失败',
-      description: error instanceof Error ? error.message : '请稍后重试',
+      description: getUserErrorMessage(error, '请稍后重试'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -1438,7 +1439,7 @@ async function cancelToolInput(
                 : kind === 'mock_interview'
                   ? '取消创建模拟面试失败'
                   : '取消创建面试安排失败',
-      description: error instanceof Error ? error.message : '请稍后重试',
+      description: getUserErrorMessage(error, '请稍后重试'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -2133,10 +2134,7 @@ onBeforeUnmount(() => {
 
             <div v-else-if="chatStore.error || conversationError" class="px-4 py-5">
               <div class="rounded-2xl border border-error/25 bg-error/5 p-4 text-sm text-error">
-                {{
-                  chatStore.error ??
-                  (conversationError instanceof Error ? conversationError.message : '当前对话加载失败')
-                }}
+                {{ chatStore.error ?? getUserErrorMessage(conversationError, '当前对话加载失败') }}
                 <UButton
                   class="mt-3"
                   type="button"

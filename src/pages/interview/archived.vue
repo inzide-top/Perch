@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
@@ -48,7 +49,7 @@ async function loadSessions() {
   try {
     sessions.value = await interviewApi.listArchivedSessions()
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '加载已归档模拟面试失败'
+    loadError.value = getUserErrorMessage(error, '加载已归档模拟面试失败')
   } finally {
     loading.value = false
   }
@@ -71,7 +72,7 @@ async function restoreSession(session: ArchivedInterviewSessionSummary) {
   } catch (error) {
     toast.add({
       title: '恢复失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -91,7 +92,7 @@ async function confirmDelete() {
   } catch (error) {
     toast.add({
       title: '彻底删除失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useOpportunityImportReviewStore } from '@/stores'
@@ -83,7 +84,9 @@ async function openReviewWorkbench() {
           </template>
           <template v-else>
             <p class="truncate text-xs font-medium text-highlighted">{{ item.sourceLabel }}</p>
-            <p class="mt-1 line-clamp-2 text-[10px] leading-4 text-error">{{ item.error }}</p>
+            <p class="mt-1 line-clamp-2 text-[10px] leading-4 text-error">
+              {{ getUserErrorMessage(item.error, '岗位识别失败，请稍后重试。') }}
+            </p>
           </template>
         </div>
       </div>

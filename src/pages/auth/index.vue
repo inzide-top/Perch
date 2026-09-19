@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import perchMarkDarkUrl from '@/assets/brand/perch-mark-dark.png'
 import perchMarkLightUrl from '@/assets/brand/perch-mark-light.png'
 import { useAuthStore } from '@/stores/auth'
+import { getUserErrorMessage } from '@/services/error-presentation'
 
 type AuthView = 'login' | 'register' | 'forgot'
 type SignupOutcome = 'existing' | 'confirmation'
@@ -112,7 +113,7 @@ function toFriendlyError(error: unknown) {
   if (/email not confirmed/i.test(message)) return '请先前往邮箱完成验证'
   if (/user already registered/i.test(message)) return '这个邮箱已经注册，请直接登录'
   if (/rate limit|too many requests/i.test(message)) return '操作太频繁，请稍后再试'
-  return message || '认证服务暂时不可用，请稍后再试'
+  return getUserErrorMessage(error, '认证服务暂时不可用，请稍后再试。', 'auth')
 }
 
 async function resendConfirmation() {

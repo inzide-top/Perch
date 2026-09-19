@@ -103,6 +103,7 @@ function openFeedback() {
         >
           <RouterLink
             :to="item.to"
+            :data-tour="item.to === '/settings' ? 'settings-navigation' : undefined"
             class="relative flex h-10 items-center rounded-xl text-sm font-medium text-muted transition-[width,background-color,color,box-shadow] [transition-duration:var(--duration-fast)] [transition-timing-function:var(--ease-out)] hover:bg-[color-mix(in_srgb,var(--app-accent)_9%,transparent)] hover:text-highlighted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             :class="[
               isExpanded ? 'w-60' : 'w-12',
