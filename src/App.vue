@@ -49,6 +49,10 @@ const GlobalChatAssistant = defineAsyncComponent({
   loadingComponent: GlobalChatAssistantShell,
   delay: 0,
 })
+const AppOnboardingTour = defineAsyncComponent({
+  loader: () => import('@/components/onboarding/AppOnboardingTour.vue'),
+  delay: 0,
+})
 const chatLayoutStyle = computed(() => {
   if (!chatStore.isOpen || viewportWidth.value < 1024) return undefined
   return { paddingRight: `${chatStore.width}px` }
@@ -78,6 +82,7 @@ function startAppRuntime() {
   settingsStore.hydrateFromStorage()
   resumeStore.hydrateFromStorage()
   opportunityStore.hydrateFromStorage()
+  void opportunityStore.loadOpportunities()
   backgroundTaskStore.hydrate()
   setupBackgroundTaskSync()
   backgroundTaskStore.start()
@@ -168,6 +173,7 @@ onBeforeUnmount(() => {
       ui: {
         viewport: 'z-[220] sm:w-80',
         base: 'gap-2 p-3',
+        // Nuxt UI 的 toast 自身通过 data-slot=root 渲染，圆角在全局样式中统一覆盖。
       },
     }"
   >
@@ -225,6 +231,11 @@ onBeforeUnmount(() => {
           </main>
         </div>
       </div>
+      <AppOnboardingTour
+        v-if="!isDeveloperPage"
+        @open-mobile-navigation="isMobileNavigationOpen = true"
+        @close-mobile-navigation="isMobileNavigationOpen = false"
+      />
     </template>
   </UApp>
 </template>

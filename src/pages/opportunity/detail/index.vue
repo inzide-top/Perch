@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -795,7 +796,7 @@ async function retryReviewDocument(document: ReviewDocumentSummary) {
 function showRequestError(fallbackTitle: string, error: unknown) {
   toast.add({
     title: fallbackTitle,
-    description: error instanceof Error ? error.message : '请稍后重试。',
+    description: getUserErrorMessage(error, '请稍后重试。'),
     color: 'error',
     icon: 'i-lucide-circle-alert',
   })

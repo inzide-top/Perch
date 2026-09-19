@@ -446,7 +446,12 @@ onBeforeUnmount(() => {
         <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">
           先创建第一份简历。后续保存修改时，系统会为你保留历史版本。
         </p>
-        <UButton class="mt-5 whitespace-nowrap" icon="i-lucide-plus" @click="openCreateEditor">
+        <UButton
+          data-tour="resume-create"
+          class="mt-5 whitespace-nowrap"
+          icon="i-lucide-plus"
+          @click="openCreateEditor"
+        >
           创建第一份简历
         </UButton>
       </div>
@@ -457,7 +462,9 @@ onBeforeUnmount(() => {
         <h1 class="text-xl font-semibold tracking-tight text-highlighted">简历管理</h1>
 
         <div class="flex shrink-0 items-center gap-2">
-          <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateEditor">新建简历</UButton>
+          <UButton data-tour="resume-create" icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateEditor"
+            >新建简历</UButton
+          >
         </div>
       </div>
 

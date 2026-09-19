@@ -11,7 +11,7 @@
   <p>把简历、岗位、JD 分析、面试准备和求职行动组织成一条可追踪、可复盘的工作流。</p>
 
   <p>
-    <a href="https://github.com/inzide-top/web-seek-employ/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/inzide-top/web-seek-employ/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://github.com/inzide-top/Perch/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/inzide-top/Perch/actions/workflows/ci.yml/badge.svg"></a>
     <img alt="Node.js" src="https://img.shields.io/badge/Node.js-%3E%3D20.19-339933?logo=nodedotjs&logoColor=white">
     <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white">
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white">
@@ -28,8 +28,11 @@
   </p>
 </div>
 
-> **项目状态：第一版功能已收束，可用于本地求职管理与面试准备。**<br>
-> 当前版本采用单用户、本地优先设计；如果要部署为面向公众的多用户服务，请先阅读[安全与部署边界](#security)。
+**[在线体验](https://perch.inzide.top) · [GitHub](https://github.com/inzide-top/Perch) · [虚构演示简历](./docs/demo/demo-resume.pdf)**
+
+PERCH 将简历、岗位分析、模拟面试和 AI 助手组织到一个求职工作台中。支持本地开发模式、共享演示模式和 Supabase 登录模式。
+
+体验 AI 功能前，请在“系统设置 → 模型连接”配置自己的兼容模型服务。模型 Key 会保存在当前浏览器，并随 AI 请求发往 PERCH API，再由 API 请求所选模型服务。首次体验建议使用[虚构数据](./docs/demo/README.md)，先阅读[数据与部署说明](#security)。
 
 <a id="why-perch"></a>
 
@@ -50,7 +53,7 @@ flowchart LR
   H -. 历史记忆 .-> F
 ```
 
-它不是只回答一次问题的聊天框。每条分析会绑定具体简历版本，每次 AI 执行都有状态和调试记录，数据修改工具需要经过业务校验，并可在必要时让用户确认。
+每条 JD 分析会绑定具体简历版本，AI 执行记录包含运行状态，数据修改工具经过业务校验，并可在需要时请求用户确认。
 
 <a id="features"></a>
 
@@ -67,6 +70,7 @@ flowchart LR
 | 🛠️ **Agent 工具**    | 搜索和读取机会、修改资料与阶段、批量修改、创建面试安排和模拟面试、保存笔试 / 面试复盘、岗位导入、读取能力画像和行动策略 |
 | 🧠 **能力与策略**    | 首页求职概览、能力证据、能力画像、历史待补强项、训练记录、行动策略和过期提醒、紧凑面试日历                              |
 | 🧬 **会话记忆**      | pgvector 语义检索、用户与机会作用域隔离、异步 Embedding、失败补偿、当前会话排除、长会话摘要压缩                         |
+| 🔐 **登录与身份**    | Supabase 登录与会话验证、服务层用户归属校验；另有本地开发和共享演示模式                                                 |
 | 🔬 **可观测性**      | Agent Run 与 Chat Run 独立调试台、模型调用、工具执行、状态事件、错误与 RAG 检索信息                                     |
 
 ### AI 助手如何执行一次工具调用
@@ -164,8 +168,8 @@ flowchart TB
 ### 2. 获取代码并安装依赖
 
 ```bash
-git clone https://github.com/inzide-top/web-seek-employ.git
-cd web-seek-employ
+git clone https://github.com/inzide-top/Perch.git
+cd Perch
 corepack enable
 pnpm install
 ```
@@ -217,7 +221,7 @@ pnpm dev:api
 
 打开应用的 **系统设置 → 模型连接**，填写：
 
-- `Base URL`：模型服务地址，例如 `https://api.example.com`
+- `Base URL`：模型服务地址，例如 `https://api.example.com/v1`（以供应商实际接口路径为准，程序会追加 `/chat/completions`）
 - `模型名称`：该服务提供的模型 ID
 - `API Key`：模型服务密钥
 
@@ -234,7 +238,7 @@ pnpm dev:api
 
 ## 环境变量
 
-`.env.example` 可以直接作为模板。带密钥的变量都只能由服务端读取，**不要添加 `VITE_` 前缀**。
+`.env.example` 是本地开发模板，不可原样用于公网生产部署。环境变量中的服务端密钥**不要添加 `VITE_` 前缀**。用户在设置页填写的聊天模型 Key 按下文的数据边界处理。
 
 | 变量                            | 必需 | 默认值 / 示例               | 用途                                     |
 | ------------------------------- | :--: | --------------------------- | ---------------------------------------- |
@@ -251,6 +255,33 @@ pnpm dev:api
 | `EMBEDDING_API_KEY`             |  否  | 空                          | Embedding 服务密钥                       |
 | `EMBEDDING_MODEL`               |  否  | 空                          | 固定输出 1024 维的 Embedding 模型        |
 | `RAG_EVAL_EMBEDDING_BATCH_SIZE` |  否  | `8`                         | 仅用于离线 RAG 评测脚本                  |
+
+### 身份与调试配置
+
+| 变量                                                  | 说明                                                                                     |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `AUTH_MODE` / `VITE_AUTH_MODE`                        | 前后端分别配置为 `development`、`interview` 或 `supabase`；正式多用户部署使用 `supabase` |
+| `DEVELOPMENT_USER_ID`                                 | 本地模式共享数据身份，默认 `demo-user`                                                   |
+| `INTERVIEW_DEMO_USER_ID`                              | 共享演示身份；访客共享该身份，不用于真实个人资料                                         |
+| `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY`           | 后端验证登录身份所用的 Auth 项目公开配置                                                 |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` | 同一 Auth 项目的浏览器公开配置，不能填写 service_role 密钥                               |
+| `ENABLE_DEVELOPER_TOOLS`                              | 后端仅在明确为 `true` 时注册调试接口，公网部署建议 `false`                               |
+| `VITE_ENABLE_DEVELOPER_TOOLS`                         | 控制前端调试入口，公网部署建议 `false`                                                   |
+| `WEB_PORT`                                            | 本地双模式启动脚本读取的 Web 端口                                                        |
+
+正式部署请显式设置以下配置，并核对 Supabase 的 Site URL、允许的登录/密码重置回跳地址，以及数据库迁移：
+
+```dotenv
+NODE_ENV=production
+AUTH_MODE=supabase
+VITE_AUTH_MODE=supabase
+ENABLE_DEVELOPER_TOOLS=false
+VITE_ENABLE_DEVELOPER_TOOLS=false
+```
+
+生产前端的 `VITE_*` 在构建时注入；前端生产配置更改后需要重新构建。后端的显式 `AUTH_MODE` 优先于 `NODE_ENV`，不能依靠 `NODE_ENV=production` 覆盖模板中的 `development`。
+
+`pnpm dev:local` 和 `pnpm dev:auth` 分别依赖未入库的 `.env.development.local` 与 `.env.auth.local`。新克隆可先按上面的双终端方式运行；需要双模式脚本时，按 `.env.example` 注释创建覆盖文件，保持 Web/API 端口与 CORS 一致。
 
 ### 可选能力的启用规则
 
@@ -314,26 +345,27 @@ GitHub Actions 会依次执行格式、Lint、前后端类型检查、核心测�
 
 ## 安全与数据边界
 
-- `.env`、本地评测数据、日志和生成报告已被 `.gitignore` 排除；只有无真实凭据的 `.env.example` 会进入 Git。
-- 聊天模型配置当前保存在浏览器 `localStorage`，并随具体请求传给本地 API；不会写入业务数据库或运行日志。**不要在共享电脑上保存真实生产 Key。**
-- Firecrawl 与 Embedding Key 仅由服务端环境变量读取。
-- URL 导入只接受公网 `http/https` 地址，并拒绝本机和私网地址。
-- 模型输出先经过 Zod 和业务规则校验，不能直接成为数据库写入参数。
-- 写操作工具根据风险进入确认流程，并通过 revision / checkpoint 避免旧确认覆盖新状态。
+- **业务数据**：简历、岗位、面试与会话记录存入 API 连接的 PostgreSQL。PDF 导入会保存提取文本及任务结果；不能将“取消导入”理解为已删除所有后台记录。
+- **聊天模型**：当前模型与可复用连接（包含 API Key）保存在当前浏览器 `localStorage`，执行 AI 功能时随请求发往 PERCH API，再由 API 调用所选供应商。退出登录会清理应用浏览器缓存；不要使用共享设备保存高权限 Key。
+- **第三方处理**：执行分析、面试和聊天时，会向所选模型发送完成任务所需的上下文。启用 Embedding 后，历史会话等相关文本可能发送给配置的向量服务；网页导入会通过 Firecrawl 处理岗位 URL。自部署者需要告知用户实际供应商、保留与删除方式。
+- **运行记录**：Agent/Chat 的输入输出和错误记录可能含个人信息。调试接口受认证、用户作用域和启用开关限制，生产环境应按需要关闭并设定日志保留策略。
+- **身份模式**：`development` 和 `interview` 使用固定身份；只有 `supabase` 模式进行登录验证。不要把共享演示模式用于多人真实简历存储。
+- **公开配置**：Supabase Publishable Key 属于浏览器公开配置；数据库密码、service_role 密钥和平台 Firecrawl/Embedding 密钥不可放入前端。
+- **Git 管理**：`.env*`（除 `.env.example`）、`personal/` 和部分报告目录有忽略规则。忽略规则不能清除既有历史、截图或已发布附件，发布前仍应独立审查。
 
-公开部署前至少需要补充：身份认证、用户级数据隔离、服务端密钥加密托管、限流、审计权限与生产级任务队列。
+公网运维应核对服务端出站目标限制、用户额度与入口限流、调试权限、备份与删除机制。代码中的输入校验、用户归属校验和任务容量限制不能替代部署层验证。
 
 <a id="limitations"></a>
 
 ## 第一版边界
 
-- **单用户**：当前请求身份固定为本地 `demo-user`，尚未接入登录与多租户鉴权。
-- **本地优先**：模型 Key 存在当前浏览器，不适合直接作为公网多用户密钥方案。
+- **身份与隔离**：已接入 Supabase 登录与用户归属检查；自部署仍需验证 A/B 账号隔离、数据库角色权限与生产认证配置。
+- **自备模型连接**：模型 Key 保存在浏览器，尚不是服务端加密托管的密钥方案。
 - **轻量后台任务**：Chat Run、分析和索引任务主要运行在 API 进程内；API 重启可能中断正在执行的模型请求，历史记忆提供补偿扫描，但尚未接入 Redis / BullMQ 等生产级队列。
 - **PDF 不含 OCR**：简历 PDF 使用文本提取；纯扫描图片 PDF 需要先做 OCR。
 - **网页可访问性**：受登录、反爬、动态渲染和 Firecrawl 服务状态影响，部分招聘页面可能无法识别。
 - **RAG 是辅助上下文**：精确的机会、简历和流程状态始终从关系数据库读取，不用向量近似结果替代业务事实。
-- **暂未包含**：语音面试、外部 MCP、自动投递、多人协作与跨设备同步。
+- **暂未包含**：语音面试、外部 MCP、自动投递和多人协作。业务数据由后端数据库保存，但模型连接设置不会随账号跨设备同步。
 
 <a id="docs"></a>
 
@@ -341,12 +373,19 @@ GitHub Actions 会依次执行格式、Lint、前后端类型检查、核心测�
 
 - [产品需求](./docs/01-prd.md)
 - [技术设计](./docs/02-technical-design.md)
-- [开发计划](./docs/03-development-plan.md)
 - [JD 分析框架](./docs/04-ai-analysis-framework.md)
 - [模拟面试后端与 Agent 可观测性](./docs/06-mock-interview-backend-foundation.md)
-- [第一版发布前代码与数据审计](./docs/07-release-readiness-audit.md)
+- [历史发布审计（2026-08，不代表当前安全验收）](./docs/07-release-readiness-audit.md)
+- [虚构演示数据](./docs/demo/README.md)
+- [贡献指南](./CONTRIBUTING.md)
 
 > `docs/` 中部分文件记录了项目演进过程，最终已实现能力与运行方式以本 README 和当前代码为准。
+
+## 反馈与支持
+
+欢迎通过 [Issues](https://github.com/inzide-top/Perch/issues) 提交可复现问题和功能建议。请说明操作步骤、预期与实际结果，并对截图和日志脱敏，不要上传真实简历、联系方式或 API Key。
+
+如果 PERCH 对你有帮助，欢迎点一个 Star，方便以后找到这个项目。
 
 ## License
 

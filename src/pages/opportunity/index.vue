@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -234,7 +235,7 @@ async function persistAssistantImportCompletion(items: Array<{ itemIndex: number
   } catch (error) {
     toast.add({
       title: '机会已创建，但聊天卡片状态同步失败',
-      description: error instanceof Error ? error.message : '重新打开对话前可稍后再试。',
+      description: getUserErrorMessage(error, '重新打开对话前可稍后再试。'),
       color: 'warning',
       icon: 'i-lucide-refresh-cw',
     })
@@ -277,7 +278,7 @@ async function createOpportunity(request: { payload: CreateOpportunityPayload; s
 
     toast.add({
       title: '创建 JD 分析失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -436,7 +437,7 @@ async function openDuplicateOpportunityDetail() {
   } catch (error) {
     toast.add({
       title: '打开已有 JD 失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -534,7 +535,7 @@ async function retryJobAnalysis(opportunityId: string) {
   } catch (error) {
     toast.add({
       title: '重新分析失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -574,7 +575,7 @@ async function confirmDeleteOpportunity() {
     }
     toast.add({
       title: '删除 JD 失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -616,7 +617,7 @@ async function confirmArchiveInterviewsAndDeleteOpportunity() {
     }
     toast.add({
       title: '归档并删除失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
       icon: 'i-lucide-circle-alert',
     })
@@ -653,7 +654,7 @@ async function confirmBatchDeleteOpportunities() {
   } catch (error) {
     toast.add({
       title: '批量删除失败',
-      description: error instanceof Error ? error.message : '请稍后重试。',
+      description: getUserErrorMessage(error, '请稍后重试。'),
       color: 'error',
     })
   } finally {
@@ -831,7 +832,7 @@ watch(
 <template>
   <section class="w-full">
     <UCard
-      v-if="!loadError && !isInitialLoading && opportunities.length === 0 && !hasActiveListFilters"
+      v-if="!loadError && !showListSkeleton && !isFiltering && opportunities.length === 0 && !hasActiveListFilters"
       class="app-empty-state flex min-h-[calc(100vh-8rem)] items-center justify-center"
     >
       <div class="w-full max-w-lg px-6 py-14 text-center">
@@ -844,7 +845,14 @@ watch(
         <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">
           创建一条 JD 后，系统会先生成机会记录，并进入分析流程。后续 AI 会基于岗位要求和你的简历版本生成结构化分析结果。
         </p>
-        <UButton class="mt-5 whitespace-nowrap" icon="i-lucide-plus" @click="openCreateModal"> 创建第一条 JD </UButton>
+        <UButton
+          data-tour="opportunity-create"
+          class="mt-5 whitespace-nowrap"
+          icon="i-lucide-plus"
+          @click="openCreateModal"
+        >
+          创建第一条 JD
+        </UButton>
         <UButton
           class="mt-5 ml-2 whitespace-nowrap"
           color="neutral"
@@ -888,7 +896,14 @@ watch(
               >
                 {{ isSelectionMode ? '退出多选' : '多选' }}
               </UButton>
-              <UButton icon="i-lucide-plus" class="whitespace-nowrap" @click="openCreateModal"> 新增 JD 分析 </UButton>
+              <UButton
+                data-tour="opportunity-create"
+                icon="i-lucide-plus"
+                class="whitespace-nowrap"
+                @click="openCreateModal"
+              >
+                新增 JD 分析
+              </UButton>
             </div>
             <UDropdownMenu :items="pageActionItems" :content="{ align: 'end', sideOffset: 8 }">
               <UButton

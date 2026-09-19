@@ -3,6 +3,7 @@ import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import { appAuthMode, type AppAuthMode } from '@/services/auth/auth-mode'
 import { clearAuthenticatedBrowserState, prepareBrowserStateForUser } from '@/services/auth/browser-session'
 import { getSupabaseClient } from '@/services/auth/supabase-client'
+import { getUserErrorMessage } from '@/services/error-presentation'
 
 export type AuthStatus = 'initializing' | 'anonymous' | 'authenticated' | 'error'
 
@@ -118,7 +119,7 @@ export const useAuthStore = defineStore('auth', {
           this.status = 'error'
           this.user = null
           this.accessToken = null
-          this.error = error instanceof Error ? error.message : '登录状态初始化失败'
+          this.error = getUserErrorMessage(error, '登录状态初始化失败，请刷新页面后重试。', 'auth')
         } finally {
           this.initialized = true
         }

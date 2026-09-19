@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getUserErrorMessage } from '@/services/error-presentation'
 import { computed, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { createFeedbackInputSchema, type FeedbackType } from '@/shared/feedback/schemas'
@@ -53,7 +54,7 @@ async function submitFeedback() {
     toast.add({ title: '反馈已提交', description: '感谢你的反馈，我们已经收到。', color: 'success' })
     isOpen.value = false
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '提交失败，请稍后重试'
+    errorMessage.value = getUserErrorMessage(error, '提交失败，请稍后重试')
   } finally {
     isSubmitting.value = false
   }
