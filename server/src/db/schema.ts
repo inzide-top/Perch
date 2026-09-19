@@ -76,6 +76,12 @@ import type {
 } from '@/shared/chat/schemas'
 import { RETRIEVAL_EMBEDDING_DIMENSIONS } from '../../../src/shared/retrieval/constants'
 
+export const userModelSettings = pgTable('user_model_settings', {
+  userId: text('user_id').primaryKey(),
+  encryptedPayload: text('encrypted_payload').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull(),
+}).enableRLS()
+
 export const userFeedback = pgTable(
   'user_feedback',
   {

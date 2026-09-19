@@ -1,9 +1,18 @@
 import { defineStore } from 'pinia'
 import type { AppSettings, LlmConnectionSettings, SavedLlmConnectionSettings, ThemeMode } from '@/types/settings'
+import { request } from '@/services/http'
+import { getUserErrorMessage } from '@/services/error-presentation'
 
 const settingsStoreStorageKey = 'agent-seek-employment:settings-store'
 
-type SettingsState = AppSettings
+type ModelSettings = Pick<AppSettings, 'llm' | 'savedLlmConnections'>
+type SettingsState = AppSettings & {
+  isLoaded: boolean
+  isLoading: boolean
+  isSaving: boolean
+  loadError: string | null
+}
+let settingsRequest: Promise<void> | null = null
 
 const defaultLlmSettings: LlmConnectionSettings = {
   baseUrl: '',
@@ -53,9 +62,63 @@ export const useSettingsStore = defineStore('settings', {
     themeMode: 'system',
     llm: { ...defaultLlmSettings },
     savedLlmConnections: [],
+    isLoaded: false,
+    isLoading: false,
+    isSaving: false,
+    loadError: null,
   }),
 
   actions: {
+    async loadFromApi() {
+      if (this.isLoaded) return
+      if (settingsRequest) return settingsRequest
+      this.isLoading = true
+      this.loadError = null
+      settingsRequest = (async () => {
+        try {
+          let { settings } = await request.get<{ settings: ModelSettings | null }>('/model-settings')
+          if (!settings && (this.llm.baseUrl || this.savedLlmConnections.length)) {
+            // Migrate only when the account has no server-side configuration.
+            const result = await request.post<{ settings: ModelSettings }>('/model-settings', {
+              llm: this.llm,
+              savedLlmConnections: this.savedLlmConnections,
+            })
+            settings = result.settings
+          }
+          if (settings) {
+            this.llm = normalizeLlmSettings(settings.llm)
+            this.savedLlmConnections = normalizeSavedLlmConnections(settings.savedLlmConnections)
+            this.persistToStorage()
+          }
+          this.isLoaded = true
+        } catch (error) {
+          this.loadError = getUserErrorMessage(error, '模型配置读取失败，请稍后重试。')
+        } finally {
+          this.isLoading = false
+          settingsRequest = null
+        }
+      })()
+      return settingsRequest
+    },
+
+    async ensureLoaded() {
+      await this.loadFromApi()
+      if (!this.isLoaded) throw new Error(this.loadError ?? '模型配置读取失败，请稍后重试。')
+    },
+
+    async saveToApi(settings: ModelSettings) {
+      if (this.isSaving) throw new Error('模型配置正在保存，请稍候。')
+      this.isSaving = true
+      try {
+        const result = await request.put<{ settings: ModelSettings }>('/model-settings', settings)
+        if (JSON.stringify(this.llm) !== JSON.stringify(result.settings.llm)) this.llm = result.settings.llm
+        this.savedLlmConnections = result.settings.savedLlmConnections
+        this.persistToStorage()
+      } finally {
+        this.isSaving = false
+      }
+    },
+
     hydrateFromStorage() {
       if (!canUseLocalStorage()) return
 
@@ -76,14 +139,18 @@ export const useSettingsStore = defineStore('settings', {
     persistToStorage() {
       if (!canUseLocalStorage()) return
 
-      localStorage.setItem(
-        settingsStoreStorageKey,
-        JSON.stringify({
-          themeMode: this.themeMode,
-          llm: this.llm,
-          savedLlmConnections: this.savedLlmConnections,
-        }),
-      )
+      try {
+        localStorage.setItem(
+          settingsStoreStorageKey,
+          JSON.stringify({
+            themeMode: this.themeMode,
+            llm: this.llm,
+            savedLlmConnections: this.savedLlmConnections,
+          }),
+        )
+      } catch {
+        // Browser cache failure must not turn a successful database save into a failed save.
+      }
     },
 
     setThemeMode(themeMode: ThemeMode) {
@@ -91,16 +158,18 @@ export const useSettingsStore = defineStore('settings', {
       this.persistToStorage()
     },
 
-    updateLlmSettings(payload: LlmConnectionSettings) {
-      this.llm = {
+    async updateLlmSettings(payload: LlmConnectionSettings) {
+      await this.ensureLoaded()
+      const llm = {
         baseUrl: payload.baseUrl.trim(),
         modelName: payload.modelName.trim(),
         apiKey: payload.apiKey.trim(),
       }
-      this.persistToStorage()
+      await this.saveToApi({ llm, savedLlmConnections: this.savedLlmConnections })
     },
 
-    saveLlmAsReusable(payload: LlmConnectionSettings) {
+    async saveLlmAsReusable(payload: LlmConnectionSettings) {
+      await this.ensureLoaded()
       const currentConnection = normalizeLlmSettings(payload)
       const existingConnection = this.savedLlmConnections.find(
         (connection) =>
@@ -112,35 +181,39 @@ export const useSettingsStore = defineStore('settings', {
         ...currentConnection,
       }
 
-      this.savedLlmConnections = [
+      const savedLlmConnections = [
         savedConnection,
         ...this.savedLlmConnections.filter((connection) => connection.id !== savedConnection.id),
       ]
-      this.persistToStorage()
+      await this.saveToApi({ llm: this.llm, savedLlmConnections })
 
       return savedConnection
     },
 
-    deleteSavedLlmConnection(connectionId: string) {
+    async deleteSavedLlmConnection(connectionId: string) {
+      await this.ensureLoaded()
       const connectionIndex = this.savedLlmConnections.findIndex((connection) => connection.id === connectionId)
       if (connectionIndex === -1) return false
 
-      this.savedLlmConnections.splice(connectionIndex, 1)
-      this.persistToStorage()
+      await this.saveToApi({
+        llm: this.llm,
+        savedLlmConnections: this.savedLlmConnections.filter((item) => item.id !== connectionId),
+      })
 
       return true
     },
 
-    useSavedLlmConnection(connectionId: string) {
+    async useSavedLlmConnection(connectionId: string) {
+      await this.ensureLoaded()
       const connection = this.savedLlmConnections.find((item) => item.id === connectionId)
       if (!connection) return null
 
-      this.llm = {
+      const llm = {
         baseUrl: connection.baseUrl,
         modelName: connection.modelName,
         apiKey: connection.apiKey,
       }
-      this.persistToStorage()
+      await this.saveToApi({ llm, savedLlmConnections: this.savedLlmConnections })
 
       return connection
     },

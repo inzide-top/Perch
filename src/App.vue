@@ -80,6 +80,7 @@ function startAppRuntime() {
   if (appRuntimeStarted || !authStore.isAuthenticated) return
   appRuntimeStarted = true
   settingsStore.hydrateFromStorage()
+  void settingsStore.loadFromApi()
   if (!resumeStore.isLoaded) resumeStore.hydrateFromStorage()
   opportunityStore.hydrateFromStorage()
   void opportunityStore.loadOpportunities()

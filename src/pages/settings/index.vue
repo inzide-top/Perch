@@ -27,7 +27,15 @@ const isCheckingModelUsage = ref(false)
 const isModelWarningOpen = ref(false)
 const affectedInterviewCount = ref(0)
 const affectedModelName = ref('')
-let pendingModelAction: (() => void) | null = null
+let pendingModelAction: (() => Promise<void>) | null = null
+
+async function runModelAction(action: () => Promise<void>) {
+  try {
+    await action()
+  } catch (error) {
+    toast.add({ title: '模型配置操作失败', description: getUserErrorMessage(error, '请稍后重试。'), color: 'error' })
+  }
+}
 
 const isLlmDirty = computed(() => {
   return (
@@ -57,6 +65,7 @@ function selectThemeMode(themeMode: ThemeMode) {
 }
 
 function fillDeepSeekPreset() {
+  if (settingsStore.isLoading || settingsStore.isSaving) return
   llmDraft.baseUrl = 'https://api.deepseek.com'
   llmDraft.modelName = 'deepseek-chat'
 }
@@ -67,14 +76,14 @@ function clearApiKey() {
 
 async function runWithModelUsageWarning(
   identity: Pick<LlmConnectionSettings, 'baseUrl' | 'modelName'>,
-  action: () => void,
+  action: () => Promise<void>,
 ) {
   isCheckingModelUsage.value = true
   try {
     const usages = await interviewApi.listActiveModelUsage()
     const affected = usages.filter((usage) => isSameModelIdentity(usage.modelSnapshot, identity))
     if (!affected.length) {
-      action()
+      await runModelAction(action)
       return
     }
 
@@ -97,7 +106,7 @@ function confirmPendingModelAction() {
   const action = pendingModelAction
   pendingModelAction = null
   isModelWarningOpen.value = false
-  action?.()
+  if (action) void runModelAction(action)
 }
 
 function cancelPendingModelAction() {
@@ -108,8 +117,8 @@ function cancelPendingModelAction() {
 async function saveLlmSettings() {
   if (!canSaveLlm.value) return
 
-  const save = () => {
-    settingsStore.updateLlmSettings({
+  const save = async () => {
+    await settingsStore.updateLlmSettings({
       baseUrl: llmDraft.baseUrl,
       modelName: llmDraft.modelName,
       apiKey: llmDraft.apiKey,
@@ -118,16 +127,16 @@ async function saveLlmSettings() {
   }
   const nextIdentity = { baseUrl: llmDraft.baseUrl, modelName: llmDraft.modelName }
   if (isSameModelIdentity(settingsStore.llm, nextIdentity)) {
-    save()
+    await save()
     return
   }
   await runWithModelUsageWarning(settingsStore.llm, save)
 }
 
-function saveCurrentLlmAsReusable() {
+async function saveCurrentLlmAsReusable() {
   if (!canSaveReusableLlm.value) return
 
-  const savedConnection = settingsStore.saveLlmAsReusable({
+  const savedConnection = await settingsStore.saveLlmAsReusable({
     baseUrl: llmDraft.baseUrl,
     modelName: llmDraft.modelName,
     apiKey: llmDraft.apiKey,
@@ -142,8 +151,8 @@ function saveCurrentLlmAsReusable() {
 async function selectSavedLlmConnection(connectionId: string) {
   if (connectionId === activeSavedLlmConnectionId.value) return
 
-  await runWithModelUsageWarning(settingsStore.llm, () => {
-    const connection = settingsStore.useSavedLlmConnection(connectionId)
+  await runWithModelUsageWarning(settingsStore.llm, async () => {
+    const connection = await settingsStore.useSavedLlmConnection(connectionId)
     if (!connection) return
     toast.add({ title: `已切换至 ${connection.modelName}`, color: 'success' })
   })
@@ -153,12 +162,12 @@ async function deleteSavedLlmConnection(connectionId: string) {
   const connection = settingsStore.savedLlmConnections.find((item) => item.id === connectionId)
   if (!connection) return
 
-  const remove = () => {
-    if (!settingsStore.deleteSavedLlmConnection(connectionId)) return
+  const remove = async () => {
+    if (!(await settingsStore.deleteSavedLlmConnection(connectionId))) return
     toast.add({ title: `已删除 ${connection.modelName} 配置`, color: 'success' })
   }
   if (isSameModelIdentity(connection, settingsStore.llm)) {
-    remove()
+    await remove()
     return
   }
   await runWithModelUsageWarning(connection, remove)
@@ -245,6 +254,11 @@ watch(
         </UButton>
       </div>
 
+      <p v-if="settingsStore.isLoading" class="mt-4 text-sm text-muted" role="status">正在恢复账号模型配置…</p>
+      <div v-if="settingsStore.loadError" class="mt-4 text-sm text-error" role="alert">
+        {{ settingsStore.loadError }}
+        <UButton variant="link" @click="settingsStore.loadFromApi()">重新读取配置</UButton>
+      </div>
       <div v-if="settingsStore.savedLlmConnections.length" class="mt-4 flex flex-wrap items-center gap-2">
         <span class="text-xs font-medium text-muted">已保存配置</span>
         <div
@@ -261,8 +275,10 @@ watch(
             variant="ghost"
             class="model-config-tag min-w-0 max-w-full rounded-r-none shadow-none"
             :class="{ 'is-active': connection.id === activeSavedLlmConnectionId }"
-            :disabled="isCheckingModelUsage"
-            @click="selectSavedLlmConnection(connection.id)"
+            :disabled="
+              isCheckingModelUsage || settingsStore.isLoading || settingsStore.isSaving || !!settingsStore.loadError
+            "
+            @click="runModelAction(() => selectSavedLlmConnection(connection.id))"
           >
             <span class="truncate">{{ connection.modelName }}</span>
           </UButton>
@@ -274,13 +290,18 @@ watch(
             class="model-config-tag-remove rounded-l-none border-l border-default shadow-none"
             icon="i-lucide-x"
             :aria-label="`删除 ${connection.modelName} 配置`"
-            :disabled="isCheckingModelUsage"
-            @click="deleteSavedLlmConnection(connection.id)"
+            :disabled="
+              isCheckingModelUsage || settingsStore.isLoading || settingsStore.isSaving || !!settingsStore.loadError
+            "
+            @click="runModelAction(() => deleteSavedLlmConnection(connection.id))"
           />
         </div>
       </div>
 
-      <div class="mt-5 grid gap-x-4 gap-y-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
+      <fieldset
+        :disabled="settingsStore.isLoading || settingsStore.isSaving"
+        class="mt-5 grid gap-x-4 gap-y-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]"
+      >
         <UFormField label="Base URL" required>
           <UInput
             v-model="llmDraft.baseUrl"
@@ -321,10 +342,10 @@ watch(
             <UButton type="button" color="neutral" variant="outline" icon="i-lucide-eraser" @click="clearApiKey" />
           </div>
           <p class="mt-1 min-h-[14px] break-words text-[11px] leading-[14px] text-muted">
-            仅保存到当前浏览器；发起分析时临时传给后端，不写入分析记录或数据库
+            模型配置按账号保存，API Key 加密存储；重新登录后自动恢复。
           </p>
         </UFormField>
-      </div>
+      </fieldset>
 
       <div class="mt-4 flex min-w-0 flex-wrap justify-end gap-2">
         <UButton
@@ -342,9 +363,15 @@ watch(
           type="button"
           icon="i-lucide-save"
           class="min-w-0 max-w-full"
-          :loading="isCheckingModelUsage"
-          :disabled="!canSaveLlm || isCheckingModelUsage"
-          @click="saveLlmSettings"
+          :loading="isCheckingModelUsage || settingsStore.isSaving"
+          :disabled="
+            !canSaveLlm ||
+            isCheckingModelUsage ||
+            settingsStore.isLoading ||
+            settingsStore.isSaving ||
+            !!settingsStore.loadError
+          "
+          @click="runModelAction(saveLlmSettings)"
         >
           <span class="truncate">保存模型配置</span>
         </UButton>
@@ -355,8 +382,14 @@ watch(
           variant="outline"
           icon="i-lucide-bookmark-plus"
           class="min-w-0 max-w-full"
-          :disabled="!canSaveReusableLlm"
-          @click="saveCurrentLlmAsReusable"
+          :disabled="
+            !canSaveReusableLlm ||
+            isCheckingModelUsage ||
+            settingsStore.isLoading ||
+            settingsStore.isSaving ||
+            !!settingsStore.loadError
+          "
+          @click="runModelAction(saveCurrentLlmAsReusable)"
         >
           <span class="truncate">保存为可复用配置</span>
         </UButton>

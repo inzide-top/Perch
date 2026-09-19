@@ -14,6 +14,7 @@ import { actionStrategyRoute } from './routes/action-strategy.route'
 import { chatRoute } from './routes/chat.route'
 import { chatRunDebugRoute } from './routes/chat-run-debug.route'
 import { feedbackRoute } from './routes/feedback.route'
+import { modelSettingsRoute } from './routes/model-settings.route'
 import {
   DuplicateJobOpportunityError,
   OpportunityInterviewHistoryConflictError,
@@ -199,3 +200,4 @@ await app.register(capabilityProfileRoute, { prefix: '/api' })
 await app.register(actionStrategyRoute, { prefix: '/api' })
 await app.register(chatRoute, { prefix: '/api' })
 await app.register(feedbackRoute, { prefix: '/api' })
+await app.register(modelSettingsRoute, { prefix: '/api' })
