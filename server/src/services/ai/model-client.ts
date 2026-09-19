@@ -1,3 +1,4 @@
+import { validateModelRequestUrl } from './model-origin-policy'
 import type { ModelConnection } from '../../schemas/model.schema'
 import type { AgentRunError, AgentTokenUsage } from './types'
 
@@ -65,6 +66,26 @@ export function clearModelRequestCancellation(operationKey: string) {
   const timer = cancelledModelRequestTimers.get(operationKey)
   if (timer) clearTimeout(timer)
   cancelledModelRequestTimers.delete(operationKey)
+}
+
+/** Both JSON completions and streaming chat must pass through this boundary. */
+export async function requestAllowedModel(url: string, init: RequestInit): Promise<Response> {
+  let target: URL
+  try {
+    target = validateModelRequestUrl(url)
+  } catch (error) {
+    throw new ModelRequestError(
+      error instanceof Error ? error.message : '模型服务地址不被允许',
+      'model_configuration_invalid',
+      false,
+    )
+  }
+  const response = await fetch(target.href, { ...init, redirect: 'manual' })
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new ModelRequestError('模型服务返回了重定向，请填写最终的允许服务地址', 'model_configuration_invalid', false)
+  }
+  return response
 }
 
 export function normalizeBaseUrl(baseUrl: string) {
@@ -177,7 +198,7 @@ export async function requestModelCompletion(
     }
     if (options.seed !== undefined) requestBody.seed = options.seed
 
-    const response = await fetch(normalizeBaseUrl(modelConnection.baseUrl), {
+    const response = await requestAllowedModel(normalizeBaseUrl(modelConnection.baseUrl), {
       method: 'POST',
       signal: controller.signal,
       headers: {

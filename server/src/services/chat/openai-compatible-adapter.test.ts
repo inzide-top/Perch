@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { beforeEach, afterEach } from 'node:test'
 import { OpenAICompatibleAdapter } from './openai-compatible-adapter'
 
 const modelConnection = {
@@ -283,4 +283,22 @@ test('DeepSeek 思考模式会收集 reasoning_content，并在工具结果后�
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+const previousAllowedOrigins = process.env.MODEL_ALLOWED_ORIGINS
+beforeEach(() => {
+  process.env.MODEL_ALLOWED_ORIGINS = 'https://example.com'
+})
+afterEach(() => {
+  if (previousAllowedOrigins === undefined) delete process.env.MODEL_ALLOWED_ORIGINS
+  else process.env.MODEL_ALLOWED_ORIGINS = previousAllowedOrigins
+})
+
+const previousUnrestrictedLocal = process.env.MODEL_ALLOW_UNRESTRICTED_LOCAL
+beforeEach(() => {
+  delete process.env.MODEL_ALLOW_UNRESTRICTED_LOCAL
+})
+afterEach(() => {
+  if (previousUnrestrictedLocal === undefined) delete process.env.MODEL_ALLOW_UNRESTRICTED_LOCAL
+  else process.env.MODEL_ALLOW_UNRESTRICTED_LOCAL = previousUnrestrictedLocal
 })
