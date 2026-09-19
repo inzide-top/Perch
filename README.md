@@ -189,6 +189,33 @@ DATABASE_SSL=disable
 
 使用 Supabase 等云数据库时，将 `DATABASE_URL` 替换为平台提供的连接串，并按服务要求设置 `DATABASE_SSL=require`。
 
+### 模型地址访问模式
+
+GitHub 的 `.env.example` 默认面向开发者自用：
+
+```dotenv
+MODEL_ALLOW_UNRESTRICTED_LOCAL=true
+```
+
+设为 `true` 后，允许任意 HTTP/HTTPS 模型地址，包括第三方中转、本机、内网和自定义端口；忽略 `MODEL_ALLOWED_ORIGINS`，无需配置白名单。此开关虽名为 LOCAL，但**不检查 NODE_ENV**，生产环境设置 true 也会解除地址限制。它不会解除超时、认证或重定向限制；模型服务仍需兼容现有接口格式。
+
+**Railway 公共后端必须显式设置 `MODEL_ALLOW_UNRESTRICTED_LOCAL=false`，并配置下面的白名单。不要将开发模板直接用于公共部署。** 未配置开关或值不是小写 `true` 时，也采用白名单模式。
+
+后端白名单模式配置：
+
+```dotenv
+# Railway 公共部署
+MODEL_ALLOW_UNRESTRICTED_LOCAL=false
+# 官方来源预配置；可按部署需要删减
+MODEL_ALLOWED_ORIGINS=https://api.openai.com,https://api.deepseek.com,https://api.minimax.io,https://api.minimax.cn,https://api.moonshot.cn,https://api.moonshot.ai,https://api.anthropic.com,https://dashscope.aliyuncs.com,https://dashscope-intl.aliyuncs.com,https://generativelanguage.googleapis.com
+```
+
+已整理 [7 家官方服务的 Base URL 与兼容性说明](./docs/model-providers.md)。这些是来源预配置，尚未逐家完成真实模型联调。
+
+只填 HTTPS 来源（协议、域名、可选端口），不要包含 `/v1`、查询参数或通配符。用户在设置页仍填写完整 Base URL（如 `https://api.example.com/v1`）。不同子域或端口必须单独批准。普通分析与流式聊天共用校验，不跟随重定向；错误不会通过更换地址重试。
+
+白名单模式下，未配置允许来源时关闭模型调用。此配置只放在 Fastify 后端，不使用 `VITE_` 前缀。新增中转时由管理员审核域名所有权、服务可信度后更新并重启后端，用户不能自行修改名单。白名单不保证被批准域名的 DNS 永远解析为公网；生产网络仍应阻止私网、回环与云元数据地址的出站访问。平台配置的 Embedding、Firecrawl 使用独立调用路径，本变量不控制它们。
+
 ### 4. 初始化数据库
 
 ```bash
@@ -390,3 +417,11 @@ GitHub Actions 会依次执行格式、Lint、前后端类型检查、核心测�
 ## License
 
 [MIT](./LICENSE) © PERCH contributors
+
+## 模型白名单部署检查
+
+1. Railway 公共后端显式设置 `MODEL_ALLOW_UNRESTRICTED_LOCAL=false`，同时设置 `MODEL_ALLOWED_ORIGINS`，使用真实可信服务的来源，保留前端设置中的 `/v1` 等路径。
+2. 部署新后端并重启。只更新 Vercel 前端无法启用此防护。
+3. 用虚构数据验证一次 JD 分析和一次 AI 助手流式回答，确认现有供应商兼容。
+4. 未批准域名、同名恶意后缀、不同端口、IP、本机地址及重定向必须失败；不要将真实 Key 发给测试地址。
+5. 白名单模式下服务端名单为空或格式错误时会拒绝调用，出现相应中文配置提示。不要通过关闭校验恢复服务，应修正配置。

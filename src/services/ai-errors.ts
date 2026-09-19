@@ -34,7 +34,7 @@ export function getAiTaskErrorPresentation(value: unknown): AiTaskErrorPresentat
   if (error?.code === 'model_configuration_invalid') {
     return {
       title: '模型配置不可用',
-      description: '请检查 Base URL、模型名称和接口兼容性，确认后再重新执行任务。',
+      description: error.message || '请检查 Base URL、模型名称和接口兼容性，确认后再重新执行任务。',
       requiresModelAttention: true,
     }
   }

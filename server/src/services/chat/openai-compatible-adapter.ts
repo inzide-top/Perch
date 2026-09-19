@@ -1,4 +1,4 @@
-import { getModelErrorDetails, ModelRequestError, normalizeBaseUrl } from '../ai/model-client'
+import { getModelErrorDetails, ModelRequestError, normalizeBaseUrl, requestAllowedModel } from '../ai/model-client'
 import type { ChatJsonObject } from '@/shared/chat/schemas'
 import type {
   ModelProviderAdapter,
@@ -192,7 +192,7 @@ function toOpenAiMessage(message: ModelProviderMessage) {
 
 export class OpenAICompatibleAdapter implements ModelProviderAdapter {
   async *stream(input: ModelProviderStreamInput): AsyncGenerator<ModelProviderStreamEvent> {
-    const response = await fetch(normalizeBaseUrl(input.modelConnection.baseUrl), {
+    const response = await requestAllowedModel(normalizeBaseUrl(input.modelConnection.baseUrl), {
       method: 'POST',
       signal: input.signal,
       headers: {
