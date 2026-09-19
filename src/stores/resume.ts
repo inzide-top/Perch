@@ -68,6 +68,7 @@ type ResumeState = {
   versions: ResumeVersion[]
   currentResumeId: string | null
   currentVersionId: string | null
+  isLoaded: boolean
   isLoading: boolean
   loadError: string | null
 }
@@ -146,6 +147,7 @@ export const useResumeStore = defineStore('resume', {
     versions: [],
     currentResumeId: null,
     currentVersionId: null,
+    isLoaded: false,
     isLoading: false,
     loadError: null,
   }),
@@ -169,7 +171,8 @@ export const useResumeStore = defineStore('resume', {
   },
 
   actions: {
-    async loadFromApi() {
+    async loadFromApi(options: { force?: boolean } = {}) {
+      if (!options.force && this.isLoaded) return
       if (resumeWorkspaceRequest) return resumeWorkspaceRequest
 
       const request = (async () => {
@@ -191,6 +194,7 @@ export const useResumeStore = defineStore('resume', {
           this.currentResumeId = currentIds.currentResumeId
           this.currentVersionId = currentIds.currentVersionId
           this.persistToStorage()
+          this.isLoaded = true
         } catch (error) {
           this.loadError = getUserErrorMessage(error, 'load resume failed')
         } finally {
